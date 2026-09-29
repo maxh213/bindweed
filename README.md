@@ -18,3 +18,13 @@ Status: being built by marestail, one slice per file in `tasks/`.
 
 | route | status |
 |---|---|
+| `/` | live |
+| `/assets/` | live |
+| `/api/tree` | live |
+| `/api/file` | live |
+
+## Environment
+
+| name | meaning |
+|---|---|
+| `BINDWEED_PORT` | first port to try (default 4477); tries up to N+20 unless `--port` is set |
