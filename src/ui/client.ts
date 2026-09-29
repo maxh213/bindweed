@@ -1,25 +1,62 @@
+import { z } from 'zod';
 import type { TreeEntry } from '../domain/tree.ts';
 
-export type TreeJson = {
-  root: string;
-  entries: TreeEntry[];
-};
+const treeEntrySchema: z.ZodType<TreeEntry> = z.lazy(() =>
+  z.union([
+    z.object({
+      name: z.string(),
+      path: z.string(),
+      kind: z.literal('file'),
+    }),
+    z.object({
+      name: z.string(),
+      path: z.string(),
+      kind: z.literal('dir'),
+      children: z.array(treeEntrySchema),
+    }),
+  ]),
+);
 
-export type FileJson =
-  | { path: string; text: string }
-  | { path: string; binary: true }
-  | { error: string };
+const treeJsonSchema = z.object({
+  root: z.string(),
+  entries: z.array(treeEntrySchema),
+});
+
+const fileOkSchema = z.union([
+  z.object({ path: z.string(), text: z.string() }),
+  z.object({ path: z.string(), binary: z.literal(true) }),
+]);
+
+const errorBodySchema = z.object({ error: z.string().optional() });
+
+export type TreeJson = z.infer<typeof treeJsonSchema>;
+export type FileJson = z.infer<typeof fileOkSchema> | { error: string };
 
 function apiError(body: { error?: string }): { error: string } {
   return { error: body.error ?? 'cannot reach bindweed' };
 }
 
+function errorFrom(raw: unknown): { error: string } {
+  const err = errorBodySchema.safeParse(raw);
+  return apiError(err.success ? err.data : {});
+}
+
+function parseTreeBody(raw: unknown, ok: boolean): TreeJson | { error: string } {
+  if (!ok) return errorFrom(raw);
+  const parsed = treeJsonSchema.safeParse(raw);
+  return parsed.success ? parsed.data : { error: 'cannot reach bindweed' };
+}
+
+function parseFileBody(raw: unknown, ok: boolean): FileJson {
+  if (!ok) return errorFrom(raw);
+  const parsed = fileOkSchema.safeParse(raw);
+  return parsed.success ? parsed.data : { error: 'cannot reach bindweed' };
+}
+
 export async function fetchTree(token: string, fetcher: typeof fetch = fetch): Promise<TreeJson | { error: string }> {
   try {
     const res = await fetcher('/api/tree', { headers: { Authorization: `Bearer ${token}` } });
-    const body = (await res.json()) as TreeJson & { error?: string };
-    if (!res.ok) return apiError(body);
-    return body;
+    return parseTreeBody(await res.json(), res.ok);
   } catch {
     return { error: 'cannot reach bindweed' };
   }
@@ -34,9 +71,7 @@ export async function fetchFile(
     const res = await fetcher(`/api/file?path=${encodeURIComponent(path)}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    const body = (await res.json()) as FileJson & { error?: string };
-    if (!res.ok) return apiError(body);
-    return body;
+    return parseFileBody(await res.json(), res.ok);
   } catch {
     return { error: 'cannot reach bindweed' };
   }

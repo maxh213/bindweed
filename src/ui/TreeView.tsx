@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import type { TreeEntry } from '../domain/tree.ts';
+import type { TreeDir, TreeEntry } from '../domain/tree.ts';
 
 type Props = Readonly<{
   root: string;
@@ -43,7 +43,7 @@ function FileRow({ entry, selected, onSelect, depth }: FileRowProps) {
 }
 
 type DirRowProps = Readonly<{
-  entry: TreeEntry;
+  entry: TreeDir;
   expanded: Set<string>;
   selected: string | null;
   onToggle: (path: string) => void;
@@ -64,7 +64,7 @@ function DirRow({ entry, expanded, selected, onToggle, onSelect, depth }: DirRow
         {entry.name}/
       </button>
       {open
-        ? (entry.children ?? []).map(child => (
+        ? entry.children.map(child => (
             <EntryRow
               key={child.path}
               entry={child}

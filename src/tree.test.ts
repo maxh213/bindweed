@@ -51,6 +51,20 @@ describe('buildTree', () => {
     expect(buildTree('empty-repo', [''])).toEqual({ root: 'empty-repo', entries: [] });
   });
 
+  it('promotes a file path to a folder when a child appears', () => {
+    expect(buildTree('r', ['src', 'src/a.ts'])).toEqual({
+      root: 'r',
+      entries: [
+        {
+          name: 'src',
+          path: 'src',
+          kind: 'dir',
+          children: [{ name: 'a.ts', path: 'src/a.ts', kind: 'file' }],
+        },
+      ],
+    });
+  });
+
   it('holds a non-ASCII file under its folder', () => {
     const tree = buildTree('demo-repo', ['notes/żółw i zając.md']);
     expect(tree.entries[0]).toEqual({
@@ -66,6 +80,6 @@ describe('filePathSet', () => {
   it('collects only file paths', () => {
     const tree = buildTree('r', ['a/b.ts', 'c.txt']);
     expect([...filePathSet(tree.entries)].sort()).toEqual(['a/b.ts', 'c.txt']);
-    expect([...filePathSet([{ name: 'empty', path: 'empty', kind: 'dir' }])]).toEqual([]);
+    expect([...filePathSet([{ name: 'empty', path: 'empty', kind: 'dir', children: [] }])]).toEqual([]);
   });
 });

@@ -99,6 +99,7 @@ describe('TreeView and FilePanel rendering', () => {
             name: 'src',
             path: 'src',
             kind: 'dir',
+            children: [],
           },
         ],
         expanded: new Set(['', 'src']),
@@ -201,6 +202,7 @@ describe('App and boot', () => {
   it('loads the tree, opens a deep link, and selects a file on click', async () => {
     const { App } = await import('./App.tsx');
     const { act } = await import('react');
+    const { waitFor } = await import('@testing-library/dom');
     const files: Record<string, string> = {
       'src/a.ts': "export const a = 1;\n",
       'README.md': '# demo\n',
@@ -235,22 +237,23 @@ describe('App and boot', () => {
           fetcher,
         }),
       );
-      await new Promise(r => setTimeout(r, 50));
     });
-    expect(document.title).toBe('bindweed — demo-repo');
-    expect(document.body.textContent).toContain('export const a = 1;');
+    await waitFor(() => {
+      expect(document.title).toBe('bindweed — demo-repo');
+      expect(document.body.textContent).toContain('export const a = 1;');
+    });
     const readme = Array.from(document.querySelectorAll('button')).find(el => el.textContent === 'README.md');
     await act(async () => {
       readme?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-      await new Promise(r => setTimeout(r, 50));
     });
-    expect(document.body.textContent).toContain('# demo');
+    await waitFor(() => {
+      expect(document.body.textContent).toContain('# demo');
+    });
     const src = Array.from(document.querySelectorAll('button')).find(el => el.textContent === 'src/');
     await act(async () => {
       src?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
       const rootRow = Array.from(document.querySelectorAll('button')).find(el => el.textContent === 'demo-repo/');
       rootRow?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-      await new Promise(r => setTimeout(r, 0));
     });
   });
 
@@ -263,6 +266,7 @@ describe('App and boot', () => {
     if (el === null) throw new Error('missing root');
     root = createRoot(el);
     const { App } = await import('./App.tsx');
+    const { waitFor } = await import('@testing-library/dom');
     const fetcher = (async () => {
       throw new Error('down');
     }) as typeof fetch;
@@ -274,8 +278,9 @@ describe('App and boot', () => {
         fetcher,
       }),
     );
-    await new Promise(r => setTimeout(r, 30));
-    expect(document.body.textContent).toContain('select a file');
+    await waitFor(() => {
+      expect(document.body.textContent).toContain('select a file');
+    });
   });
 
   it('loads a tree without a file hash', async () => {
@@ -288,6 +293,7 @@ describe('App and boot', () => {
     root = createRoot(el);
     const { App } = await import('./App.tsx');
     const { act } = await import('react');
+    const { waitFor } = await import('@testing-library/dom');
     const fetcher = (async () =>
       ({
         ok: true,
@@ -302,32 +308,37 @@ describe('App and boot', () => {
           fetcher,
         }),
       );
-      await new Promise(r => setTimeout(r, 30));
     });
-    expect(document.title).toBe('bindweed — demo-repo');
-    expect(document.body.textContent).toContain('select a file');
+    await waitFor(() => {
+      expect(document.title).toBe('bindweed — demo-repo');
+      expect(document.body.textContent).toContain('select a file');
+    });
   });
 
   it('boots from the token in the address', async () => {
     const { bootUi } = await import('./boot.tsx');
+    const { waitFor } = await import('@testing-library/dom');
     const fetcher = (async () =>
       ({ ok: true, json: async () => ({ root: 'demo-repo', entries: [] }) }) as Response) as typeof fetch;
     const original = globalThis.fetch;
     globalThis.fetch = fetcher;
     bootUi(document, window.location, window.sessionStorage, window.history);
-    await new Promise(r => setTimeout(r, 30));
-    expect(document.title).toBe('bindweed — demo-repo');
+    await waitFor(() => {
+      expect(document.title).toBe('bindweed — demo-repo');
+    });
     expect(window.sessionStorage.getItem('bindweed.token')).toBe('tok');
     globalThis.fetch = original;
   });
 
   it('runs main.tsx against the current document', async () => {
+    const { waitFor } = await import('@testing-library/dom');
     const fetcher = (async () =>
       ({ ok: true, json: async () => ({ root: 'demo-repo', entries: [] }) }) as Response) as typeof fetch;
     globalThis.fetch = fetcher;
     await import('./main.tsx');
-    await new Promise(r => setTimeout(r, 30));
-    expect(document.title).toBe('bindweed — demo-repo');
+    await waitFor(() => {
+      expect(document.title).toBe('bindweed — demo-repo');
+    });
   });
 
   it('skips boot without a token or root node', async () => {

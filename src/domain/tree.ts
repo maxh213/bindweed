@@ -1,9 +1,8 @@
-export type TreeEntry = {
-  name: string;
-  path: string;
-  kind: 'dir' | 'file';
-  children?: TreeEntry[];
-};
+export type TreeEntry =
+  | { name: string; path: string; kind: 'file' }
+  | { name: string; path: string; kind: 'dir'; children: TreeEntry[] };
+
+export type TreeDir = Extract<TreeEntry, { kind: 'dir' }>;
 
 export type TreeRoot = {
   root: string;
@@ -21,38 +20,47 @@ function sortEntries(entries: TreeEntry[]): TreeEntry[] {
   });
 }
 
-function ensureDir(map: Map<string, TreeEntry>, name: string, path: string): TreeEntry {
+function ensureDir(map: Map<string, TreeEntry>, name: string, path: string): TreeDir {
   const existing = map.get(name);
-  if (existing) return existing;
-  const dir: TreeEntry = { name, path, kind: 'dir', children: [] };
+  if (existing !== undefined && existing.kind === 'dir') return existing;
+  const dir: TreeDir = { name, path, kind: 'dir', children: [] };
   map.set(name, dir);
   return dir;
 }
 
-function addFile(parent: Map<string, TreeEntry>, parts: string[], index: number, full: string): void {
-  const name = parts[index] as string;
-  if (index === parts.length - 1) {
-    parent.set(name, { name, path: full, kind: 'file' });
-    return;
-  }
-  const dirPath = parts.slice(0, index + 1).join('/');
-  const dir = ensureDir(parent, name, dirPath);
-  const childMap = childrenMap(dir);
-  addFile(childMap, parts, index + 1, full);
-  dir.children = sortEntries([...childMap.values()]);
+function childrenMap(dir: TreeDir): Map<string, TreeEntry> {
+  const map = new Map<string, TreeEntry>();
+  for (const child of dir.children) map.set(child.name, child);
+  return map;
 }
 
-function childrenMap(dir: TreeEntry): Map<string, TreeEntry> {
-  const map = new Map<string, TreeEntry>();
-  for (const child of dir.children as TreeEntry[]) map.set(child.name, child);
-  return map;
+function placeFile(root: Map<string, TreeEntry>, full: string): void {
+  const segments = full.split('/');
+  let map = root;
+  const chain: { dir: TreeDir; kids: Map<string, TreeEntry> }[] = [];
+  let depth = 0;
+  for (const name of segments) {
+    depth += 1;
+    if (depth === segments.length) {
+      map.set(name, { name, path: full, kind: 'file' });
+      break;
+    }
+    const dirPath = segments.slice(0, depth).join('/');
+    const dir = ensureDir(map, name, dirPath);
+    const kids = childrenMap(dir);
+    chain.push({ dir, kids });
+    map = kids;
+  }
+  for (const { dir, kids } of chain.reverse()) {
+    dir.children = sortEntries([...kids.values()]);
+  }
 }
 
 export function buildTree(rootName: string, paths: string[]): TreeRoot {
   const top = new Map<string, TreeEntry>();
   for (const path of paths) {
     if (path.length === 0) continue;
-    addFile(top, path.split('/'), 0, path);
+    placeFile(top, path);
   }
   return { root: rootName, entries: sortEntries([...top.values()]) };
 }
@@ -66,7 +74,7 @@ export function filePathSet(entries: TreeEntry[]): Set<string> {
 function collectFiles(entries: TreeEntry[], paths: Set<string>): void {
   for (const entry of entries) {
     if (entry.kind === 'file') paths.add(entry.path);
-    else collectFiles(entry.children ?? [], paths);
+    else collectFiles(entry.children, paths);
   }
 }
 

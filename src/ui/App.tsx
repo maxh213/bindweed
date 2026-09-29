@@ -1,9 +1,11 @@
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { decodeHashPath, encodeHashPath } from '../domain/lines.ts';
-import { togglePath, withParentsOpen, type TreeEntry } from '../domain/tree.ts';
-import { fetchFile, fetchTree, fileHashFrom, writeFileHash } from './client.ts';
-import { FilePanel, panelFromFile, type FilePanelState } from './FilePanel.tsx';
+import { encodeHashPath } from '../domain/lines.ts';
+import { togglePath } from '../domain/tree.ts';
+import { fetchFile, fetchTree, writeFileHash } from './client.ts';
+import { FilePanel } from './FilePanel.tsx';
 import { TreeView } from './TreeView.tsx';
+import { expandedFromLocation, panelFromQuery, selectedFromLocation, treeParts } from './view.ts';
 
 export type AppProps = {
   token: string;
@@ -12,51 +14,40 @@ export type AppProps = {
   fetcher: typeof fetch;
 };
 
-async function loadFile(
-  token: string,
-  path: string,
-  fetcher: typeof fetch,
-  historyApi: History,
-  setSelected: (p: string) => void,
-  setPanel: (s: FilePanelState) => void,
-): Promise<void> {
-  setSelected(path);
-  setPanel({ kind: 'loading', path });
-  writeFileHash(historyApi, path, encodeHashPath);
-  const body = await fetchFile(token, path, fetcher);
-  setPanel(panelFromFile(path, body));
+function makeQueryClient(): QueryClient {
+  return new QueryClient({
+    defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
+  });
 }
 
-async function startApp(
-  props: AppProps,
-  setRoot: (r: string) => void,
-  setEntries: (e: TreeEntry[]) => void,
-  setExpanded: (fn: (s: Set<string>) => Set<string>) => void,
-  setSelected: (p: string) => void,
-  setPanel: (s: FilePanelState) => void,
-): Promise<void> {
-  const body = await fetchTree(props.token, props.fetcher);
-  if ('error' in body) return;
-  setRoot(body.root);
-  setEntries(body.entries);
-  document.title = `bindweed — ${body.root}`;
-  const encoded = fileHashFrom(props.location);
-  if (encoded === null) return;
-  const path = decodeHashPath(encoded);
-  setExpanded(s => withParentsOpen(s, path));
-  await loadFile(props.token, path, props.fetcher, props.historyApi, setSelected, setPanel);
+type FileLoaderProps = Readonly<{
+  token: string;
+  path: string;
+  fetcher: typeof fetch;
+}>;
+
+function FileLoader(props: FileLoaderProps) {
+  const fileQuery = useQuery({
+    queryKey: ['file', props.token, props.path],
+    queryFn: () => fetchFile(props.token, props.path, props.fetcher),
+  });
+  return <FilePanel state={panelFromQuery(props.path, fileQuery.data, fileQuery.isPending)} />;
 }
 
-export function App(props: Readonly<AppProps>) {
-  const [root, setRoot] = useState('');
-  const [entries, setEntries] = useState<TreeEntry[]>([]);
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['']));
-  const [selected, setSelected] = useState<string | null>(null);
-  const [panel, setPanel] = useState<FilePanelState>({ kind: 'idle' });
+function BrowserApp(props: Readonly<AppProps>) {
+  const [expanded, setExpanded] = useState(() => expandedFromLocation(props.location));
+  const [selected, setSelected] = useState(() => selectedFromLocation(props.location));
+
+  const treeQuery = useQuery({
+    queryKey: ['tree', props.token],
+    queryFn: () => fetchTree(props.token, props.fetcher),
+  });
+
+  const { root, entries } = treeParts(treeQuery.data);
 
   useEffect(() => {
-    void startApp(props, setRoot, setEntries, setExpanded, setSelected, setPanel);
-  }, [props]);
+    if (root.length > 0) document.title = `bindweed — ${root}`;
+  }, [root]);
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh' }}>
@@ -68,13 +59,25 @@ export function App(props: Readonly<AppProps>) {
           selected={selected}
           onToggle={path => setExpanded(s => togglePath(s, path))}
           onSelect={path => {
-            void loadFile(props.token, path, props.fetcher, props.historyApi, setSelected, setPanel);
+            writeFileHash(props.historyApi, path, encodeHashPath);
+            setSelected(path);
           }}
         />
       </aside>
       <main style={{ flex: 1, padding: 16 }}>
-        <FilePanel state={panel} />
+        {selected === null ? <FilePanel state={{ kind: 'idle' }} /> : (
+          <FileLoader token={props.token} path={selected} fetcher={props.fetcher} />
+        )}
       </main>
     </div>
+  );
+}
+
+export function App(props: Readonly<AppProps>) {
+  const [client] = useState(makeQueryClient);
+  return (
+    <QueryClientProvider client={client}>
+      <BrowserApp {...props} />
+    </QueryClientProvider>
   );
 }

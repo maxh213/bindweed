@@ -38,6 +38,24 @@ describe('fetchTree', () => {
       }) as Response) as typeof fetch;
     expect(await fetchTree('tok', bare)).toEqual({ error: 'cannot reach bindweed' });
   });
+
+  it('rejects a body that fails the tree schema', async () => {
+    const fetcher = (async () =>
+      ({
+        ok: true,
+        json: async () => ({ root: 1, entries: 'nope' }),
+      }) as Response) as typeof fetch;
+    expect(await fetchTree('tok', fetcher)).toEqual({ error: 'cannot reach bindweed' });
+  });
+
+  it('treats a non-object error body as unreachable', async () => {
+    const fetcher = (async () =>
+      ({
+        ok: false,
+        json: async () => null,
+      }) as Response) as typeof fetch;
+    expect(await fetchTree('tok', fetcher)).toEqual({ error: 'cannot reach bindweed' });
+  });
 });
 
 describe('fetchFile', () => {
@@ -61,6 +79,33 @@ describe('fetchFile', () => {
         json: async () => ({ error: 'file too large to show' }),
       }) as Response) as typeof fetch;
     expect(await fetchFile('tok', 'big.txt', large)).toEqual({ error: 'file too large to show' });
+    const bad = (async () =>
+      ({
+        ok: true,
+        json: async () => ({ path: 'a', text: 3 }),
+      }) as Response) as typeof fetch;
+    expect(await fetchFile('tok', 'a', bad)).toEqual({ error: 'cannot reach bindweed' });
+    const bareErr = (async () =>
+      ({
+        ok: false,
+        json: async () => ({}),
+      }) as Response) as typeof fetch;
+    expect(await fetchFile('tok', 'a', bareErr)).toEqual({ error: 'cannot reach bindweed' });
+    const nullErr = (async () =>
+      ({
+        ok: false,
+        json: async () => null,
+      }) as Response) as typeof fetch;
+    expect(await fetchFile('tok', 'a', nullErr)).toEqual({ error: 'cannot reach bindweed' });
+  });
+
+  it('returns a binary file marker', async () => {
+    const fetcher = (async () =>
+      ({
+        ok: true,
+        json: async () => ({ path: 'blob.bin', binary: true }),
+      }) as Response) as typeof fetch;
+    expect(await fetchFile('tok', 'blob.bin', fetcher)).toEqual({ path: 'blob.bin', binary: true });
   });
 });
 
