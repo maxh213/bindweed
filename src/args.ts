@@ -27,8 +27,8 @@ export function parsePortValue(value: string): number | undefined {
 function takePortFlag(args: string[]): { rest: string[]; port?: string; error?: string } {
   const idx = args.indexOf('--port');
   if (idx < 0) return { rest: args };
-  if (idx + 1 >= args.length) return { rest: args, error: USAGE };
-  const port = args[idx + 1] as string;
+  const port = args[idx + 1];
+  if (port === undefined) return { rest: args, error: USAGE };
   const rest = [...args.slice(0, idx), ...args.slice(idx + 2)];
   return { rest, port };
 }
