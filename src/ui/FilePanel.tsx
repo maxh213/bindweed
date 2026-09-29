@@ -19,24 +19,36 @@ function IdlePanel() {
   return <div>select a file</div>;
 }
 
-function MessagePanel(props: { path: string; message: string }) {
+type PathMessage = Readonly<{ path: string; message: string }>;
+
+function MessagePanel({ path, message }: PathMessage) {
   return (
     <div>
-      <header>{props.path}</header>
-      <div>{props.message}</div>
+      <header>{path}</header>
+      <div>{message}</div>
     </div>
   );
 }
 
-function TextPanel(props: { path: string; text: string }) {
-  const lines = textLines(props.text);
+type PathText = Readonly<{ path: string; text: string }>;
+
+function numberedRows(text: string): { id: string; n: number; line: string }[] {
+  const rows: { id: string; n: number; line: string }[] = [];
+  for (const line of textLines(text)) {
+    const n = rows.length + 1;
+    rows.push({ id: `${n}:${line}`, n, line });
+  }
+  return rows;
+}
+
+function TextPanel({ path, text }: PathText) {
   return (
     <div>
-      <header>{props.path}</header>
+      <header>{path}</header>
       <pre style={{ fontFamily: 'ui-monospace, monospace' }}>
-        {lines.map((line, i) => (
-          <div key={i}>
-            <span>{i + 1}</span> {line}
+        {numberedRows(text).map(row => (
+          <div key={row.id}>
+            <span>{row.n}</span> {row.line}
           </div>
         ))}
       </pre>
@@ -44,7 +56,7 @@ function TextPanel(props: { path: string; text: string }) {
   );
 }
 
-export function FilePanel(props: { state: FilePanelState }) {
+export function FilePanel(props: Readonly<{ state: FilePanelState }>) {
   if (props.state.kind === 'idle') return <IdlePanel />;
   if (props.state.kind === 'loading') return <MessagePanel path={props.state.path} message="" />;
   if (props.state.kind === 'message') return <MessagePanel path={props.state.path} message={props.state.message} />;

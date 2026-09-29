@@ -108,11 +108,9 @@ describe('TreeView and FilePanel rendering', () => {
       }),
     );
     await new Promise(r => setTimeout(r, 0));
-    const src = Array.from(document.querySelectorAll('[role="treeitem"]')).find(el => el.textContent === 'src/');
+    const src = Array.from(document.querySelectorAll('button')).find(el => el.textContent === 'src/');
     src?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-    const top = Array.from(document.querySelectorAll('[role="treeitem"]')).find(
-      el => el.textContent === 'demo-repo/',
-    );
+    const top = Array.from(document.querySelectorAll('button')).find(el => el.textContent === 'demo-repo/');
     top?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
     expect(toggled).toEqual(['src', '']);
   });
@@ -241,20 +239,16 @@ describe('App and boot', () => {
     });
     expect(document.title).toBe('bindweed — demo-repo');
     expect(document.body.textContent).toContain('export const a = 1;');
-    const readme = Array.from(document.querySelectorAll('[role="treeitem"]')).find(
-      el => el.textContent === 'README.md',
-    );
+    const readme = Array.from(document.querySelectorAll('button')).find(el => el.textContent === 'README.md');
     await act(async () => {
       readme?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
       await new Promise(r => setTimeout(r, 50));
     });
     expect(document.body.textContent).toContain('# demo');
-    const src = Array.from(document.querySelectorAll('[role="treeitem"]')).find(el => el.textContent === 'src/');
+    const src = Array.from(document.querySelectorAll('button')).find(el => el.textContent === 'src/');
     await act(async () => {
       src?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-      const rootRow = Array.from(document.querySelectorAll('[role="treeitem"]')).find(
-        el => el.textContent === 'demo-repo/',
-      );
+      const rootRow = Array.from(document.querySelectorAll('button')).find(el => el.textContent === 'demo-repo/');
       rootRow?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
       await new Promise(r => setTimeout(r, 0));
     });

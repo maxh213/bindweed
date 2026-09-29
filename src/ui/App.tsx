@@ -48,7 +48,7 @@ async function startApp(
   await loadFile(props.token, path, props.fetcher, props.historyApi, setSelected, setPanel);
 }
 
-export function App(props: AppProps) {
+export function App(props: Readonly<AppProps>) {
   const [root, setRoot] = useState('');
   const [entries, setEntries] = useState<TreeEntry[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['']));

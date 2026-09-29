@@ -34,8 +34,7 @@ function takePortFlag(args: string[]): { rest: string[]; port?: string; error?: 
 }
 
 function onlyPaths(args: string[]): { paths: string[]; error?: string } {
-  const unknown = args.find(a => a.startsWith('-'));
-  if (unknown) return { paths: [], error: USAGE };
+  if (args.some(a => a.startsWith('-'))) return { paths: [], error: USAGE };
   if (args.length > 1) return { paths: [], error: USAGE };
   return { paths: args };
 }

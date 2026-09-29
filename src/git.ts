@@ -4,17 +4,19 @@ import { exitCode } from './exit-code.ts';
 
 export type GitRunner = (args: string[], cwd: string) => Promise<{ code: number; stdout: string; stderr: string }>;
 
-function appendChunk(chunks: Buffer[], piece: Buffer): void {
-  chunks.push(piece);
-}
+const GIT_BIN = '/usr/bin/git';
 
 export async function runGit(args: string[], cwd: string): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise(resolve => {
-    const child = spawn('git', args, { cwd, env: process.env });
+    const child = spawn(GIT_BIN, args, { cwd });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
-    child.stdout.on('data', (piece: Buffer) => appendChunk(out, piece));
-    child.stderr.on('data', (piece: Buffer) => appendChunk(err, piece));
+    child.stdout.on('data', (piece: Buffer) => {
+      out.push(piece);
+    });
+    child.stderr.on('data', (piece: Buffer) => {
+      err.push(piece);
+    });
     child.on('error', () => resolve({ code: 1, stdout: '', stderr: 'git missing' }));
     child.on('close', code => {
       resolve({

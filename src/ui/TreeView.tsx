@@ -1,57 +1,78 @@
+import type { CSSProperties } from 'react';
 import type { TreeEntry } from '../domain/tree.ts';
 
-type Props = {
+type Props = Readonly<{
   root: string;
   entries: TreeEntry[];
   expanded: Set<string>;
   selected: string | null;
   onToggle: (path: string) => void;
   onSelect: (path: string) => void;
-};
+}>;
 
-function FileRow(props: { entry: TreeEntry; selected: string | null; onSelect: (path: string) => void; depth: number }) {
-  const current = props.selected === props.entry.path;
+const rowStyle = (depth: number): CSSProperties => ({
+  display: 'block',
+  width: '100%',
+  textAlign: 'left',
+  border: 'none',
+  background: 'transparent',
+  paddingLeft: depth * 12,
+  cursor: 'pointer',
+  font: 'inherit',
+});
+
+type FileRowProps = Readonly<{
+  entry: TreeEntry;
+  selected: string | null;
+  onSelect: (path: string) => void;
+  depth: number;
+}>;
+
+function FileRow({ entry, selected, onSelect, depth }: FileRowProps) {
+  const current = selected === entry.path;
   return (
-    <div
-      role="treeitem"
+    <button
+      type="button"
       aria-current={current ? 'true' : undefined}
-      style={{ paddingLeft: props.depth * 12 }}
-      onClick={() => props.onSelect(props.entry.path)}
+      style={rowStyle(depth)}
+      onClick={() => onSelect(entry.path)}
     >
-      {props.entry.name}
-    </div>
+      {entry.name}
+    </button>
   );
 }
 
-function DirRow(props: {
+type DirRowProps = Readonly<{
   entry: TreeEntry;
   expanded: Set<string>;
   selected: string | null;
   onToggle: (path: string) => void;
   onSelect: (path: string) => void;
   depth: number;
-}) {
-  const open = props.expanded.has(props.entry.path);
+}>;
+
+function DirRow({ entry, expanded, selected, onToggle, onSelect, depth }: DirRowProps) {
+  const open = expanded.has(entry.path);
   return (
     <>
-      <div
-        role="treeitem"
+      <button
+        type="button"
         aria-expanded={open ? 'true' : 'false'}
-        style={{ paddingLeft: props.depth * 12 }}
-        onClick={() => props.onToggle(props.entry.path)}
+        style={rowStyle(depth)}
+        onClick={() => onToggle(entry.path)}
       >
-        {props.entry.name}/
-      </div>
+        {entry.name}/
+      </button>
       {open
-        ? (props.entry.children ?? []).map(child => (
+        ? (entry.children ?? []).map(child => (
             <EntryRow
               key={child.path}
               entry={child}
-              expanded={props.expanded}
-              selected={props.selected}
-              onToggle={props.onToggle}
-              onSelect={props.onSelect}
-              depth={props.depth + 1}
+              expanded={expanded}
+              selected={selected}
+              onToggle={onToggle}
+              onSelect={onSelect}
+              depth={depth + 1}
             />
           ))
         : null}
@@ -59,14 +80,16 @@ function DirRow(props: {
   );
 }
 
-function EntryRow(props: {
+type EntryRowProps = Readonly<{
   entry: TreeEntry;
   expanded: Set<string>;
   selected: string | null;
   onToggle: (path: string) => void;
   onSelect: (path: string) => void;
   depth: number;
-}) {
+}>;
+
+function EntryRow(props: EntryRowProps) {
   if (props.entry.kind === 'dir') {
     return (
       <DirRow
@@ -80,16 +103,26 @@ function EntryRow(props: {
     );
   }
   return (
-    <FileRow entry={props.entry} selected={props.selected} onSelect={props.onSelect} depth={props.depth} />
+    <FileRow
+      entry={props.entry}
+      selected={props.selected}
+      onSelect={props.onSelect}
+      depth={props.depth}
+    />
   );
 }
 
 export function TreeView(props: Props) {
   return (
-    <nav role="tree">
-      <div role="treeitem" aria-expanded={props.expanded.has('') ? 'true' : 'false'} onClick={() => props.onToggle('')}>
+    <nav>
+      <button
+        type="button"
+        aria-expanded={props.expanded.has('') ? 'true' : 'false'}
+        style={rowStyle(0)}
+        onClick={() => props.onToggle('')}
+      >
         {props.root}/
-      </div>
+      </button>
       {props.expanded.has('')
         ? props.entries.map(entry => (
             <EntryRow

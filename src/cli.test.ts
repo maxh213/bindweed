@@ -92,8 +92,10 @@ describe('runIfMain', () => {
 describe('defaultIo and bindRunning', () => {
   it('writes through stdout and stderr', () => {
     const io = defaultIo();
-    io.writeOut('');
-    io.writeErr('');
+    expect(typeof io.writeOut).toBe('function');
+    expect(typeof io.writeErr).toBe('function');
+    expect(io.writeOut('')).toBeUndefined();
+    expect(io.writeErr('')).toBeUndefined();
   });
 
   it('sets exitCode when a run finishes', async () => {

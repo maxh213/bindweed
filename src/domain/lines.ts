@@ -1,7 +1,7 @@
 export function textLines(text: string): string[] {
   if (text.length === 0) return [];
   const parts = text.split('\n');
-  if (parts[parts.length - 1] === '') parts.pop();
+  if (parts.at(-1) === '') parts.pop();
   return parts;
 }
 
