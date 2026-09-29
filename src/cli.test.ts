@@ -5,9 +5,8 @@ import { join } from 'node:path';
 import { createServer as createNetServer } from 'node:net';
 import { describe, expect, it } from 'vitest';
 import { fileURLToPath } from 'node:url';
-import { isEntry, main, runIfMain, defaultIo, bindRunning, type Io } from './cli.ts';
-import { runGit } from './git.ts';
-import { ensureExcludeLine, withExcludeLine } from './exclude.ts';
+import { isEntry, main, runIfMain, defaultIo, bindRunning, installDirFrom, uiDistDir, uiIndexPath, type Io } from './cli.ts';
+import { runGit, ensureExcludeLine, withExcludeLine } from './repo.ts';
 import { pathToFileURL } from 'node:url';
 function capture(): Io & { out: string[]; err: string[] } {
   const out: string[] = [];
@@ -258,5 +257,14 @@ describe('main', () => {
     const text = await readFile(path, 'utf8');
     expect(text.split('\n').filter(l => l === '.bindweed/')).toHaveLength(1);
     expect(withExcludeLine(text)).toBe(text);
+  });
+});
+
+describe('installDirFrom', () => {
+  it('resolves the install directory from the real entry module url', () => {
+    const meta = pathToFileURL('/tmp/qa/unbuilt/src/cli.ts').href;
+    expect(installDirFrom(meta)).toBe('/tmp/qa/unbuilt');
+    expect(uiDistDir('/tmp/qa/unbuilt')).toBe('/tmp/qa/unbuilt/dist/ui');
+    expect(uiIndexPath('/tmp/qa/unbuilt')).toBe('/tmp/qa/unbuilt/dist/ui/index.html');
   });
 });

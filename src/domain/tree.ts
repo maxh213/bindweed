@@ -69,3 +69,25 @@ function collectFiles(entries: TreeEntry[], paths: Set<string>): void {
     else collectFiles(entry.children ?? [], paths);
   }
 }
+
+export function parentDirs(filePath: string): string[] {
+  const parts = filePath.split('/');
+  const dirs: string[] = [''];
+  for (let i = 0; i < parts.length - 1; i += 1) {
+    dirs.push(parts.slice(0, i + 1).join('/'));
+  }
+  return dirs;
+}
+
+export function togglePath(expanded: Set<string>, path: string): Set<string> {
+  const next = new Set(expanded);
+  if (next.has(path)) next.delete(path);
+  else next.add(path);
+  return next;
+}
+
+export function withParentsOpen(expanded: Set<string>, filePath: string): Set<string> {
+  const next = new Set(expanded);
+  for (const dir of parentDirs(filePath)) next.add(dir);
+  return next;
+}

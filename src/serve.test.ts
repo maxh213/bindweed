@@ -1,10 +1,25 @@
-import { request as httpRequest, type Server } from 'node:http';
+import { request as httpRequest, createServer, type Server } from 'node:http';
+import { createServer as createNetServer } from 'node:net';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, beforeAll, afterAll } from 'vitest';
-import { createAppServer, type AppDeps } from './server.ts';
-import { runGit } from './git.ts';
+import {
+  createAppServer,
+  type AppDeps,
+  bindOnce,
+  listenErrorMessage,
+  listenForChoice,
+  listenRange,
+  newToken,
+  requestHasToken,
+  tokenFromAuth,
+  tokensEqual,
+  readRepoFile,
+  httpMethod,
+  httpPath,
+} from './serve.ts';
+import { runGit } from './repo.ts';
 
 async function fixtureRepo(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'bw-srv-'));
@@ -223,5 +238,246 @@ describe('createAppServer', () => {
     expect(svg.headers['content-type']).toBe('image/svg+xml');
     const bin = await hit(port, 'GET', '/assets/data.bin');
     expect(bin.headers['content-type']).toBe('application/octet-stream');
+  });
+});
+
+async function hold(port: number): Promise<{ close(): Promise<void> }> {
+  const server = createNetServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', () => resolve());
+  });
+  return {
+    close: () =>
+      new Promise((resolve, reject) => {
+        server.close(err => (err ? reject(err) : resolve()));
+      }),
+  };
+}
+
+describe('listenErrorMessage', () => {
+  it('names a taken explicit port', () => {
+    expect(listenErrorMessage({ kind: 'in-use', port: 4555 })).toBe('bindweed: port 4555 is in use');
+  });
+
+  it('names the exhausted range', () => {
+    expect(listenErrorMessage({ kind: 'none-free', from: 4477, to: 4497 })).toBe(
+      'bindweed: no free port between 4477 and 4497',
+    );
+  });
+});
+
+describe('listenRange', () => {
+  it('binds the first free port in a range', async () => {
+    const held = await hold(19001);
+    const server = createServer();
+    const result = await listenRange(server, 19001, 19003, false);
+    expect(result).toEqual({ port: 19002 });
+    server.close();
+    await held.close();
+  });
+
+  it('errors at once for a fixed taken port', async () => {
+    const held = await hold(19011);
+    const server = createServer();
+    const result = await listenRange(server, 19011, 19011, true);
+    expect(result).toEqual({ error: { kind: 'in-use', port: 19011 } });
+    server.close();
+    await held.close();
+  });
+
+  it('errors when every port in the range is taken', async () => {
+    const a = await hold(19021);
+    const b = await hold(19022);
+    const server = createServer();
+    const result = await listenRange(server, 19021, 19022, false);
+    expect(result).toEqual({ error: { kind: 'none-free', from: 19021, to: 19022 } });
+    server.close();
+    await a.close();
+    await b.close();
+  });
+});
+
+describe('listenForChoice', () => {
+  it('uses a fixed port or a twenty-wide range', async () => {
+    const server = createServer();
+    const fixed = await listenForChoice(server, { mode: 'fixed', port: 19031 });
+    expect(fixed).toEqual({ port: 19031 });
+    server.close();
+    await new Promise(r => setTimeout(r, 10));
+    const server2 = createServer();
+    const ranged = await listenForChoice(server2, { mode: 'range', port: 19041 });
+    expect(ranged).toEqual({ port: 19041 });
+    server2.close();
+  });
+});
+
+describe('bindOnce', () => {
+  it('listens on 127.0.0.1 only', async () => {
+    const server = createServer();
+    await bindOnce(server, 19051);
+    const addr = server.address();
+    expect(addr).toMatchObject({ address: '127.0.0.1', port: 19051 });
+    server.close();
+  });
+
+  it('rethrows errors that are not EADDRINUSE from the range loop', async () => {
+    const server = createServer();
+    const err = Object.assign(new Error('boom'), { code: 'EACCES' });
+    server.listen = ((..._ignored: unknown[]) => {
+      void _ignored;
+      queueMicrotask(() => server.emit('error', err));
+      return server;
+    }) as typeof server.listen;
+    await expect(listenRange(server, 19071, 19071, false)).rejects.toBe(err);
+  });
+});
+
+describe('newToken', () => {
+  it('returns 32 lowercase hex characters', () => {
+    const token = newToken();
+    expect(token).toMatch(/^[0-9a-f]{32}$/);
+    expect(newToken()).not.toBe(token);
+  });
+});
+
+describe('tokensEqual', () => {
+  it('compares equal tokens as true', () => {
+    expect(tokensEqual('abc', 'abc')).toBe(true);
+  });
+
+  it('rejects wrong or differently sized tokens', () => {
+    expect(tokensEqual('abc', 'abd')).toBe(false);
+    expect(tokensEqual('abc', 'ab')).toBe(false);
+    expect(tokensEqual('', 'x')).toBe(false);
+  });
+});
+
+describe('tokenFromAuth', () => {
+  it('reads a bearer token', () => {
+    expect(tokenFromAuth('Bearer deadbeef')).toBe('deadbeef');
+    expect(tokenFromAuth('Basic x')).toBeUndefined();
+    expect(tokenFromAuth(undefined)).toBeUndefined();
+  });
+});
+
+describe('requestHasToken', () => {
+  const token = 'a'.repeat(32);
+  const wrong = '0'.repeat(32);
+
+  it('accepts a bearer header or query token', () => {
+    expect(requestHasToken(`Bearer ${token}`, null, token)).toBe(true);
+    expect(requestHasToken(undefined, token, token)).toBe(true);
+  });
+
+  it('rejects missing or wrong tokens', () => {
+    expect(requestHasToken(undefined, null, token)).toBe(false);
+    expect(requestHasToken(`Bearer ${wrong}`, null, token)).toBe(false);
+    expect(requestHasToken(undefined, wrong, token)).toBe(false);
+    expect(requestHasToken(undefined, 'abc', token)).toBe(false);
+    expect(requestHasToken(undefined, '', token)).toBe(false);
+  });
+});
+
+async function scratch(): Promise<string> {
+  return mkdtemp(join(tmpdir(), 'bw-files-'));
+}
+
+describe('readRepoFile', () => {
+  it('returns text for a listed file', async () => {
+    const root = await scratch();
+    await writeFile(join(root, 'a.ts'), "export const a = 1;\n");
+    const result = await readRepoFile(root, 'a.ts', new Set(['a.ts']));
+    expect(result).toEqual({ ok: true, path: 'a.ts', text: 'export const a = 1;\n' });
+  });
+
+  it('returns 404 when the path is not listed', async () => {
+    const root = await scratch();
+    expect(await readRepoFile(root, 'nope.ts', new Set())).toEqual({
+      ok: false,
+      status: 404,
+      error: 'no such file',
+    });
+  });
+
+  it('returns 413 when the file is larger than 1 MiB', async () => {
+    const root = await scratch();
+    await writeFile(join(root, 'big.txt'), 'x'.repeat(1048577));
+    expect(await readRepoFile(root, 'big.txt', new Set(['big.txt']))).toEqual({
+      ok: false,
+      status: 413,
+      error: 'file too large to show',
+    });
+  });
+
+  it('returns text for a file of exactly 1 MiB', async () => {
+    const root = await scratch();
+    const text = 'x'.repeat(1048576);
+    await writeFile(join(root, 'exact.txt'), text);
+    const result = await readRepoFile(root, 'exact.txt', new Set(['exact.txt']));
+    expect(result).toEqual({ ok: true, path: 'exact.txt', text });
+  });
+
+  it('marks a file binary when a NUL sits in the first 8 KiB', async () => {
+    const root = await scratch();
+    await writeFile(join(root, 'blob.bin'), Buffer.from([0x61, 0x00, 0x62]));
+    expect(await readRepoFile(root, 'blob.bin', new Set(['blob.bin']))).toEqual({
+      ok: true,
+      path: 'blob.bin',
+      binary: true,
+    });
+  });
+
+  it('marks binary when NUL is at byte 8191', async () => {
+    const root = await scratch();
+    await writeFile(join(root, 'edge.bin'), Buffer.concat([Buffer.alloc(8191, 0x78), Buffer.from([0])]));
+    expect(await readRepoFile(root, 'edge.bin', new Set(['edge.bin']))).toEqual({
+      ok: true,
+      path: 'edge.bin',
+      binary: true,
+    });
+  });
+
+  it('returns text when NUL is only after the first 8 KiB', async () => {
+    const root = await scratch();
+    const buf = Buffer.concat([Buffer.alloc(8192, 0x78), Buffer.from([0])]);
+    await writeFile(join(root, 'late.txt'), buf);
+    const result = await readRepoFile(root, 'late.txt', new Set(['late.txt']));
+    expect(result).toEqual({ ok: true, path: 'late.txt', text: buf.toString('utf8') });
+  });
+
+  it('returns empty text for an empty file', async () => {
+    const root = await scratch();
+    await writeFile(join(root, 'empty.txt'), '');
+    expect(await readRepoFile(root, 'empty.txt', new Set(['empty.txt']))).toEqual({
+      ok: true,
+      path: 'empty.txt',
+      text: '',
+    });
+  });
+
+  it('prefers 413 over binary for an oversized NUL file', async () => {
+    const root = await scratch();
+    await writeFile(join(root, 'huge.bin'), Buffer.alloc(1048577, 0));
+    expect(await readRepoFile(root, 'huge.bin', new Set(['huge.bin']))).toEqual({
+      ok: false,
+      status: 413,
+      error: 'file too large to show',
+    });
+  });
+});
+
+describe('httpPath', () => {
+  it('defaults missing or empty paths', () => {
+    expect(httpPath(undefined)).toBe('/');
+    expect(httpPath('')).toBe('/');
+    expect(httpPath('/api/tree')).toBe('/api/tree');
+  });
+});
+
+describe('httpMethod', () => {
+  it('defaults a missing method to GET', () => {
+    expect(httpMethod(undefined)).toBe('GET');
+    expect(httpMethod('POST')).toBe('POST');
   });
 });

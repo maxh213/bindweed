@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parentDirs, togglePath, withParentsOpen } from './TreeView.tsx';
+import { parentDirs, togglePath, withParentsOpen } from '../domain/tree.ts';
 import { panelFromFile } from './FilePanel.tsx';
 
 describe('parentDirs', () => {

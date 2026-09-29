@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react';
-import type { TreeEntry } from '../domain/tree.ts';
 import { decodeHashPath, encodeHashPath } from '../domain/lines.ts';
-import { fetchFile, fetchTree } from './api.ts';
+import { togglePath, withParentsOpen, type TreeEntry } from '../domain/tree.ts';
+import { fetchFile, fetchTree, fileHashFrom, writeFileHash } from './client.ts';
 import { FilePanel, panelFromFile, type FilePanelState } from './FilePanel.tsx';
-import { TreeView, togglePath, withParentsOpen } from './TreeView.tsx';
-import { fileHashFrom, writeFileHash } from './session.ts';
+import { TreeView } from './TreeView.tsx';
 
 export type AppProps = {
   token: string;

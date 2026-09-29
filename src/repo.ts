@@ -1,13 +1,19 @@
 import { spawn } from 'node:child_process';
-import { lstat } from 'node:fs/promises';
-import { exitCode } from './exit-code.ts';
+import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 export type GitRunner = (args: string[], cwd: string) => Promise<{ code: number; stdout: string; stderr: string }>;
 
 const GIT_BIN = '/usr/bin/git';
+const EXCLUDE_LINE = '.bindweed/';
+
+export function exitCode(code: number | null): number {
+  if (code === null) return 1;
+  return code;
+}
 
 export async function runGit(args: string[], cwd: string): Promise<{ code: number; stdout: string; stderr: string }> {
-  return new Promise(resolve => {
+  return new Promise(resolvePromise => {
     const child = spawn(GIT_BIN, args, { cwd });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
@@ -17,9 +23,9 @@ export async function runGit(args: string[], cwd: string): Promise<{ code: numbe
     child.stderr.on('data', (piece: Buffer) => {
       err.push(piece);
     });
-    child.on('error', () => resolve({ code: 1, stdout: '', stderr: 'git missing' }));
+    child.on('error', () => resolvePromise({ code: 1, stdout: '', stderr: 'git missing' }));
     child.on('close', code => {
-      resolve({
+      resolvePromise({
         code: exitCode(code),
         stdout: Buffer.concat(out).toString('utf8'),
         stderr: Buffer.concat(err).toString('utf8'),
@@ -64,4 +70,42 @@ export async function listedRegularFiles(repoRoot: string, git: GitRunner = runG
     if (await isRegularFile(repoRoot, path)) kept.push(path);
   }
   return kept;
+}
+
+export function withExcludeLine(content: string): string {
+  const lines = content.split('\n');
+  if (lines.includes(EXCLUDE_LINE)) return content;
+  if (content.length === 0) return `${EXCLUDE_LINE}\n`;
+  if (content.endsWith('\n')) return `${content}${EXCLUDE_LINE}\n`;
+  return `${content}\n${EXCLUDE_LINE}\n`;
+}
+
+export function excludeFilePath(commonDir: string, repoRoot: string): string {
+  const absolute = isAbsolute(commonDir) ? commonDir : resolve(repoRoot, commonDir);
+  return join(absolute, 'info', 'exclude');
+}
+
+async function readOrEmpty(path: string): Promise<string> {
+  try {
+    return await readFile(path, 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+export async function ensureExcludeLine(excludePath: string): Promise<void> {
+  await mkdir(dirname(excludePath), { recursive: true });
+  const content = await readOrEmpty(excludePath);
+  const next = withExcludeLine(content);
+  if (next !== content) await writeFile(excludePath, next);
+}
+
+export async function ensureBindweedDir(repoRoot: string): Promise<void> {
+  await mkdir(join(repoRoot, '.bindweed'), { recursive: true });
+}
+
+export async function prepareBindweed(repoRoot: string, git: GitRunner = runGit): Promise<void> {
+  await ensureBindweedDir(repoRoot);
+  const common = await gitCommonDir(repoRoot, git);
+  await ensureExcludeLine(excludeFilePath(common, repoRoot));
 }

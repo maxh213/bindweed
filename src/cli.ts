@@ -1,13 +1,9 @@
-import { realpathSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, realpathSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs, shownPath } from './args.ts';
-import { uiIndexPath, installDirFrom, uiDistDir } from './install-dir.ts';
-import { gitToplevel, gitCommonDir, type GitRunner } from './git.ts';
-import { ensureBindweedDir, ensureExcludeLine, excludeFilePath } from './exclude.ts';
-import { newToken } from './token.ts';
-import { createAppServer } from './server.ts';
-import { listenForChoice, listenErrorMessage } from './listen.ts';
+import { gitToplevel, prepareBindweed, type GitRunner } from './repo.ts';
+import { bindApp, listenErrorMessage, newToken } from './serve.ts';
 
 export type Io = {
   writeOut(text: string): void;
@@ -23,6 +19,18 @@ export type MainOpts = {
   signal: AbortSignal;
   git?: GitRunner;
 };
+
+export function installDirFrom(metaUrl: string): string {
+  return dirname(dirname(fileURLToPath(metaUrl)));
+}
+
+export function uiDistDir(installDir: string): string {
+  return join(installDir, 'dist', 'ui');
+}
+
+export function uiIndexPath(installDir: string): string {
+  return join(uiDistDir(installDir), 'index.html');
+}
 
 export function defaultIo(): Io {
   return {
@@ -57,16 +65,10 @@ async function prepareRepo(pathArg: string | undefined, cwd: string, git?: GitRu
   return { ok: true, root };
 }
 
-async function prepareExclude(root: string, git?: GitRunner): Promise<void> {
-  await ensureBindweedDir(root);
-  const common = await gitCommonDir(root, git);
-  await ensureExcludeLine(excludeFilePath(common, root));
-}
-
 function waitForAbort(signal: AbortSignal, close: () => Promise<void>): Promise<void> {
-  return new Promise(resolve => {
+  return new Promise(resolveWait => {
     const done = () => {
-      void close().then(resolve);
+      void close().then(resolveWait);
     };
     if (signal.aborted) {
       done();
@@ -82,23 +84,20 @@ async function serve(
   portChoice: { mode: 'fixed' | 'range'; port: number },
 ): Promise<number> {
   const token = newToken();
-  const deps = {
-    repoRoot: root,
-    uiDir: uiDistDir(opts.installDir),
-    token,
-    port: portChoice.port,
-    git: opts.git,
-  };
-  const server = createAppServer(deps);
-  const listened = await listenForChoice(server, portChoice);
-  if ('error' in listened) {
-    server.close();
-    return fail(opts.io, listenErrorMessage(listened.error), 1);
-  }
-  deps.port = listened.port;
-  opts.io.writeOut(`bindweed: http://127.0.0.1:${listened.port}/?token=${token}\n`);
+  const bound = await bindApp(
+    {
+      repoRoot: root,
+      uiDir: uiDistDir(opts.installDir),
+      token,
+      port: portChoice.port,
+      git: opts.git,
+    },
+    portChoice,
+  );
+  if ('error' in bound) return fail(opts.io, listenErrorMessage(bound.error), 1);
+  opts.io.writeOut(`bindweed: http://127.0.0.1:${bound.port}/?token=${token}\n`);
   opts.io.writeOut(`serving ${root}\n`);
-  await waitForAbort(opts.signal, () => new Promise(resolve => server.close(() => resolve())));
+  await waitForAbort(opts.signal, () => new Promise(resolveClose => bound.server.close(() => resolveClose())));
   return 0;
 }
 
@@ -113,7 +112,7 @@ export async function main(opts: MainOpts): Promise<number> {
     return fail(opts.io, `bindweed: the ui is not built; run npm run build in ${opts.installDir}`, 1);
   }
 
-  await prepareExclude(repo.root, opts.git);
+  await prepareBindweed(repo.root, opts.git);
   return serve(opts, repo.root, parsed.port);
 }
 

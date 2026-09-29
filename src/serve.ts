@@ -1,11 +1,9 @@
-import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http';
-import { readFile } from 'node:fs/promises';
-import { join, extname, basename } from 'node:path';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { open, readFile } from 'node:fs/promises';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { basename, extname, join } from 'node:path';
 import { buildTree, filePathSet } from './domain/tree.ts';
-import { listedRegularFiles, type GitRunner } from './git.ts';
-import { readRepoFile } from './files.ts';
-import { requestHasToken } from './token.ts';
-import { httpMethod, httpPath } from './http-parts.ts';
+import { listedRegularFiles, type GitRunner } from './repo.ts';
 
 export type AppDeps = {
   repoRoot: string;
@@ -15,9 +13,152 @@ export type AppDeps = {
   git?: GitRunner;
 };
 
+export type ListenError = { kind: 'in-use'; port: number } | { kind: 'none-free'; from: number; to: number };
+
+export type PortChoice = { mode: 'fixed' | 'range'; port: number };
+
+type FileResult =
+  | { ok: true; path: string; text: string }
+  | { ok: true; path: string; binary: true }
+  | { ok: false; status: 404 | 413; error: string };
+
 type Handler = (req: IncomingMessage, res: ServerResponse, url: URL) => Promise<void>;
 
 type RouteTable = Map<string, Handler>;
+
+const MAX_BYTES = 1048576;
+const NUL_WINDOW = 8192;
+
+const ASSET_TYPES: Record<string, string> = {
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.html': 'text/html; charset=utf-8',
+  '.svg': 'image/svg+xml',
+};
+
+export function newToken(): string {
+  return randomBytes(16).toString('hex');
+}
+
+export function tokensEqual(given: string, expected: string): boolean {
+  const a = Buffer.from(given);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+export function tokenFromAuth(header: string | undefined): string | undefined {
+  if (header === undefined) return undefined;
+  const prefix = 'Bearer ';
+  if (!header.startsWith(prefix)) return undefined;
+  return header.slice(prefix.length);
+}
+
+export function requestHasToken(
+  authHeader: string | undefined,
+  queryToken: string | null,
+  expected: string,
+): boolean {
+  const bearer = tokenFromAuth(authHeader);
+  if (bearer !== undefined) return tokensEqual(bearer, expected);
+  if (queryToken === null) return false;
+  return tokensEqual(queryToken, expected);
+}
+
+export function listenErrorMessage(err: ListenError): string {
+  if (err.kind === 'in-use') return `bindweed: port ${err.port} is in use`;
+  return `bindweed: no free port between ${err.from} and ${err.to}`;
+}
+
+function isAddrInUse(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && 'code' in err && err.code === 'EADDRINUSE';
+}
+
+export function bindOnce(server: Server, port: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onError = (err: Error) => {
+      server.off('listening', onListening);
+      reject(err);
+    };
+    const onListening = () => {
+      server.off('error', onError);
+      resolve();
+    };
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(port, '127.0.0.1');
+  });
+}
+
+async function tryPort(
+  server: Server,
+  port: number,
+  fixed: boolean,
+): Promise<'ok' | 'next' | ListenError> {
+  try {
+    await bindOnce(server, port);
+    return 'ok';
+  } catch (err) {
+    if (!isAddrInUse(err)) throw err;
+    if (fixed) return { kind: 'in-use', port };
+    return 'next';
+  }
+}
+
+export async function listenRange(
+  server: Server,
+  start: number,
+  end: number,
+  fixed: boolean,
+): Promise<{ port: number } | { error: ListenError }> {
+  for (let port = start; port <= end; port += 1) {
+    const result = await tryPort(server, port, fixed);
+    if (result === 'ok') return { port };
+    if (result !== 'next') return { error: result };
+  }
+  return { error: { kind: 'none-free', from: start, to: end } };
+}
+
+export async function listenForChoice(
+  server: Server,
+  choice: PortChoice,
+): Promise<{ port: number } | { error: ListenError }> {
+  if (choice.mode === 'fixed') return listenRange(server, choice.port, choice.port, true);
+  return listenRange(server, choice.port, choice.port + 20, false);
+}
+
+function hasNul(buf: Buffer): boolean {
+  return buf.includes(0);
+}
+
+export async function readRepoFile(repoRoot: string, relPath: string, allowed: Set<string>): Promise<FileResult> {
+  if (!allowed.has(relPath)) return { ok: false, status: 404, error: 'no such file' };
+  const handle = await open(join(repoRoot, relPath), 'r');
+  try {
+    const stat = await handle.stat();
+    if (stat.size > MAX_BYTES) return { ok: false, status: 413, error: 'file too large to show' };
+    const headSize = Math.min(stat.size, NUL_WINDOW);
+    const head = Buffer.alloc(headSize);
+    const { bytesRead } = await handle.read(head, 0, headSize, 0);
+    if (hasNul(head.subarray(0, bytesRead))) return { ok: true, path: relPath, binary: true };
+    const all = Buffer.alloc(stat.size);
+    await handle.read(all, 0, stat.size, 0);
+    return { ok: true, path: relPath, text: all.toString('utf8') };
+  } finally {
+    await handle.close();
+  }
+}
+
+export function httpPath(url: string | undefined): string {
+  if (url === undefined) return '/';
+  if (url.length === 0) return '/';
+  return url;
+}
+
+export function httpMethod(method: string | undefined): string {
+  if (method === undefined) return 'GET';
+  return method;
+}
 
 function createRouter(): { get(path: string, handler: Handler): void; routes: RouteTable } {
   const routes: RouteTable = new Map();
@@ -49,13 +190,6 @@ function sendText(res: ServerResponse, status: number, type: string, body: strin
 function hostAllowed(host: string | undefined, port: number): boolean {
   return host === `127.0.0.1:${port}` || host === `localhost:${port}`;
 }
-
-const ASSET_TYPES: Record<string, string> = {
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.html': 'text/html; charset=utf-8',
-  '.svg': 'image/svg+xml',
-};
 
 function assetType(filePath: string): string {
   return ASSET_TYPES[extname(filePath)] ?? 'application/octet-stream';
@@ -106,7 +240,7 @@ async function serveTree(deps: AppDeps, res: ServerResponse): Promise<void> {
   sendJson(res, 200, buildTree(basename(deps.repoRoot), files));
 }
 
-function sendFileResult(res: ServerResponse, result: Awaited<ReturnType<typeof readRepoFile>>): void {
+function sendFileResult(res: ServerResponse, result: FileResult): void {
   if (!result.ok) {
     sendJson(res, result.status, { error: result.error });
     return;
@@ -198,4 +332,18 @@ export function createAppServer(deps: AppDeps): Server {
   return createServer((req, res) => {
     void dispatch(deps, router.routes, req, res);
   });
+}
+
+export async function bindApp(
+  deps: AppDeps,
+  portChoice: PortChoice,
+): Promise<{ server: Server; port: number } | { error: ListenError }> {
+  const server = createAppServer(deps);
+  const listened = await listenForChoice(server, portChoice);
+  if ('error' in listened) {
+    server.close();
+    return { error: listened.error };
+  }
+  deps.port = listened.port;
+  return { server, port: listened.port };
 }
