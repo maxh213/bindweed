@@ -131,6 +131,12 @@ describe('createAppServer', () => {
     expect(JSON.parse(res.body.toString())).toEqual({ error: 'bad host' });
   });
 
+  it('refuses Host with the loopback address on the wrong port', async () => {
+    const res = await hit(port, 'GET', `/api/tree?token=${token}`, { Host: '127.0.0.1:9999' });
+    expect(res.status).toBe(403);
+    expect(JSON.parse(res.body.toString())).toEqual({ error: 'bad host' });
+  });
+
   it('refuses Host without the listening port', async () => {
     const res = await hit(port, 'GET', `/api/tree?token=${token}`, { Host: '127.0.0.1' });
     expect(res.status).toBe(403);

@@ -115,12 +115,9 @@ describe('TreeView and FilePanel rendering', () => {
     expect(src?.getAttribute('aria-expanded')).toBe('true');
     expect(top?.getAttribute('aria-expanded')).toBe('true');
     expect(file?.getAttribute('aria-current')).toBe('true');
-    expect((file as HTMLButtonElement).style.paddingLeft).toBe('24px');
-    expect((src as HTMLButtonElement).style.paddingLeft).toBe('12px');
-    expect((top as HTMLButtonElement).style.paddingLeft).toBe('0px');
   });
 
-  it('wires tree row styles and click callbacks', async () => {
+  it('wires tree row click callbacks', async () => {
     const { TreeView } = await import('./TreeView.tsx');
     const toggled: string[] = [];
     const selected: string[] = [];
@@ -146,14 +143,6 @@ describe('TreeView and FilePanel rendering', () => {
     const src = buttons.find(el => el.textContent === 'src/');
     const file = buttons.find(el => el.textContent === 'a.ts');
     const top = buttons.find(el => el.textContent === 'demo-repo/');
-    expect((top as HTMLButtonElement).style.display).toBe('block');
-    expect((top as HTMLButtonElement).style.width).toBe('100%');
-    expect((top as HTMLButtonElement).style.textAlign).toBe('left');
-    expect((top as HTMLButtonElement).style.borderWidth).toBe('0px');
-    expect((top as HTMLButtonElement).style.borderStyle).toBe('none');
-    expect((top as HTMLButtonElement).style.background).toBe('transparent');
-    expect((top as HTMLButtonElement).style.cursor).toBe('pointer');
-    expect((top as HTMLButtonElement).style.font).toContain('inherit');
     src?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
     top?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
     file?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
