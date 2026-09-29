@@ -1,14 +1,13 @@
-import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, symlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createServer as createNetServer } from 'node:net';
 import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isEntry, main, runIfMain, defaultIo, bindRunning, installDirFrom, uiDistDir, uiIndexPath, startCli, waitForAbort, cliBoot, type Io } from './cli.ts';
 import { runGit, ensureExcludeLine, withExcludeLine } from './repo.ts';
-import { pathToFileURL } from 'node:url';
 function capture(): Io & { out: string[]; err: string[] } {
   const out: string[] = [];
   const err: string[] = [];
@@ -37,6 +36,33 @@ async function makeInstall(): Promise<string> {
   await mkdir(join(dir, 'dist', 'ui', 'assets'), { recursive: true });
   await writeFile(join(dir, 'dist', 'ui', 'index.html'), '<html>ui</html>');
   return dir;
+}
+
+async function waitForTwoLines(io: ReturnType<typeof capture>): Promise<void> {
+  await new Promise<void>(resolve => {
+    const tick = () => {
+      if (io.out.length >= 2) resolve();
+      else setTimeout(tick, 20);
+    };
+    tick();
+  });
+}
+
+async function makeSymlinkInstall(): Promise<{ installCli: string; linkArgv: string; binHome: string }> {
+  const outer = await mkdtemp(join(tmpdir(), 'bw-sym-'));
+  const install = join(outer, 'pkg');
+  const binHome = join(outer, 'prefix');
+  await mkdir(join(install, 'src'), { recursive: true });
+  await mkdir(join(install, 'dist', 'ui'), { recursive: true });
+  await mkdir(join(binHome, 'bin'), { recursive: true });
+  await mkdir(join(binHome, 'dist', 'ui'), { recursive: true });
+  const realCli = fileURLToPath(new URL('./cli.ts', import.meta.url));
+  const installCli = join(install, 'src', 'cli.ts');
+  await symlink(realCli, installCli);
+  await symlink(installCli, join(binHome, 'bin', 'bindweed'));
+  await writeFile(join(install, 'dist', 'ui', 'index.html'), '<html>own-ui</html>');
+  await writeFile(join(binHome, 'dist', 'ui', 'index.html'), '<html>wrong-ui</html>');
+  return { installCli, linkArgv: join(binHome, 'bin', 'bindweed'), binHome };
 }
 
 describe('isEntry', () => {
@@ -79,14 +105,25 @@ describe('runIfMain', () => {
       io,
     );
     expect(running).toBeDefined();
-    await new Promise<void>(resolve => {
-      const tick = () => {
-        if (io.out.length >= 2) resolve();
-        else setTimeout(tick, 20);
-      };
-      tick();
-    });
+    await waitForTwoLines(io);
     process.emit('SIGTERM');
+    expect(await running).toBe(0);
+  });
+
+  it('stops a serving runIfMain on SIGINT', async () => {
+    const repo = await makeRepo();
+    const cliPath = fileURLToPath(new URL('./cli.ts', import.meta.url));
+    const io = capture();
+    const running = runIfMain(
+      pathToFileURL(cliPath).href,
+      ['node', cliPath, '--port', '19122'],
+      {},
+      repo,
+      io,
+    );
+    expect(running).toBeDefined();
+    await waitForTwoLines(io);
+    process.emit('SIGINT');
     expect(await running).toBe(0);
   });
 });
@@ -309,6 +346,28 @@ describe('installDirFrom', () => {
     expect(installDirFrom(meta)).toBe('/tmp/qa/unbuilt');
     expect(uiDistDir('/tmp/qa/unbuilt')).toBe('/tmp/qa/unbuilt/dist/ui');
     expect(uiIndexPath('/tmp/qa/unbuilt')).toBe('/tmp/qa/unbuilt/dist/ui/index.html');
+  });
+
+  it('serves bindweed own ui when argv is a symlink under another directory', async () => {
+    const { installCli, linkArgv, binHome } = await makeSymlinkInstall();
+    const repo = await makeRepo();
+    const io = capture();
+    const running = runIfMain(
+      pathToFileURL(installCli).href,
+      ['node', linkArgv, '--port', '19123'],
+      {},
+      repo,
+      io,
+    );
+    expect(running).toBeDefined();
+    await waitForTwoLines(io);
+    const url = (io.out[0] ?? '').replace(/^bindweed: /, '').trim();
+    const res = await fetch(url);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('<html>own-ui</html>');
+    expect(dirname(dirname(linkArgv))).toBe(binHome);
+    process.emit('SIGTERM');
+    expect(await running).toBe(0);
   });
 });
 

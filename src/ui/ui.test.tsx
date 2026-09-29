@@ -356,16 +356,12 @@ describe('App and boot', () => {
       expect(document.title).toBe('bindweed — demo-repo');
       expect(document.body.textContent).toContain('export const a = 1;');
     });
-    const layout = document.querySelector('#root > div') as HTMLElement;
-    expect(layout.style.display).toBe('flex');
-    expect(layout.style.minHeight).toBe('100vh');
-    const aside = document.querySelector('aside') as HTMLElement;
-    expect(aside.style.width).toBe('280px');
-    expect(aside.style.borderRight).toBe('1px solid rgb(204, 204, 204)');
-    expect(aside.style.overflow).toBe('auto');
-    const main = document.querySelector('main') as HTMLElement;
-    expect(main.style.flexGrow).toBe('1');
-    expect(main.style.padding).toBe('16px');
+    const buttons = Array.from(document.querySelectorAll('button'));
+    expect(buttons.find(el => el.textContent === 'demo-repo/')?.getAttribute('aria-expanded')).toBe(
+      'true',
+    );
+    expect(buttons.find(el => el.textContent === 'src/')?.getAttribute('aria-expanded')).toBe('true');
+    expect(buttons.find(el => el.textContent === 'a.ts')?.getAttribute('aria-current')).toBe('true');
   });
 
   it('selects a file and updates the hash', async () => {

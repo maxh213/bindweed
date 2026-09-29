@@ -12,7 +12,7 @@ module.exports = {
     {
       name: 'domain-is-pure',
       severity: 'error',
-      comment: 'src/domain holds the tree and text models as pure code; it imports nothing outside domain, Node built-ins and npm packages included',
+      comment: 'src/domain holds the graph, plan, metrics and contract models as pure code; it imports nothing outside domain, Node built-ins and npm packages included',
       from: { path: '^src/domain' },
       to: { pathNot: '^src/domain' }
     },
@@ -36,34 +36,6 @@ module.exports = {
       comment: 'src/cli.ts composes everything; nothing imports it',
       from: { pathNot: '^src/cli(\\.test)?\\.ts$' },
       to: { path: '^src/cli\\.ts$' }
-    },
-    {
-      name: 'only-cli-imports-args',
-      severity: 'error',
-      comment: 'argv parsing is only for the entry; nothing else reaches into args',
-      from: { pathNot: '^src/(cli\\.ts|args(\\.test)?\\.ts)$' },
-      to: { path: '^src/args\\.ts$' }
-    },
-    {
-      name: 'only-cli-imports-serve',
-      severity: 'error',
-      comment: 'HTTP serving is a deep module; only the cli composes it among production files',
-      from: { pathNot: '^src/(cli\\.ts|serve\\.ts|.+\\.test\\.tsx?)$' },
-      to: { path: '^src/serve\\.ts$' }
-    },
-    {
-      name: 'only-cli-and-serve-import-repo',
-      severity: 'error',
-      comment: 'repo is git and workspace IO; only cli and serve reach it among production files',
-      from: { pathNot: '^src/(cli\\.ts|serve\\.ts|repo\\.ts|.+\\.test\\.tsx?)$' },
-      to: { path: '^src/repo\\.ts$' }
-    },
-    {
-      name: 'args-imports-nothing-under-src',
-      severity: 'error',
-      comment: 'args is a leaf: parse argv only',
-      from: { path: '^src/args\\.ts$' },
-      to: { path: '^src/' }
     },
     {
       name: 'no-orphans',

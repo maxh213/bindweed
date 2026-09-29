@@ -13,8 +13,10 @@ import {
   withExcludeLine,
   ensureExcludeLine,
   ensureBindweedDir,
+  prepareBindweed,
   exitCode,
   isRegularFile,
+  type GitRunner,
 } from './repo.ts';
 
 async function gitInit(dir: string): Promise<void> {
@@ -138,6 +140,26 @@ describe('excludeFilePath', () => {
     expect(excludeFilePath('/tmp/qa/demo-repo/.git', '/tmp/qa/demo-wt')).toBe(
       '/tmp/qa/demo-repo/.git/info/exclude',
     );
+  });
+});
+
+describe('prepareBindweed', () => {
+  it('writes the exclude line into a linked worktree common dir', async () => {
+    const mainRepo = await mkdtemp(join(tmpdir(), 'bw-main-'));
+    const worktree = await mkdtemp(join(tmpdir(), 'bw-wt-'));
+    const mainGit = join(mainRepo, '.git');
+    await mkdir(mainGit, { recursive: true });
+    const git: GitRunner = async (args, cwd) => {
+      expect(cwd).toBe(worktree);
+      expect(args).toEqual(['rev-parse', '--git-common-dir']);
+      return { code: 0, stdout: `${mainGit}\n`, stderr: '' };
+    };
+    await prepareBindweed(worktree, git);
+    await prepareBindweed(worktree, git);
+    expect(existsSync(join(worktree, '.bindweed'))).toBe(true);
+    expect(existsSync(join(worktree, '.git'))).toBe(false);
+    const exclude = await readFile(join(mainGit, 'info', 'exclude'), 'utf8');
+    expect(exclude.split('\n').filter(l => l === '.bindweed/')).toHaveLength(1);
   });
 });
 
