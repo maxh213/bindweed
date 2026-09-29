@@ -277,22 +277,24 @@ describe('TreeView and FilePanel rendering', () => {
   it('shows an empty repository with only the root row', async () => {
     const { TreeView } = await import('./TreeView.tsx');
     const { FilePanel } = await import('./FilePanel.tsx');
-    root.render(
-      createElement(
-        'div',
-        null,
-        createElement(TreeView, {
-          root: 'empty-repo',
-          entries: [],
-          expanded: new Set(['']),
-          selected: null,
-          onToggle: () => undefined,
-          onSelect: () => undefined,
-        }),
-        createElement(FilePanel, { state: { kind: 'idle' } }),
-      ),
-    );
-    await new Promise(r => setTimeout(r, 0));
+    const { act } = await import('react');
+    await act(async () => {
+      root.render(
+        createElement(
+          'div',
+          null,
+          createElement(TreeView, {
+            root: 'empty-repo',
+            entries: [],
+            expanded: new Set(['']),
+            selected: null,
+            onToggle: () => undefined,
+            onSelect: () => undefined,
+          }),
+          createElement(FilePanel, { state: { kind: 'idle' } }),
+        ),
+      );
+    });
     expect(document.body.textContent).toBe('empty-repo/select a file');
   });
 });

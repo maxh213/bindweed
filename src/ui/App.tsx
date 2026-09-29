@@ -57,8 +57,8 @@ function BrowserApp(props: Readonly<AppProps>) {
   }, [root]);
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh' }}>
-      <aside style={{ width: 280, borderRight: '1px solid rgb(204, 204, 204)', overflow: 'auto' }}>
+    <div>
+      <aside>
         <TreeView
           root={root}
           entries={entries}
@@ -71,7 +71,7 @@ function BrowserApp(props: Readonly<AppProps>) {
           }}
         />
       </aside>
-      <main style={{ flexGrow: 1, padding: 16 }}>
+      <main>
         {selected === null ? <FilePanel state={{ kind: 'idle' }} /> : (
           <FileLoader token={props.token} path={selected} fetcher={props.fetcher} />
         )}
