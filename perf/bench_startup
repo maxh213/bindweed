@@ -1,0 +1,45 @@
+#!/usr/bin/env node
+import {
+  absent,
+  cleanup,
+  emitOnce,
+  fixtureRepo,
+  fixtureUi,
+  listen,
+  loadModule,
+  timeMs,
+} from './harness.mjs';
+
+const TARGET = 'app listen';
+
+const serve = await loadModule('src/serve.ts');
+if (serve === undefined || typeof serve.createAppServer !== 'function') {
+  absent(TARGET);
+  process.exit(0);
+}
+
+const token = 'b'.repeat(32);
+const repo = await fixtureRepo(20);
+const ui = await fixtureUi();
+
+async function oneListen() {
+  const deps = { repoRoot: repo, uiDir: ui, token, port: 0 };
+  const server = serve.createAppServer(deps);
+  try {
+    return await timeMs(async () => {
+      await listen(server, 0);
+      const addr = server.address();
+      if (addr === null || typeof addr === 'string') throw new Error('no port');
+      deps.port = addr.port;
+    });
+  } finally {
+    await new Promise(resolve => server.close(() => resolve()));
+  }
+}
+
+try {
+  for (let i = 0; i < 3; i += 1) await oneListen();
+  emitOnce(TARGET, await oneListen());
+} finally {
+  await cleanup(repo, ui);
+}

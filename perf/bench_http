@@ -1,0 +1,70 @@
+#!/usr/bin/env node
+import {
+  VALUES,
+  WARMUP,
+  absent,
+  cleanup,
+  emit,
+  fixtureRepo,
+  fixtureUi,
+  hit,
+  keepAliveAgent,
+  listen,
+  loadModule,
+  sample,
+} from './harness.mjs';
+
+const TARGETS = ['GET /', 'GET /assets/app.js', 'GET /api/tree', 'GET /api/file'];
+
+const serve = await loadModule('src/serve.ts');
+if (serve === undefined || typeof serve.createAppServer !== 'function') {
+  absent(...TARGETS);
+  process.exit(0);
+}
+
+const token = 'a'.repeat(32);
+const repo = await fixtureRepo(60);
+const ui = await fixtureUi();
+const agent = keepAliveAgent();
+let server;
+
+try {
+  const deps = { repoRoot: repo, uiDir: ui, token, port: 0 };
+  server = serve.createAppServer(deps);
+  await listen(server, 0);
+  const addr = server.address();
+  if (addr === null || typeof addr === 'string') throw new Error('no port');
+  const port = addr.port;
+  deps.port = port;
+
+  const auth = { Authorization: `Bearer ${token}` };
+
+  async function getIndex() {
+    const res = await hit(agent, port, 'GET', `/?token=${token}`);
+    if (res.status !== 200) throw new Error(`GET / -> ${res.status}`);
+  }
+
+  async function getAsset() {
+    const res = await hit(agent, port, 'GET', '/assets/app.js');
+    if (res.status !== 200) throw new Error(`GET /assets/app.js -> ${res.status}`);
+  }
+
+  async function getTree() {
+    const res = await hit(agent, port, 'GET', '/api/tree', auth);
+    if (res.status !== 200) throw new Error(`GET /api/tree -> ${res.status}`);
+  }
+
+  async function getFile() {
+    const res = await hit(agent, port, 'GET', '/api/file?path=src/a.ts', auth);
+    if (res.status !== 200) throw new Error(`GET /api/file -> ${res.status}`);
+  }
+
+  emit('GET /', await sample(getIndex, VALUES, WARMUP));
+  emit('GET /assets/app.js', await sample(getAsset, VALUES, WARMUP));
+  emit('GET /api/tree', await sample(getTree, VALUES, WARMUP));
+  emit('GET /api/file', await sample(getFile, VALUES, WARMUP));
+} finally {
+  agent.destroy();
+  if (server) await new Promise(resolve => server.close(() => resolve()));
+  await cleanup(repo, ui);
+}

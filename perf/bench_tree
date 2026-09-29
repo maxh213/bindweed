@@ -1,0 +1,52 @@
+#!/usr/bin/env node
+import {
+  VALUES,
+  WARMUP,
+  absent,
+  cleanup,
+  emit,
+  fixtureRepo,
+  loadExport,
+  manyPaths,
+  sample,
+} from './harness.mjs';
+
+const TARGETS = ['buildTree 500 paths', 'filePathSet 500 paths', 'listedRegularFiles'];
+
+const buildTree = await loadExport('src/domain/tree.ts', 'buildTree');
+const filePathSet = await loadExport('src/domain/tree.ts', 'filePathSet');
+const listedRegularFiles = await loadExport('src/repo.ts', 'listedRegularFiles');
+
+if (buildTree === undefined || filePathSet === undefined || listedRegularFiles === undefined) {
+  absent(...TARGETS);
+  process.exit(0);
+}
+
+const paths = manyPaths(500);
+const tree = buildTree('perf-repo', paths);
+
+emit(
+  'buildTree 500 paths',
+  await sample(async () => {
+    buildTree('perf-repo', paths);
+  }),
+);
+
+emit(
+  'filePathSet 500 paths',
+  await sample(async () => {
+    filePathSet(tree.entries);
+  }),
+);
+
+const repo = await fixtureRepo(80);
+try {
+  emit(
+    'listedRegularFiles',
+    await sample(async () => {
+      await listedRegularFiles(repo);
+    }, VALUES, WARMUP),
+  );
+} finally {
+  await cleanup(repo);
+}
