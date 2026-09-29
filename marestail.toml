@@ -1,0 +1,47 @@
+[git]
+base = "origin/main"
+
+[agent]
+backend = "claude"
+model = "claude-opus-5-5"
+effort = "high"
+
+[practices]
+enabled = true
+
+[perf]
+setup = "npm ci --silent"
+min_runs = 4
+
+[ts]
+root = "."
+source = "src"
+tsconfig = "tsconfig.json"
+crap_max = 4
+runner = "vitest"
+
+[sonar]
+project_key = "bindweed"
+project_name = "bindweed"
+exclusions = []
+
+[deadcode]
+min_confidence = 60
+ts_kinds = ["files", "exports", "types"]
+
+[docs]
+files = ["README.md"]
+routes_file = "README.md"
+sources = ["src"]
+path_prefixes = ["src/", "tasks/", "qa/"]
+ignore_env = []
+
+[comments]
+paths = ["src"]
+
+[qa]
+cmd = "npx playwright test"
+cwd = "."
+
+[freeze.allow]
+qa = ["qa/**"]

@@ -1,0 +1,5 @@
+{
+  "entry": ["src/cli.ts", "src/ui/main.tsx", "src/**/*.test.{ts,tsx}", "qa/**/*.{ts,mjs}", "perf/**/*.{ts,mjs}"],
+  "project": ["src/**/*.{ts,tsx}", "qa/**/*.{ts,mjs}", "perf/**/*.{ts,mjs}"],
+  "ignoreDependencies": ["dependency-cruiser", "c8", "@stryker-mutator/vitest-runner", "jsdom"]
+}
