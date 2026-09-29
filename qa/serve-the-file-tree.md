@@ -76,7 +76,7 @@ Paste the `export` line it prints into the second terminal. `hold 4477 4497` kee
     head -c 1048577 /dev/zero | tr '\0' x > big.txt; mkdir notes; printf 'cześć\n' > 'notes/żółw i zając.md'
     ```
 
-    **Expect:** the rows under the root are `docs/`, `notes/`, `src/`, `.gitignore`, `README.md`, `Zebra.txt`, `apple.txt`, `big.txt`, `blob.bin`, `notes.txt`; the symlink `link.txt` is not among them. `notes.txt` shows line 1 `todo`; `blob.bin` shows `binary file, not shown`; `big.txt` shows `file too large to show`; the last shows the header `notes/żółw i zając.md` and line 1 `cześć`.
+    **Expect:** the rows under the root are `docs/`, `notes/`, `src/`, `.gitignore`, `README.md`, `Zebra.txt`, `apple.txt`, `big.txt`, `blob.bin`, `notes.txt`; the symlink `link.txt` is not among them. `notes.txt` shows line 1 `todo`; `blob.bin` shows `binary file, not shown`; `big.txt` shows `file too large to show`; the last shows the header `notes/żółw i zając.md` and line 1 `cześć`, and the address bar reads `http://127.0.0.1:4477/#file=notes/%C5%BC%C3%B3%C5%82w%20i%20zaj%C4%85c.md`.
 
 12. Open `http://127.0.0.1:4477/?token=$TOKEN#file=nope.ts`, with the token written out. Afterwards, in the second terminal, run `(cd $QA/demo-repo && rm -r notes notes.txt blob.bin big.txt link.txt)`.
     **Expect:** the header `nope.ts` and the text `no such file`.
@@ -105,14 +105,17 @@ Paste the `export` line it prints into the second terminal. `hold 4477 4497` kee
     | | `BINDWEED_PORT=4600 node $BW/src/cli.ts --port 4555` | the link holds port `4555` |
     | | `node $BW/src/cli.ts --port abc; echo $?` | `bindweed: port abc is not a number from 1 to 65535`, then `2` |
 
-18. Make a copy of bindweed that has no built ui and run it:
+18. Make a copy of bindweed that has no built ui, then a symlink that matches an npm install of the real entry:
 
     ```sh
-    mkdir -p $QA/unbuilt && cp -r $BW/src $BW/package.json $QA/unbuilt/ && ln -sfn $BW/node_modules $QA/unbuilt/node_modules
+    mkdir -p $QA/unbuilt $QA/bin && cp -r $BW/src $BW/package.json $QA/unbuilt/ && ln -sfn $BW/node_modules $QA/unbuilt/node_modules
     node $QA/unbuilt/src/cli.ts; echo $?
+    ln -sfn $BW/src/cli.ts $QA/bin/bindweed
+    node $QA/bin/bindweed
     ```
 
-    **Expect:** `bindweed: the ui is not built; run npm run build in $QA/unbuilt`, then `1`.
+    After the unbuilt run exits, start via the symlink, set `TOKEN` from its first line, then in the second terminal run `curl -si "http://127.0.0.1:4477/?token=$TOKEN" | head -n 5` and stop bindweed with Ctrl-C.
+    **Expect:** the unbuilt run prints `bindweed: the ui is not built; run npm run build in $QA/unbuilt`, then `1`. The symlink run prints the two usual stdout lines for `$QA/demo-repo` on port 4477. The curl status is `200` and the body is bindweed's own `dist/ui/index.html` (it names `/assets/`).
 
 19. Take the exclude line out, start bindweed in a linked worktree, stop it with Ctrl-C, then run the last line:
 
@@ -123,3 +126,13 @@ Paste the `export` line it prints into the second terminal. `hold 4477 4497` kee
     ```
 
     **Expect:** the second stdout line is `serving $QA/demo-wt`; then `1`, nothing from git status, `.bindweed`, and `gitdir: $QA/demo-repo/.git/worktrees/demo-wt`.
+
+20. Stop any bindweed still running. In the first terminal:
+
+    ```sh
+    mkdir -p $QA/empty-repo && cd $QA/empty-repo && git init -q
+    node $BW/src/cli.ts
+    ```
+
+    Set `TOKEN` from the first line. In the second terminal run `curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:4477/api/tree`, then open the printed link in the browser.
+    **Expect:** the API body is exactly `{"root":"empty-repo","entries":[]}`. The left side shows only `empty-repo/`; the right side shows `select a file`.

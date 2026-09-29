@@ -69,6 +69,17 @@ Feature: bindweed serves a repository's file tree on localhost
       When I run "node /tmp/qa/unbuilt/src/cli.ts" in "/tmp/qa/plain"
       Then stderr is "bindweed: /tmp/qa/plain is not inside a git repository" and the exit status is 2
 
+    Scenario: The installed bindweed command finds its own ui
+      Given "/tmp/qa/bin/bindweed" is a symlink to "<bindweed dir>/src/cli.ts"
+      When I run "node /tmp/qa/bin/bindweed" in "/tmp/qa/demo-repo"
+      Then stdout holds exactly these two lines, {token} being 32 lowercase hex characters:
+        """
+        bindweed: http://127.0.0.1:4477/?token={token}
+        serving /tmp/qa/demo-repo
+        """
+      When I send "GET /?token={token}"
+      Then the status is 200, the content type is "text/html; charset=utf-8" and the body is the index.html from bindweed's own dist/ui
+
     Scenario: Two starts leave one exclude line and change nothing else
       Given I noted every file under "/tmp/qa/demo-repo", ".git" included
       When I start bindweed, open "src/a.ts" in the page, stop bindweed and start it again
@@ -237,6 +248,20 @@ Feature: bindweed serves a repository's file tree on localhost
           {"name":"apple.txt","path":"apple.txt","kind":"file"}]}
         """
 
+    Scenario: An empty repository lists no entries
+      Given "/tmp/qa/empty-repo" is a fresh git repository with no committed or untracked files
+      When I run "bindweed" in "/tmp/qa/empty-repo"
+      Then stdout holds exactly these two lines, {token} being 32 lowercase hex characters:
+        """
+        bindweed: http://127.0.0.1:4477/?token={token}
+        serving /tmp/qa/empty-repo
+        """
+      When I send "GET /api/tree" with the token
+      Then the status is 200 and the body is {"root":"empty-repo","entries":[]}
+      When I open "http://127.0.0.1:4477/?token={token}" in a browser
+      Then the left side shows exactly the row "empty-repo/"
+      And the right side shows "select a file"
+
     Scenario: The tree follows the working tree
       Given bindweed is already serving
       When I create the untracked file "notes.txt" and delete "apple.txt" from disk without committing
@@ -344,6 +369,12 @@ Feature: bindweed serves a repository's file tree on localhost
         | 3 | export const sum = a + 2;   |
       And the row "a.ts" is marked as selected
       And the address bar shows "http://127.0.0.1:4477/#file=src/a.ts"
+
+    Scenario: Selecting a non-ASCII path writes the encoded hash
+      Given the working tree also holds "notes/żółw i zając.md" with the one line "cześć"
+      And the page is open and "notes/" is expanded
+      When I click "żółw i zając.md"
+      Then the address bar shows "http://127.0.0.1:4477/#file=notes/%C5%BC%C3%B3%C5%82w%20i%20zaj%C4%85c.md"
 
     Scenario Outline: A final newline does not start another numbered line
       Given the working tree also holds "<file>" with the content "<content>"
