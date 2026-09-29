@@ -259,13 +259,18 @@ describe('TreeView and FilePanel rendering', () => {
 
   it('renders loading and message panels', async () => {
     const { FilePanel } = await import('./FilePanel.tsx');
-    root.render(createElement(FilePanel, { state: { kind: 'loading', path: 'x.ts' } }));
-    await new Promise(r => setTimeout(r, 0));
+    const { act } = await import('react');
+    await act(async () => {
+      root.render(createElement(FilePanel, { state: { kind: 'loading', path: 'x.ts' } }));
+    });
     expect(document.body.textContent).toContain('x.ts');
-    root.render(
-      createElement(FilePanel, { state: { kind: 'message', path: 'blob.bin', message: 'binary file, not shown' } }),
-    );
-    await new Promise(r => setTimeout(r, 0));
+    await act(async () => {
+      root.render(
+        createElement(FilePanel, {
+          state: { kind: 'message', path: 'blob.bin', message: 'binary file, not shown' },
+        }),
+      );
+    });
     expect(document.body.textContent).toContain('binary file, not shown');
   });
 
