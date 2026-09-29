@@ -3,9 +3,10 @@ import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer as createNetServer } from 'node:net';
+import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import { fileURLToPath } from 'node:url';
-import { isEntry, main, runIfMain, defaultIo, bindRunning, installDirFrom, uiDistDir, uiIndexPath, type Io } from './cli.ts';
+import { isEntry, main, runIfMain, defaultIo, bindRunning, installDirFrom, uiDistDir, uiIndexPath, startCli, waitForAbort, cliBoot, type Io } from './cli.ts';
 import { runGit, ensureExcludeLine, withExcludeLine } from './repo.ts';
 import { pathToFileURL } from 'node:url';
 function capture(): Io & { out: string[]; err: string[] } {
@@ -41,10 +42,12 @@ async function makeInstall(): Promise<string> {
 describe('isEntry', () => {
   const self = import.meta.url;
   const selfPath = fileURLToPath(self);
+  const cliPath = fileURLToPath(new URL('./cli.ts', import.meta.url));
 
   it('knows when its module is the entry file', () => {
     expect(isEntry(self, selfPath)).toBe(true);
     expect(isEntry(self, undefined)).toBe(false);
+    expect(isEntry(pathToFileURL(cliPath).href, selfPath)).toBe(false);
   });
 });
 
@@ -90,19 +93,59 @@ describe('runIfMain', () => {
 
 describe('defaultIo and bindRunning', () => {
   it('writes through stdout and stderr', () => {
-    const io = defaultIo();
-    expect(typeof io.writeOut).toBe('function');
-    expect(typeof io.writeErr).toBe('function');
-    expect(io.writeOut('')).toBeUndefined();
-    expect(io.writeErr('')).toBeUndefined();
+    const out: Buffer[] = [];
+    const err: Buffer[] = [];
+    const stdoutWrite = process.stdout.write.bind(process.stdout);
+    const stderrWrite = process.stderr.write.bind(process.stderr);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      out.push(Buffer.from(chunk));
+      return true;
+    }) as typeof process.stdout.write;
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      err.push(Buffer.from(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      const io = defaultIo();
+      io.writeOut('hello-out\n');
+      io.writeErr('hello-err\n');
+      expect(Buffer.concat(out).toString()).toBe('hello-out\n');
+      expect(Buffer.concat(err).toString()).toBe('hello-err\n');
+    } finally {
+      process.stdout.write = stdoutWrite;
+      process.stderr.write = stderrWrite;
+    }
   });
 
   it('sets exitCode when a run finishes', async () => {
     const previous = process.exitCode;
-    bindRunning(undefined);
+    process.exitCode = undefined;
     bindRunning(Promise.resolve(7));
     await new Promise(r => setTimeout(r, 10));
     expect(process.exitCode).toBe(7);
+    process.exitCode = previous;
+  });
+
+  it('does not bind a missing run', async () => {
+    const previous = process.exitCode;
+    process.exitCode = 9;
+    bindRunning(undefined);
+    await new Promise(r => setTimeout(r, 20));
+    expect(process.exitCode).toBe(9);
+    process.exitCode = previous;
+  });
+
+  it('binds exitCode through startCli for an entry run', async () => {
+    const plain = await mkdtemp(join(tmpdir(), 'bw-bind-'));
+    const cliPath = fileURLToPath(new URL('./cli.ts', import.meta.url));
+    const io = capture();
+    const previous = process.exitCode;
+    process.exitCode = undefined;
+    const running = startCli(pathToFileURL(cliPath).href, ['node', cliPath], {}, plain, io);
+    expect(running).toBeDefined();
+    expect(await running).toBe(2);
+    await new Promise(r => setTimeout(r, 10));
+    expect(process.exitCode).toBe(2);
     process.exitCode = previous;
   });
 });
@@ -266,5 +309,67 @@ describe('installDirFrom', () => {
     expect(installDirFrom(meta)).toBe('/tmp/qa/unbuilt');
     expect(uiDistDir('/tmp/qa/unbuilt')).toBe('/tmp/qa/unbuilt/dist/ui');
     expect(uiIndexPath('/tmp/qa/unbuilt')).toBe('/tmp/qa/unbuilt/dist/ui/index.html');
+  });
+});
+
+describe('cliBoot', () => {
+  it('is idle when the module is loaded under vitest', () => {
+    expect(cliBoot).toBeUndefined();
+  });
+});
+
+describe('waitForAbort', () => {
+  it('closes at once when the signal is already aborted', async () => {
+    const ac = new AbortController();
+    ac.abort();
+    let closed = 0;
+    await waitForAbort(ac.signal, async () => {
+      closed += 1;
+    });
+    expect(closed).toBe(1);
+  });
+
+  it('closes after the signal aborts', async () => {
+    const ac = new AbortController();
+    let closed = 0;
+    const done = waitForAbort(ac.signal, async () => {
+      closed += 1;
+    });
+    expect(closed).toBe(0);
+    ac.abort();
+    await done;
+    expect(closed).toBe(1);
+  });
+});
+
+describe('startCli entry', () => {
+  it('runs the real entry process and refuses a non-repo cwd', () => {
+    const plain = spawnSync('node', [fileURLToPath(new URL('./cli.ts', import.meta.url))], {
+      cwd: tmpdir(),
+      encoding: 'utf8',
+      env: { ...process.env, BINDWEED_PORT: '19201' },
+    });
+    expect(plain.status).toBe(2);
+    expect(plain.stderr).toContain('is not inside a git repository');
+    expect(plain.stdout).toBe('');
+  });
+
+  it('returns undefined from startCli when not the entry', () => {
+    const io = capture();
+    expect(startCli(import.meta.url, ['node'], {}, process.cwd(), io)).toBeUndefined();
+  });
+
+  it('binds a serving startCli when argv points at the cli', async () => {
+    const plain = await mkdtemp(join(tmpdir(), 'bw-start-'));
+    const cliPath = fileURLToPath(new URL('./cli.ts', import.meta.url));
+    const io = capture();
+    const previous = process.exitCode;
+    process.exitCode = undefined;
+    const running = startCli(pathToFileURL(cliPath).href, ['node', cliPath], {}, plain, io);
+    expect(running).toBeDefined();
+    expect(await running).toBe(2);
+    await new Promise(r => setTimeout(r, 10));
+    expect(process.exitCode).toBe(2);
+    process.exitCode = previous;
   });
 });

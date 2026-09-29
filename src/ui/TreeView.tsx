@@ -10,17 +10,19 @@ type Props = Readonly<{
   onSelect: (path: string) => void;
 }>;
 
-const rowStyle = (depth: number): CSSProperties => ({
-  display: 'block',
-  width: '100%',
-  textAlign: 'left',
-  border: 'none',
-  background: 'transparent',
-  paddingLeft: depth * 12,
-  cursor: 'pointer',
-  font: 'inherit',
-});
-
+function rowStyle(depth: number): CSSProperties {
+  return {
+    display: 'block',
+    width: '100%',
+    textAlign: 'left',
+    borderWidth: 0,
+    borderStyle: 'none',
+    background: 'transparent',
+    paddingLeft: depth * 12,
+    cursor: 'pointer',
+    font: 'inherit',
+  };
+}
 type FileRowProps = Readonly<{
   entry: TreeEntry;
   selected: string | null;
@@ -33,7 +35,7 @@ function FileRow({ entry, selected, onSelect, depth }: FileRowProps) {
   return (
     <button
       type="button"
-      aria-current={current ? 'true' : undefined}
+      aria-current={current ? true : undefined}
       style={rowStyle(depth)}
       onClick={() => onSelect(entry.path)}
     >
@@ -57,7 +59,7 @@ function DirRow({ entry, expanded, selected, onToggle, onSelect, depth }: DirRow
     <>
       <button
         type="button"
-        aria-expanded={open ? 'true' : 'false'}
+        aria-expanded={open}
         style={rowStyle(depth)}
         onClick={() => onToggle(entry.path)}
       >
@@ -117,7 +119,7 @@ export function TreeView(props: Props) {
     <nav>
       <button
         type="button"
-        aria-expanded={props.expanded.has('') ? 'true' : 'false'}
+        aria-expanded={props.expanded.has('')}
         style={rowStyle(0)}
         onClick={() => props.onToggle('')}
       >

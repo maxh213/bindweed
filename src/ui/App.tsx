@@ -5,7 +5,7 @@ import { togglePath } from '../domain/tree.ts';
 import { fetchFile, fetchTree, writeFileHash } from './client.ts';
 import { FilePanel } from './FilePanel.tsx';
 import { TreeView } from './TreeView.tsx';
-import { expandedFromLocation, panelFromQuery, selectedFromLocation, treeParts } from './view.ts';
+import { expandedFromLocation, panelFromQuery, selectedFromLocation, applyTitle, treeParts } from './view.ts';
 
 export type AppProps = {
   token: string;
@@ -14,9 +14,16 @@ export type AppProps = {
   fetcher: typeof fetch;
 };
 
-function makeQueryClient(): QueryClient {
+const NO_RETRY = 0;
+
+export function makeQueryClient(): QueryClient {
   return new QueryClient({
-    defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
+    defaultOptions: {
+      queries: {
+        retry: NO_RETRY,
+        retryDelay: NO_RETRY,
+      },
+    },
   });
 }
 
@@ -28,7 +35,7 @@ type FileLoaderProps = Readonly<{
 
 function FileLoader(props: FileLoaderProps) {
   const fileQuery = useQuery({
-    queryKey: ['file', props.token, props.path],
+    queryKey: ['file', props.token, props.path] as const,
     queryFn: () => fetchFile(props.token, props.path, props.fetcher),
   });
   return <FilePanel state={panelFromQuery(props.path, fileQuery.data, fileQuery.isPending)} />;
@@ -39,19 +46,19 @@ function BrowserApp(props: Readonly<AppProps>) {
   const [selected, setSelected] = useState(() => selectedFromLocation(props.location));
 
   const treeQuery = useQuery({
-    queryKey: ['tree', props.token],
+    queryKey: ['tree', props.token] as const,
     queryFn: () => fetchTree(props.token, props.fetcher),
   });
 
   const { root, entries } = treeParts(treeQuery.data);
 
   useEffect(() => {
-    if (root.length > 0) document.title = `bindweed — ${root}`;
+    applyTitle(document, root);
   }, [root]);
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh' }}>
-      <aside style={{ width: 280, borderRight: '1px solid #ccc', overflow: 'auto' }}>
+      <aside style={{ width: 280, borderRight: '1px solid rgb(204, 204, 204)', overflow: 'auto' }}>
         <TreeView
           root={root}
           entries={entries}
@@ -64,7 +71,7 @@ function BrowserApp(props: Readonly<AppProps>) {
           }}
         />
       </aside>
-      <main style={{ flex: 1, padding: 16 }}>
+      <main style={{ flexGrow: 1, padding: 16 }}>
         {selected === null ? <FilePanel state={{ kind: 'idle' }} /> : (
           <FileLoader token={props.token} path={selected} fetcher={props.fetcher} />
         )}

@@ -10,19 +10,26 @@ export type TreeRoot = {
 };
 
 function byteOrder(a: string, b: string): number {
-  return Buffer.from(a, 'utf8').compare(Buffer.from(b, 'utf8'));
+  return Buffer.from(a).compare(Buffer.from(b));
+}
+
+function dirBeforeFile(a: TreeEntry, b: TreeEntry): number {
+  const aRank = a.kind === 'dir' ? 0 : 1;
+  const bRank = b.kind === 'dir' ? 0 : 1;
+  return aRank - bRank;
 }
 
 function sortEntries(entries: TreeEntry[]): TreeEntry[] {
   return entries.sort((a, b) => {
-    if (a.kind !== b.kind) return a.kind === 'dir' ? -1 : 1;
+    const byKind = dirBeforeFile(a, b);
+    if (byKind !== 0) return byKind;
     return byteOrder(a.name, b.name);
   });
 }
 
 function ensureDir(map: Map<string, TreeEntry>, name: string, path: string): TreeDir {
   const existing = map.get(name);
-  if (existing !== undefined && existing.kind === 'dir') return existing;
+  if (existing?.kind === 'dir') return existing;
   const dir: TreeDir = { name, path, kind: 'dir', children: [] };
   map.set(name, dir);
   return dir;
@@ -51,7 +58,7 @@ function placeFile(root: Map<string, TreeEntry>, full: string): void {
     chain.push({ dir, kids });
     map = kids;
   }
-  for (const { dir, kids } of chain.reverse()) {
+  for (const { dir, kids } of chain) {
     dir.children = sortEntries([...kids.values()]);
   }
 }
@@ -81,8 +88,10 @@ function collectFiles(entries: TreeEntry[], paths: Set<string>): void {
 export function parentDirs(filePath: string): string[] {
   const parts = filePath.split('/');
   const dirs: string[] = [''];
-  for (let i = 0; i < parts.length - 1; i += 1) {
-    dirs.push(parts.slice(0, i + 1).join('/'));
+  let prefix = '';
+  for (const part of parts.slice(0, -1)) {
+    prefix = prefix.length === 0 ? part : `${prefix}/${part}`;
+    dirs.push(prefix);
   }
   return dirs;
 }

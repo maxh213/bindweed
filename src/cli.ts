@@ -1,6 +1,7 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { once } from 'node:events';
 import { parseArgs, shownPath } from './args.ts';
 import { gitToplevel, prepareBindweed, type GitRunner } from './repo.ts';
 import { bindApp, listenErrorMessage, newToken } from './serve.ts';
@@ -44,9 +45,8 @@ export function defaultIo(): Io {
 }
 
 export function bindRunning(running: Promise<number> | undefined): void {
-  if (running === undefined) return;
-  void running.then(code => {
-    process.exitCode = code;
+  void Promise.resolve(running).then(code => {
+    if (typeof code === 'number') process.exitCode = code;
   });
 }
 
@@ -65,17 +65,13 @@ async function prepareRepo(pathArg: string | undefined, cwd: string, git?: GitRu
   return { ok: true, root };
 }
 
-function waitForAbort(signal: AbortSignal, close: () => Promise<void>): Promise<void> {
-  return new Promise(resolveWait => {
-    const done = () => {
-      void close().then(resolveWait);
-    };
-    if (signal.aborted) {
-      done();
-      return;
-    }
-    signal.addEventListener('abort', done, { once: true });
-  });
+export async function waitForAbort(signal: AbortSignal, close: () => Promise<void>): Promise<void> {
+  if (signal.aborted) {
+    await close();
+    return;
+  }
+  await once(signal, 'abort');
+  await close();
 }
 
 async function serve(
@@ -136,4 +132,16 @@ export function runIfMain(metaUrl: string, argv: string[], env: NodeJS.ProcessEn
   });
 }
 
-bindRunning(runIfMain(import.meta.url, process.argv, process.env, process.cwd(), defaultIo()));
+export function startCli(
+  metaUrl: string,
+  argv: string[],
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+  io: Io,
+): Promise<number> | undefined {
+  const running = runIfMain(metaUrl, argv, env, cwd, io);
+  bindRunning(running);
+  return running;
+}
+
+export const cliBoot = startCli(import.meta.url, process.argv, process.env, process.cwd(), defaultIo());

@@ -12,30 +12,24 @@ function portMessage(value: string): string {
   return `bindweed: port ${value} is not a number from 1 to 65535`;
 }
 
-function isPortDigits(value: string): boolean {
-  return value === '0' || /^[1-9]\d*$/.test(value);
-}
-
 export function parsePortValue(value: string): number | undefined {
-  if (!isPortDigits(value)) return undefined;
+  if (!/^[1-9]\d*$/.test(value)) return undefined;
   const n = Number(value);
-  if (n < 1) return undefined;
   if (n > 65535) return undefined;
   return n;
 }
 
-function takePortFlag(args: string[]): { rest: string[]; port?: string; error?: string } {
+function takePortFlag(args: string[]): { rest: string[]; port?: string } | { error: string } {
   const idx = args.indexOf('--port');
   if (idx < 0) return { rest: args };
   const port = args[idx + 1];
-  if (port === undefined) return { rest: args, error: USAGE };
-  const rest = [...args.slice(0, idx), ...args.slice(idx + 2)];
-  return { rest, port };
+  if (port === undefined) return { error: USAGE };
+  return { rest: [...args.slice(0, idx), ...args.slice(idx + 2)], port };
 }
 
-function onlyPaths(args: string[]): { paths: string[]; error?: string } {
-  if (args.some(a => a.startsWith('-'))) return { paths: [], error: USAGE };
-  if (args.length > 1) return { paths: [], error: USAGE };
+function onlyPaths(args: string[]): { paths: string[] } | { error: string } {
+  if (args.some(a => a.startsWith('-'))) return { error: USAGE };
+  if (args.length > 1) return { error: USAGE };
   return { paths: args };
 }
 
@@ -60,9 +54,9 @@ function rangedPortArgs(pathArg: string | undefined, envPort: string | undefined
 
 export function parseArgs(argv: string[], envPort: string | undefined): ParsedArgs {
   const taken = takePortFlag(argv.slice(2));
-  if (taken.error) return { ok: false, message: taken.error };
+  if ('error' in taken) return { ok: false, message: taken.error };
   const paths = onlyPaths(taken.rest);
-  if (paths.error) return { ok: false, message: paths.error };
+  if ('error' in paths) return { ok: false, message: paths.error };
   if (taken.port !== undefined) return fixedPortArgs(paths.paths[0], taken.port);
   return rangedPortArgs(paths.paths[0], envPort);
 }

@@ -90,7 +90,6 @@ describe('TreeView and FilePanel rendering', () => {
 
   it('expands a folder and marks a selected file', async () => {
     const { TreeView } = await import('./TreeView.tsx');
-    const toggled: string[] = [];
     root.render(
       createElement(TreeView, {
         root: 'demo-repo',
@@ -99,21 +98,103 @@ describe('TreeView and FilePanel rendering', () => {
             name: 'src',
             path: 'src',
             kind: 'dir',
-            children: [],
+            children: [{ name: 'a.ts', path: 'src/a.ts', kind: 'file' }],
+          },
+        ],
+        expanded: new Set(['', 'src']),
+        selected: 'src/a.ts',
+        onToggle: () => undefined,
+        onSelect: () => undefined,
+      }),
+    );
+    await new Promise(r => setTimeout(r, 0));
+    const buttons = Array.from(document.querySelectorAll('button'));
+    const src = buttons.find(el => el.textContent === 'src/');
+    const file = buttons.find(el => el.textContent === 'a.ts');
+    const top = buttons.find(el => el.textContent === 'demo-repo/');
+    expect(src?.getAttribute('aria-expanded')).toBe('true');
+    expect(top?.getAttribute('aria-expanded')).toBe('true');
+    expect(file?.getAttribute('aria-current')).toBe('true');
+    expect((file as HTMLButtonElement).style.paddingLeft).toBe('24px');
+    expect((src as HTMLButtonElement).style.paddingLeft).toBe('12px');
+    expect((top as HTMLButtonElement).style.paddingLeft).toBe('0px');
+  });
+
+  it('wires tree row styles and click callbacks', async () => {
+    const { TreeView } = await import('./TreeView.tsx');
+    const toggled: string[] = [];
+    const selected: string[] = [];
+    root.render(
+      createElement(TreeView, {
+        root: 'demo-repo',
+        entries: [
+          {
+            name: 'src',
+            path: 'src',
+            kind: 'dir',
+            children: [{ name: 'a.ts', path: 'src/a.ts', kind: 'file' }],
           },
         ],
         expanded: new Set(['', 'src']),
         selected: 'src/a.ts',
         onToggle: path => toggled.push(path),
+        onSelect: path => selected.push(path),
+      }),
+    );
+    await new Promise(r => setTimeout(r, 0));
+    const buttons = Array.from(document.querySelectorAll('button'));
+    const src = buttons.find(el => el.textContent === 'src/');
+    const file = buttons.find(el => el.textContent === 'a.ts');
+    const top = buttons.find(el => el.textContent === 'demo-repo/');
+    expect((top as HTMLButtonElement).style.display).toBe('block');
+    expect((top as HTMLButtonElement).style.width).toBe('100%');
+    expect((top as HTMLButtonElement).style.textAlign).toBe('left');
+    expect((top as HTMLButtonElement).style.borderWidth).toBe('0px');
+    expect((top as HTMLButtonElement).style.borderStyle).toBe('none');
+    expect((top as HTMLButtonElement).style.background).toBe('transparent');
+    expect((top as HTMLButtonElement).style.cursor).toBe('pointer');
+    expect((top as HTMLButtonElement).style.font).toContain('inherit');
+    src?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    top?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    file?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    expect(toggled).toEqual(['src', '']);
+    expect(selected).toEqual(['src/a.ts']);
+  });
+
+  it('leaves aria-current unset for files that are not selected', async () => {
+    const { TreeView } = await import('./TreeView.tsx');
+    root.render(
+      createElement(TreeView, {
+        root: 'demo-repo',
+        entries: [{ name: 'README.md', path: 'README.md', kind: 'file' }],
+        expanded: new Set(['']),
+        selected: null,
+        onToggle: () => undefined,
+        onSelect: () => undefined,
+      }),
+    );
+    await new Promise(r => setTimeout(r, 0));
+    const file = Array.from(document.querySelectorAll('button')).find(el => el.textContent === 'README.md');
+    expect(file?.hasAttribute('aria-current')).toBe(false);
+    const rootRow = Array.from(document.querySelectorAll('button')).find(el => el.textContent === 'demo-repo/');
+    expect(rootRow?.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('marks a collapsed folder with aria-expanded false', async () => {
+    const { TreeView } = await import('./TreeView.tsx');
+    root.render(
+      createElement(TreeView, {
+        root: 'demo-repo',
+        entries: [{ name: 'src', path: 'src', kind: 'dir', children: [] }],
+        expanded: new Set(['']),
+        selected: null,
+        onToggle: () => undefined,
         onSelect: () => undefined,
       }),
     );
     await new Promise(r => setTimeout(r, 0));
     const src = Array.from(document.querySelectorAll('button')).find(el => el.textContent === 'src/');
-    src?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-    const top = Array.from(document.querySelectorAll('button')).find(el => el.textContent === 'demo-repo/');
-    top?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-    expect(toggled).toEqual(['src', '']);
+    expect(src?.getAttribute('aria-expanded')).toBe('false');
   });
 
   it('collapses the root to a single row', async () => {
@@ -146,6 +227,34 @@ describe('TreeView and FilePanel rendering', () => {
     await new Promise(r => setTimeout(r, 0));
     expect(document.body.textContent).toContain('src/a.ts');
     expect(document.body.textContent).toContain('export const a = 1;');
+    const pre = document.querySelector('pre') as HTMLElement;
+    expect(pre.style.fontFamily).toBe('ui-monospace, monospace');
+    const rows = Array.from(pre.querySelectorAll('div'));
+    expect(rows).toHaveLength(3);
+    expect(rows.map(r => r.getAttribute('data-line'))).toEqual(['1', '2', '3']);
+    expect(rows.map(r => r.getAttribute('data-row-id'))).toEqual([
+      '1:export const a = 1;',
+      "2:export const name = 'żółw';",
+      '3:export const sum = a + 2;',
+    ]);
+  });
+
+  it('numbers each line of file text in order', async () => {
+    const { FilePanel } = await import('./FilePanel.tsx');
+    root.render(
+      createElement(FilePanel, {
+        state: {
+          kind: 'text',
+          path: 'src/a.ts',
+          text: "export const a = 1;\nexport const name = 'żółw';\nexport const sum = a + 2;\n",
+        },
+      }),
+    );
+    await new Promise(r => setTimeout(r, 0));
+    const rows = Array.from(document.querySelectorAll('pre div'));
+    expect(rows[0]?.textContent).toBe('1 export const a = 1;');
+    expect(rows[1]?.textContent).toBe("2 export const name = 'żółw';");
+    expect(rows[2]?.textContent).toBe('3 export const sum = a + 2;');
   });
 
   it('renders loading and message panels', async () => {
@@ -199,10 +308,9 @@ describe('App and boot', () => {
     dom.window.close();
   });
 
-  it('loads the tree, opens a deep link, and selects a file on click', async () => {
+  async function renderDemoApp(currentRoot: Root): Promise<typeof fetch> {
     const { App } = await import('./App.tsx');
     const { act } = await import('react');
-    const { waitFor } = await import('@testing-library/dom');
     const files: Record<string, string> = {
       'src/a.ts': "export const a = 1;\n",
       'README.md': '# demo\n',
@@ -229,7 +337,7 @@ describe('App and boot', () => {
       return { ok: true, json: async () => ({ path, text: files[path] ?? '' }) } as Response;
     }) as typeof fetch;
     await act(async () => {
-      root.render(
+      currentRoot.render(
         createElement(App, {
           token: 'tok',
           location: window.location,
@@ -238,22 +346,77 @@ describe('App and boot', () => {
         }),
       );
     });
+    return fetcher;
+  }
+
+  it('loads the tree, opens a deep link, and selects a file on click', async () => {
+    const { waitFor } = await import('@testing-library/dom');
+    await renderDemoApp(root);
     await waitFor(() => {
       expect(document.title).toBe('bindweed — demo-repo');
       expect(document.body.textContent).toContain('export const a = 1;');
     });
+    const layout = document.querySelector('#root > div') as HTMLElement;
+    expect(layout.style.display).toBe('flex');
+    expect(layout.style.minHeight).toBe('100vh');
+    const aside = document.querySelector('aside') as HTMLElement;
+    expect(aside.style.width).toBe('280px');
+    expect(aside.style.borderRight).toBe('1px solid rgb(204, 204, 204)');
+    expect(aside.style.overflow).toBe('auto');
+    const main = document.querySelector('main') as HTMLElement;
+    expect(main.style.flexGrow).toBe('1');
+    expect(main.style.padding).toBe('16px');
+  });
+
+  it('selects a file and updates the hash', async () => {
+    const { act } = await import('react');
+    const { waitFor } = await import('@testing-library/dom');
+    await renderDemoApp(root);
+    await waitFor(() => {
+      expect(document.body.textContent).toContain('README.md');
+    });
     const readme = Array.from(document.querySelectorAll('button')).find(el => el.textContent === 'README.md');
+    if (readme === undefined) throw new Error('missing README.md');
     await act(async () => {
-      readme?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      readme.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
     });
     await waitFor(() => {
+      expect(window.location.hash).toBe('#file=README.md');
       expect(document.body.textContent).toContain('# demo');
     });
-    const src = Array.from(document.querySelectorAll('button')).find(el => el.textContent === 'src/');
+    expect(
+      Array.from(document.querySelectorAll('button'))
+        .find(el => el.textContent === 'README.md')
+        ?.getAttribute('aria-current'),
+    ).toBe('true');
+  });
+
+  it('toggles folders in the app tree', async () => {
+    const { act } = await import('react');
+    const { waitFor } = await import('@testing-library/dom');
+    await renderDemoApp(root);
+    await waitFor(() => {
+      expect(Array.from(document.querySelectorAll('button')).some(el => el.textContent === 'src/')).toBe(true);
+    });
+    const srcOpen = Array.from(document.querySelectorAll('button')).find(el => el.textContent === 'src/');
+    if (srcOpen === undefined) throw new Error('missing src/');
     await act(async () => {
-      src?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-      const rootRow = Array.from(document.querySelectorAll('button')).find(el => el.textContent === 'demo-repo/');
-      rootRow?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      srcOpen.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    });
+    await waitFor(() => {
+      expect(
+        Array.from(document.querySelectorAll('button'))
+          .find(el => el.textContent === 'src/')
+          ?.getAttribute('aria-expanded'),
+      ).toBe('false');
+    });
+    const rootRow = Array.from(document.querySelectorAll('button')).find(el => el.textContent === 'demo-repo/');
+    if (rootRow === undefined) throw new Error('missing root');
+    await act(async () => {
+      rootRow.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    });
+    await waitFor(() => {
+      expect(Array.from(document.querySelectorAll('nav button')).map(el => el.textContent)).toEqual(['demo-repo/']);
     });
   });
 
@@ -267,7 +430,9 @@ describe('App and boot', () => {
     root = createRoot(el);
     const { App } = await import('./App.tsx');
     const { waitFor } = await import('@testing-library/dom');
+    let calls = 0;
     const fetcher = (async () => {
+      calls += 1;
       throw new Error('down');
     }) as typeof fetch;
     root.render(
@@ -279,8 +444,12 @@ describe('App and boot', () => {
       }),
     );
     await waitFor(() => {
+      expect(calls).toBeGreaterThanOrEqual(1);
       expect(document.body.textContent).toContain('select a file');
     });
+    await new Promise(r => setTimeout(r, 2500));
+    expect(calls).toBe(1);
+    expect(document.title).not.toBe('bindweed — ');
   });
 
   it('loads a tree without a file hash', async () => {
@@ -322,7 +491,7 @@ describe('App and boot', () => {
       ({ ok: true, json: async () => ({ root: 'demo-repo', entries: [] }) }) as Response) as typeof fetch;
     const original = globalThis.fetch;
     globalThis.fetch = fetcher;
-    bootUi(document, window.location, window.sessionStorage, window.history);
+    expect(bootUi(document, window.location, window.sessionStorage, window.history)).toBe(true);
     await waitFor(() => {
       expect(document.title).toBe('bindweed — demo-repo');
     });
@@ -346,7 +515,30 @@ describe('App and boot', () => {
     const blank = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
       url: 'http://127.0.0.1:4477/',
     });
-    bootUi(blank.window.document, blank.window.location, blank.window.sessionStorage, blank.window.history);
+    expect(bootUi(blank.window.document, blank.window.location, blank.window.sessionStorage, blank.window.history)).toBe(
+      false,
+    );
     expect(blank.window.document.body.innerHTML).toBe('');
+  });
+
+  it('skips boot when the root node is missing but a token is present', async () => {
+    const { bootUi } = await import('./boot.tsx');
+    const page = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
+      url: 'http://127.0.0.1:4477/?token=tok',
+    });
+    expect(bootUi(page.window.document, page.window.location, page.window.sessionStorage, page.window.history)).toBe(
+      false,
+    );
+  });
+
+  it('skips boot when the token is missing but the root node exists', async () => {
+    const { bootUi } = await import('./boot.tsx');
+    const page = new JSDOM('<!DOCTYPE html><html><body><div id="root">keep</div></body></html>', {
+      url: 'http://127.0.0.1:4477/',
+    });
+    expect(bootUi(page.window.document, page.window.location, page.window.sessionStorage, page.window.history)).toBe(
+      false,
+    );
+    expect(page.window.document.getElementById('root')?.textContent).toBe('keep');
   });
 });

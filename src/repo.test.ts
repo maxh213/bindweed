@@ -14,6 +14,7 @@ import {
   ensureExcludeLine,
   ensureBindweedDir,
   exitCode,
+  isRegularFile,
 } from './repo.ts';
 
 async function gitInit(dir: string): Promise<void> {
@@ -71,6 +72,27 @@ describe('listedRegularFiles', () => {
     const git = async () => ({ code: 1, stdout: '', stderr: 'fail' });
     expect(await gitListedPaths('/tmp', git)).toEqual([]);
   });
+
+  it('drops blank entries from a zero-byte ls-files split', async () => {
+    const git = async () => ({ code: 0, stdout: '\0', stderr: '' });
+    expect(await gitListedPaths('/tmp', git)).toEqual([]);
+    const withBlanks = async () => ({ code: 0, stdout: '\0a.txt\0\0b.txt\0', stderr: '' });
+    expect(await gitListedPaths('/tmp', withBlanks)).toEqual(['a.txt', 'b.txt']);
+  });
+
+  it('returns no paths when git reports failure even if stdout has names', async () => {
+    const git = async () => ({ code: 1, stdout: 'a.txt\0', stderr: 'fail' });
+    expect(await gitListedPaths('/tmp', git)).toEqual([]);
+  });
+});
+
+describe('isRegularFile', () => {
+  it('is false for missing paths and true for regular files', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'bw-reg-'));
+    await writeFile(join(root, 'a.txt'), 'x');
+    expect(await isRegularFile(root, 'a.txt')).toBe(true);
+    expect(await isRegularFile(root, 'missing.txt')).toBe(false);
+  });
 });
 
 describe('runGit', () => {
@@ -80,6 +102,19 @@ describe('runGit', () => {
     const result = await runGit(['rev-parse', '--is-inside-work-tree'], root);
     expect(result.code).toBe(0);
     expect(result.stdout.trim()).toBe('true');
+  });
+
+  it('reports git missing when the binary cannot start', async () => {
+    const result = await runGit(['status'], await mkdtemp(join(tmpdir(), 'bw-miss-')), '/nonexistent/git-bin');
+    expect(result).toEqual({ code: 1, stdout: '', stderr: 'git missing' });
+  });
+
+  it('captures stderr from a failing git command', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'bw-err-'));
+    await gitInit(root);
+    const result = await runGit(['rev-parse', 'no-such-ref'], root);
+    expect(result.code).not.toBe(0);
+    expect(result.stderr.length).toBeGreaterThan(0);
   });
 });
 
@@ -109,6 +144,7 @@ describe('excludeFilePath', () => {
 describe('ensureExcludeLine', () => {
   it('creates info/exclude when missing', async () => {
     const root = await mkdtemp(join(tmpdir(), 'bw-ex-'));
+    await ensureBindweedDir(root);
     await ensureBindweedDir(root);
     const path = join(root, '.git', 'info', 'exclude');
     await ensureExcludeLine(path);

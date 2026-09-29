@@ -22,7 +22,7 @@ type FileResult =
   | { ok: true; path: string; binary: true }
   | { ok: false; status: 404 | 413; error: string };
 
-type Handler = (req: IncomingMessage, res: ServerResponse, url: URL) => Promise<void>;
+export type Handler = (req: IncomingMessage, res: ServerResponse, url: URL) => Promise<void>;
 
 type RouteTable = Map<string, Handler>;
 
@@ -70,8 +70,9 @@ export function listenErrorMessage(err: ListenError): string {
   return `bindweed: no free port between ${err.from} and ${err.to}`;
 }
 
-function isAddrInUse(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && 'code' in err && err.code === 'EADDRINUSE';
+export function isAddrInUse(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  return (err as { code?: unknown }).code === 'EADDRINUSE';
 }
 
 export function bindOnce(server: Server, port: number): Promise<void> {
@@ -131,22 +132,27 @@ function hasNul(buf: Buffer): boolean {
   return buf.includes(0);
 }
 
+async function readOpenedFile(
+  handle: Awaited<ReturnType<typeof open>>,
+  relPath: string,
+): Promise<FileResult> {
+  const stat = await handle.stat();
+  if (stat.size > MAX_BYTES) return { ok: false, status: 413, error: 'file too large to show' };
+  const headSize = Math.min(stat.size, NUL_WINDOW);
+  const head = Buffer.alloc(headSize);
+  const { bytesRead } = await handle.read(head, 0, headSize, 0);
+  if (hasNul(head.subarray(0, bytesRead))) return { ok: true, path: relPath, binary: true };
+  const all = Buffer.alloc(stat.size);
+  await handle.read(all, 0, stat.size, 0);
+  return { ok: true, path: relPath, text: all.toString('utf8') };
+}
+
 export async function readRepoFile(repoRoot: string, relPath: string, allowed: Set<string>): Promise<FileResult> {
   if (!allowed.has(relPath)) return { ok: false, status: 404, error: 'no such file' };
   const handle = await open(join(repoRoot, relPath), 'r');
-  try {
-    const stat = await handle.stat();
-    if (stat.size > MAX_BYTES) return { ok: false, status: 413, error: 'file too large to show' };
-    const headSize = Math.min(stat.size, NUL_WINDOW);
-    const head = Buffer.alloc(headSize);
-    const { bytesRead } = await handle.read(head, 0, headSize, 0);
-    if (hasNul(head.subarray(0, bytesRead))) return { ok: true, path: relPath, binary: true };
-    const all = Buffer.alloc(stat.size);
-    await handle.read(all, 0, stat.size, 0);
-    return { ok: true, path: relPath, text: all.toString('utf8') };
-  } finally {
-    await handle.close();
-  }
+  const result = await readOpenedFile(handle, relPath);
+  await handle.close();
+  return result;
 }
 
 export function httpPath(url: string | undefined): string {
@@ -195,32 +201,55 @@ function assetType(filePath: string): string {
   return ASSET_TYPES[extname(filePath)] ?? 'application/octet-stream';
 }
 
-function rawAssetName(pathname: string): string | undefined {
+export function rawAssetName(pathname: string): string | undefined {
   const raw = pathname.slice('/assets/'.length);
   if (raw.length === 0) return undefined;
-  if (raw.includes('..') || raw.includes('%')) return undefined;
+  if (raw.includes('..')) return undefined;
+  if (raw.includes('%')) return undefined;
   return raw;
 }
 
-function safeAssetPath(uiDir: string, pathname: string): string | undefined {
+const ASSET_DIR = 'assets';
+
+export function safeAssetPath(uiDir: string, pathname: string): string | undefined {
   const raw = rawAssetName(pathname);
   if (raw === undefined) return undefined;
-  return join(uiDir, 'assets', raw);
+  return join(uiDir, ASSET_DIR, raw);
+}
+
+export function isAssetPath(pathname: string): boolean {
+  return pathname.startsWith('/assets/');
+}
+
+export function assetRouteKey(method: string): string {
+  return `${method} /assets/`;
+}
+
+async function bodyFrom(
+  full: string,
+  read: ((path: string) => Promise<Buffer>) | undefined,
+): Promise<Buffer> {
+  if (read === undefined) return readFile(full);
+  return read(full);
+}
+
+export async function readAssetBytes(
+  uiDir: string,
+  pathname: string,
+  read?: (path: string) => Promise<Buffer>,
+): Promise<{ full: string; body: Buffer }> {
+  const full = safeAssetPath(uiDir, pathname) ?? join(uiDir, ASSET_DIR, '\0');
+  return { full, body: await bodyFrom(full, read) };
 }
 
 async function serveAssetFile(uiDir: string, pathname: string, res: ServerResponse): Promise<void> {
-  const full = safeAssetPath(uiDir, pathname);
-  if (full === undefined) {
-    sendJson(res, 404, { error: 'not found' });
-    return;
-  }
   try {
-    const body = await readFile(full);
+    const asset = await readAssetBytes(uiDir, pathname);
     res.writeHead(200, {
-      'Content-Type': assetType(full),
-      'Content-Length': body.length,
+      'Content-Type': assetType(asset.full),
+      'Content-Length': asset.body.length,
     });
-    res.end(body);
+    res.end(asset.body);
   } catch {
     sendJson(res, 404, { error: 'not found' });
   }
@@ -231,7 +260,7 @@ async function serveIndex(deps: AppDeps, res: ServerResponse, url: URL): Promise
     sendText(res, 401, 'text/plain; charset=utf-8', 'bindweed: use the link bindweed printed in the terminal');
     return;
   }
-  const html = await readFile(join(deps.uiDir, 'index.html'), 'utf8');
+  const html = (await readFile(join(deps.uiDir, 'index.html'))).toString('utf8');
   sendText(res, 200, 'text/html; charset=utf-8', html);
 }
 
@@ -252,9 +281,16 @@ function sendFileResult(res: ServerResponse, result: FileResult): void {
   sendJson(res, 200, { path: result.path, text: result.text });
 }
 
-async function serveFile(deps: AppDeps, res: ServerResponse, url: URL): Promise<void> {
+export function fileQueryPath(url: URL): string | undefined {
   const path = url.searchParams.get('path');
-  if (path === null || path.length === 0) {
+  if (path === null) return undefined;
+  if (path.length === 0) return undefined;
+  return path;
+}
+
+async function serveFile(deps: AppDeps, res: ServerResponse, url: URL): Promise<void> {
+  const path = fileQueryPath(url);
+  if (path === undefined) {
     sendJson(res, 404, { error: 'no such file' });
     return;
   }
@@ -270,23 +306,19 @@ function mountApp(router: ReturnType<typeof createRouter>, deps: AppDeps): void 
   router.get('/api/file', async (_req, res, url) => serveFile(deps, res, url));
 }
 
-function matchRoute(routes: RouteTable, method: string, pathname: string): Handler | undefined {
+export function matchRoute(
+  routes: Map<string, Handler>,
+  method: string,
+  pathname: string,
+): Handler | undefined {
   const exact = routes.get(`${method} ${pathname}`);
-  if (exact) return exact;
-  if (pathname.startsWith('/assets/')) return routes.get(`${method} /assets/`);
-  return undefined;
+  if (exact !== undefined) return exact;
+  if (!isAssetPath(pathname)) return undefined;
+  return routes.get(assetRouteKey(method));
 }
 
 function needsApiToken(pathname: string): boolean {
   return pathname.startsWith('/api/');
-}
-
-async function checkToken(deps: AppDeps, req: IncomingMessage, url: URL, res: ServerResponse): Promise<boolean> {
-  if (!needsApiToken(url.pathname)) return true;
-  const ok = requestHasToken(req.headers.authorization, url.searchParams.get('token'), deps.token);
-  if (ok) return true;
-  sendJson(res, 401, { error: 'missing or wrong token' });
-  return false;
 }
 
 async function runHandler(
@@ -295,7 +327,7 @@ async function runHandler(
   res: ServerResponse,
   url: URL,
 ): Promise<void> {
-  if (!handler) {
+  if (handler === undefined) {
     sendJson(res, 404, { error: 'not found' });
     return;
   }
@@ -309,7 +341,13 @@ async function afterHostOk(
   res: ServerResponse,
 ): Promise<void> {
   const url = new URL(httpPath(req.url), `http://127.0.0.1:${deps.port}`);
-  if (!(await checkToken(deps, req, url, res))) return;
+  if (needsApiToken(url.pathname)) {
+    const ok = requestHasToken(req.headers.authorization, url.searchParams.get('token'), deps.token);
+    if (!ok) {
+      sendJson(res, 401, { error: 'missing or wrong token' });
+      return;
+    }
+  }
   await runHandler(matchRoute(routes, httpMethod(req.method), url.pathname), req, res, url);
 }
 

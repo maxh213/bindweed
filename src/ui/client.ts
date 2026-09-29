@@ -77,24 +77,27 @@ export async function fetchFile(
   }
 }
 
+const TOKEN_KEY = 'bindweed.token';
+const FILE_HASH_PREFIX = '#file=';
+
 export function takeToken(location: Location, storage: Storage, historyApi: History): string | null {
   const url = new URL(location.href);
   const fromUrl = url.searchParams.get('token');
   if (fromUrl !== null) {
-    storage.setItem('bindweed.token', fromUrl);
+    storage.setItem(TOKEN_KEY, fromUrl);
     url.searchParams.delete('token');
     historyApi.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
     return fromUrl;
   }
-  return storage.getItem('bindweed.token');
+  return storage.getItem(TOKEN_KEY);
 }
 
 export function fileHashFrom(location: Location): string | null {
   const hash = location.hash;
-  if (!hash.startsWith('#file=')) return null;
-  return hash.slice('#file='.length);
+  if (!hash.startsWith(FILE_HASH_PREFIX)) return null;
+  return hash.slice(FILE_HASH_PREFIX.length);
 }
 
 export function writeFileHash(historyApi: History, path: string, encode: (p: string) => string): void {
-  historyApi.replaceState(null, '', `#file=${encode(path)}`);
+  historyApi.replaceState(null, '', `${FILE_HASH_PREFIX}${encode(path)}`);
 }

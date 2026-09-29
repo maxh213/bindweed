@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parentDirs, togglePath, withParentsOpen } from '../domain/tree.ts';
 import { panelFromFile } from './FilePanel.tsx';
-import { expandedFromLocation, panelFromQuery, selectedFromLocation, treeParts } from './view.ts';
+import { expandedFromLocation, panelFromQuery, selectedFromLocation, titleForRoot, applyTitle, treeParts } from './view.ts';
 
 describe('parentDirs', () => {
   it('lists the root and each folder above a file', () => {
@@ -73,7 +73,10 @@ describe('selectedFromLocation', () => {
 
 describe('expandedFromLocation', () => {
   it('opens the root alone without a hash', () => {
-    expect([...expandedFromLocation(fakeLocation('http://127.0.0.1/'))]).toEqual(['']);
+    const opened = expandedFromLocation(fakeLocation('http://127.0.0.1/'));
+    expect(opened.has('')).toBe(true);
+    expect(opened.size).toBe(1);
+    expect([...opened]).toEqual(['']);
   });
 
   it('opens parents for a deep link', () => {
@@ -90,6 +93,24 @@ describe('treeParts', () => {
     expect(treeParts(undefined)).toEqual({ root: '', entries: [] });
     expect(treeParts({ error: 'cannot reach bindweed' })).toEqual({ root: '', entries: [] });
     expect(treeParts({ root: 'demo-repo', entries: [] })).toEqual({ root: 'demo-repo', entries: [] });
+  });
+});
+
+describe('titleForRoot', () => {
+  it('builds the document title only when a root name is known', () => {
+    expect(titleForRoot('')).toBeUndefined();
+    expect(titleForRoot('demo-repo')).toBe('bindweed — demo-repo');
+    expect(titleForRoot('empty-repo')).toBe('bindweed — empty-repo');
+  });
+});
+
+describe('applyTitle', () => {
+  it('leaves the title alone until a root name arrives', () => {
+    const doc = { title: 'keep-me' };
+    applyTitle(doc, '');
+    expect(doc.title).toBe('keep-me');
+    applyTitle(doc, 'demo-repo');
+    expect(doc.title).toBe('bindweed — demo-repo');
   });
 });
 

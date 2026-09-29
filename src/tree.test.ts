@@ -43,6 +43,14 @@ describe('buildTree', () => {
     });
   });
 
+  it('sorts by byte order even when insertion order differs', () => {
+    expect(buildTree('r', ['b.txt', 'a.txt']).entries.map(e => e.name)).toEqual(['a.txt', 'b.txt']);
+  });
+
+  it('keeps directories ahead of files when files are listed first', () => {
+    expect(buildTree('r', ['z.txt', 'a/b.txt']).entries.map(e => e.kind)).toEqual(['dir', 'file']);
+  });
+
   it('lists no entries for an empty path list', () => {
     expect(buildTree('empty-repo', [])).toEqual({ root: 'empty-repo', entries: [] });
   });

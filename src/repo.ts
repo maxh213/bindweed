@@ -12,9 +12,13 @@ export function exitCode(code: number | null): number {
   return code;
 }
 
-export async function runGit(args: string[], cwd: string): Promise<{ code: number; stdout: string; stderr: string }> {
+export async function runGit(
+  args: string[],
+  cwd: string,
+  bin: string = GIT_BIN,
+): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise(resolvePromise => {
-    const child = spawn(GIT_BIN, args, { cwd });
+    const child = spawn(bin, args, { cwd });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     child.stdout.on('data', (piece: Buffer) => {
@@ -54,7 +58,7 @@ export async function gitListedPaths(repoRoot: string, git: GitRunner = runGit):
   return result.stdout.split('\0').filter(p => p.length > 0);
 }
 
-async function isRegularFile(repoRoot: string, rel: string): Promise<boolean> {
+export async function isRegularFile(repoRoot: string, rel: string): Promise<boolean> {
   try {
     const st = await lstat(`${repoRoot}/${rel}`);
     return st.isFile();
@@ -96,8 +100,7 @@ async function readOrEmpty(path: string): Promise<string> {
 export async function ensureExcludeLine(excludePath: string): Promise<void> {
   await mkdir(dirname(excludePath), { recursive: true });
   const content = await readOrEmpty(excludePath);
-  const next = withExcludeLine(content);
-  if (next !== content) await writeFile(excludePath, next);
+  await writeFile(excludePath, withExcludeLine(content));
 }
 
 export async function ensureBindweedDir(repoRoot: string): Promise<void> {

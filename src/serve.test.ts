@@ -18,6 +18,14 @@ import {
   readRepoFile,
   httpMethod,
   httpPath,
+  rawAssetName,
+  fileQueryPath,
+  isAddrInUse,
+  safeAssetPath,
+  isAssetPath,
+  assetRouteKey,
+  matchRoute,
+  readAssetBytes,
 } from './serve.ts';
 import { runGit } from './repo.ts';
 
@@ -51,6 +59,7 @@ async function uiDir(): Promise<string> {
   await writeFile(join(dir, 'index.html'), '<html>bindweed-ui</html>');
   await writeFile(join(dir, 'assets', 'app.js'), 'console.log(1)');
   await writeFile(join(dir, 'assets', 'app.css'), 'body{}');
+  await writeFile(join(dir, 'assets', 'page.html'), '<p>a</p>');
   return dir;
 }
 
@@ -139,7 +148,9 @@ describe('createAppServer', () => {
   });
 
   it('accepts the token in the header or query and localhost Host', async () => {
-    expect((await hit(port, 'GET', '/api/tree', { Authorization: `Bearer ${token}` })).status).toBe(200);
+    const byHeader = await hit(port, 'GET', '/api/tree', { Authorization: `Bearer ${token}` });
+    expect(byHeader.status).toBe(200);
+    expect(byHeader.headers['content-type']).toBe('application/json; charset=utf-8');
     expect((await hit(port, 'GET', `/api/tree?token=${token}`)).status).toBe(200);
     expect(
       (await hit(port, 'GET', `/api/tree?token=${token}`, { Host: `localhost:${port}` })).status,
@@ -166,6 +177,10 @@ describe('createAppServer', () => {
     const css = await hit(port, 'GET', '/assets/app.css');
     expect(css.status).toBe(200);
     expect(css.headers['content-type']).toBe('text/css; charset=utf-8');
+    const html = await hit(port, 'GET', '/assets/page.html');
+    expect(html.status).toBe(200);
+    expect(html.headers['content-type']).toBe('text/html; charset=utf-8');
+    expect(html.body.toString()).toBe('<p>a</p>');
   });
 
   it('answers 404 for unknown addresses', async () => {
@@ -179,9 +194,25 @@ describe('createAppServer', () => {
       const res = await hit(port, 'GET', path);
       expect(res.status).toBe(404);
       expect(JSON.parse(res.body.toString())).toEqual({ error: 'not found' });
+      expect(res.headers['content-type']).toBe('application/json; charset=utf-8');
     }
     expect((await hit(port, 'GET', '/api/nope', { Authorization: `Bearer ${token}` })).status).toBe(404);
     expect((await hit(port, 'POST', '/api/tree', { Authorization: `Bearer ${token}` })).status).toBe(404);
+  });
+
+  it('rejects asset names that contain .. or % even when the file exists', async () => {
+    await writeFile(join(ui, 'assets', 'foo..bar.js'), 'evil');
+    await writeFile(join(ui, 'assets', 'a%25b.js'), 'pct');
+    expect((await hit(port, 'GET', '/assets/foo..bar.js')).status).toBe(404);
+    expect((await hit(port, 'GET', '/assets/a%25b.js')).status).toBe(404);
+    expect((await hit(port, 'GET', '/nope')).status).toBe(404);
+  });
+
+  it('serves an index.html that is not plain ASCII', async () => {
+    await writeFile(join(ui, 'index.html'), '<html>bindweed — ui</html>');
+    const ok = await hit(port, 'GET', `/?token=${token}`);
+    expect(ok.body.toString('utf8')).toBe('<html>bindweed — ui</html>');
+    await writeFile(join(ui, 'index.html'), '<html>bindweed-ui</html>');
   });
 
   it('returns the tree JSON without ignored paths', async () => {
@@ -213,6 +244,27 @@ describe('createAppServer', () => {
       expect(res.status).toBe(404);
       expect(JSON.parse(res.body.toString())).toEqual({ error: 'no such file' });
     }
+  });
+
+  it('does not list the repository for an empty file path', async () => {
+    let lists = 0;
+    const counting = async (args: string[], cwd: string) => {
+      if (args[0] === 'ls-files') lists += 1;
+      return runGit(args, cwd);
+    };
+    const emptyUi = await uiDir();
+    const started = await start({
+      repoRoot: root,
+      uiDir: emptyUi,
+      token,
+      port: 0,
+      git: counting,
+    });
+    const res = await hit(started.port, 'GET', '/api/file', { Authorization: `Bearer ${token}` });
+    expect(res.status).toBe(404);
+    expect(lists).toBe(0);
+    await new Promise<void>(resolve => started.server.close(() => resolve()));
+    await rm(emptyUi, { recursive: true, force: true });
   });
 
   it('returns binary JSON for a NUL file', async () => {
@@ -309,6 +361,100 @@ describe('listenForChoice', () => {
     const ranged = await listenForChoice(server2, { mode: 'range', port: 19041 });
     expect(ranged).toEqual({ port: 19041 });
     server2.close();
+  });
+
+  it('tries the next port when the range start is taken', async () => {
+    const held = await hold(19061);
+    const server = createServer();
+    const ranged = await listenForChoice(server, { mode: 'range', port: 19061 });
+    expect(ranged).toEqual({ port: 19062 });
+    server.close();
+    await held.close();
+  });
+});
+
+describe('isAddrInUse', () => {
+  it('detects EADDRINUSE and rejects other values', () => {
+    expect(isAddrInUse({ code: 'EADDRINUSE' })).toBe(true);
+    expect(isAddrInUse({ code: 'EACCES' })).toBe(false);
+    expect(isAddrInUse({})).toBe(false);
+    expect(isAddrInUse(null)).toBe(false);
+    expect(isAddrInUse('x')).toBe(false);
+    expect(isAddrInUse(undefined)).toBe(false);
+  });
+});
+
+describe('rawAssetName', () => {
+  it('rejects empty, traversal, and percent-encoded segments', () => {
+    expect(rawAssetName('/assets/')).toBeUndefined();
+    expect(rawAssetName('/assets/app.js')).toBe('app.js');
+    expect(rawAssetName('/assets/foo..bar.js')).toBeUndefined();
+    expect(rawAssetName('/assets/a%25b.js')).toBeUndefined();
+    expect(rawAssetName('/assets/%2e%2e/x.js')).toBeUndefined();
+  });
+});
+
+describe('isAssetPath and assetRouteKey', () => {
+  it('recognises only the assets prefix and builds the route key', () => {
+    expect(isAssetPath('/assets/app.js')).toBe(true);
+    expect(isAssetPath('/assets/')).toBe(true);
+    expect(isAssetPath('/nope')).toBe(false);
+    expect(isAssetPath('/api/tree')).toBe(false);
+    expect(isAssetPath('assets/app.js')).toBe(false);
+    expect(assetRouteKey('GET')).toBe('GET /assets/');
+    expect(assetRouteKey('HEAD')).toBe('HEAD /assets/');
+  });
+});
+
+describe('matchRoute', () => {
+  it('returns the asset handler only for asset paths', async () => {
+    const asset = async () => undefined;
+    const tree = async () => undefined;
+    const routes = new Map<string, typeof asset>([
+      ['GET /assets/', asset],
+      ['GET /api/tree', tree],
+    ]);
+    expect(matchRoute(routes, 'GET', '/api/tree')).toBe(tree);
+    expect(matchRoute(routes, 'GET', '/assets/app.js')).toBe(asset);
+    expect(matchRoute(routes, 'GET', '/nope')).toBeUndefined();
+    expect(matchRoute(routes, 'POST', '/assets/app.js')).toBeUndefined();
+  });
+});
+
+describe('readAssetBytes', () => {
+  it('returns bytes for a real asset and a nul fallback for a bad name', async () => {
+    const ui = await mkdtemp(join(tmpdir(), 'bw-asset-'));
+    await mkdir(join(ui, 'assets'), { recursive: true });
+    await writeFile(join(ui, 'assets', 'app.js'), 'ok');
+    const hit = await readAssetBytes(ui, '/assets/app.js');
+    expect(hit.body.toString()).toBe('ok');
+    expect(hit.full).toBe(join(ui, 'assets', 'app.js'));
+    const injected = await readAssetBytes(ui, '/assets/app.js', async () => Buffer.from('injected'));
+    expect(injected.body.toString()).toBe('injected');
+    let seen = '';
+    await readAssetBytes(ui, '/assets/', async path => {
+      seen = path;
+      return Buffer.alloc(0);
+    });
+    expect(seen).toBe(join(ui, 'assets', '\0'));
+    await expect(readAssetBytes(ui, '/assets/missing.js')).rejects.toThrow();
+    await rm(ui, { recursive: true, force: true });
+  });
+});
+
+describe('safeAssetPath', () => {
+  it('joins a safe name under the ui assets folder', () => {
+    expect(safeAssetPath('/ui', '/assets/app.js')).toBe('/ui/assets/app.js');
+    expect(safeAssetPath('/ui', '/assets/')).toBeUndefined();
+    expect(safeAssetPath('/ui', '/assets/foo..bar.js')).toBeUndefined();
+  });
+});
+
+describe('fileQueryPath', () => {
+  it('requires a non-empty path query', () => {
+    expect(fileQueryPath(new URL('http://x/api/file'))).toBeUndefined();
+    expect(fileQueryPath(new URL('http://x/api/file?path='))).toBeUndefined();
+    expect(fileQueryPath(new URL('http://x/api/file?path=a.ts'))).toBe('a.ts');
   });
 });
 

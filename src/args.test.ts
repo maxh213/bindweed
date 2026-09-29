@@ -13,6 +13,8 @@ describe('parsePortValue', () => {
     expect(parsePortValue('0')).toBeUndefined();
     expect(parsePortValue('65536')).toBeUndefined();
     expect(parsePortValue('01')).toBeUndefined();
+    expect(parsePortValue('12x')).toBeUndefined();
+    expect(parsePortValue('1.5')).toBeUndefined();
   });
 });
 
@@ -36,6 +38,19 @@ describe('parseArgs', () => {
     expect(parseArgs(['node', 'bindweed', '--port', '4555'], '4600')).toEqual({
       ok: true,
       pathArg: undefined,
+      port: { mode: 'fixed', port: 4555 },
+    });
+  });
+
+  it('keeps a path when --port is also given', () => {
+    expect(parseArgs(['node', 'bindweed', 'demo-repo', '--port', '4555'], undefined)).toEqual({
+      ok: true,
+      pathArg: 'demo-repo',
+      port: { mode: 'fixed', port: 4555 },
+    });
+    expect(parseArgs(['node', 'bindweed', '--port', '4555', 'demo-repo'], undefined)).toEqual({
+      ok: true,
+      pathArg: 'demo-repo',
       port: { mode: 'fixed', port: 4555 },
     });
   });
@@ -74,7 +89,12 @@ describe('parseArgs', () => {
     const usage = 'bindweed: usage: bindweed [path] [--port N]';
     expect(parseArgs(['node', 'bindweed', '--port'], undefined)).toEqual({ ok: false, message: usage });
     expect(parseArgs(['node', 'bindweed', '--watch'], undefined)).toEqual({ ok: false, message: usage });
+    expect(parseArgs(['node', 'bindweed', '-p', '1'], undefined)).toEqual({ ok: false, message: usage });
     expect(parseArgs(['node', 'bindweed', 'one', 'two'], undefined)).toEqual({ ok: false, message: usage });
+    expect(parseArgs(['node', 'bindweed', 'one', 'two', '--port', '9'], undefined)).toEqual({
+      ok: false,
+      message: usage,
+    });
   });
 });
 

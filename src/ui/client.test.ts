@@ -122,31 +122,49 @@ function fakeLocation(href: string): Location {
 describe('takeToken', () => {
   it('stores the token, strips the query, and keeps sessionStorage', () => {
     const storage = new Map<string, string>();
+    const keys: string[] = [];
     const store = {
       getItem: (k: string) => storage.get(k) ?? null,
       setItem: (k: string, v: string) => {
+        keys.push(k);
         storage.set(k, v);
       },
     } as Storage;
     let replaced = '';
+    let state: unknown = 'unset';
+    let title = 'unset';
     const historyApi = {
-      replaceState: (_s: unknown, _t: string, url: string) => {
+      replaceState: (s: unknown, t: string, url: string) => {
+        state = s;
+        title = t;
         replaced = url;
       },
     } as History;
-    const token = takeToken(fakeLocation('http://127.0.0.1:4477/?token=abcd1234'), store, historyApi);
+    const token = takeToken(
+      fakeLocation('http://127.0.0.1:4477/?token=abcd1234#file=src/a.ts'),
+      store,
+      historyApi,
+    );
     expect(token).toBe('abcd1234');
+    expect(keys).toEqual(['bindweed.token']);
     expect(storage.get('bindweed.token')).toBe('abcd1234');
-    expect(replaced).toBe('/');
+    expect(state).toBeNull();
+    expect(title).toBe('');
+    expect(replaced).toBe('/#file=src/a.ts');
   });
 
   it('reads a stored token when the query has none', () => {
+    const asked: string[] = [];
     const store = {
-      getItem: () => 'from-session',
+      getItem: (k: string) => {
+        asked.push(k);
+        return 'from-session';
+      },
       setItem: () => undefined,
     } as unknown as Storage;
     const historyApi = { replaceState: () => undefined } as unknown as History;
     expect(takeToken(fakeLocation('http://127.0.0.1:4477/'), store, historyApi)).toBe('from-session');
+    expect(asked).toEqual(['bindweed.token']);
   });
 });
 
@@ -160,14 +178,65 @@ describe('fileHashFrom', () => {
 describe('writeFileHash', () => {
   it('writes a slash-preserving encoded hash', () => {
     let url = '';
+    let state: unknown = 'unset';
+    let title = 'unset';
     const historyApi = {
-      replaceState: (_s: unknown, _t: string, next: string) => {
+      replaceState: (s: unknown, t: string, next: string) => {
+        state = s;
+        title = t;
         url = next;
       },
     } as History;
     writeFileHash(historyApi, 'notes/żółw i zając.md', p =>
       p.split('/').map(encodeURIComponent).join('/'),
     );
+    expect(state).toBeNull();
+    expect(title).toBe('');
     expect(url).toBe('#file=notes/%C5%BC%C3%B3%C5%82w%20i%20zaj%C4%85c.md');
+    writeFileHash(historyApi, 'src/a.ts', p => p);
+    expect(url).toBe('#file=src/a.ts');
+  });
+});
+
+describe('tree schema edge', () => {
+  it('accepts a nested directory entry', async () => {
+    const fetcher = (async () =>
+      ({
+        ok: true,
+        json: async () => ({
+          root: 'demo-repo',
+          entries: [
+            {
+              name: 'src',
+              path: 'src',
+              kind: 'dir',
+              children: [{ name: 'a.ts', path: 'src/a.ts', kind: 'file' }],
+            },
+          ],
+        }),
+      }) as Response) as typeof fetch;
+    expect(await fetchTree('tok', fetcher)).toEqual({
+      root: 'demo-repo',
+      entries: [
+        {
+          name: 'src',
+          path: 'src',
+          kind: 'dir',
+          children: [{ name: 'a.ts', path: 'src/a.ts', kind: 'file' }],
+        },
+      ],
+    });
+  });
+
+  it('rejects a directory entry without children', async () => {
+    const fetcher = (async () =>
+      ({
+        ok: true,
+        json: async () => ({
+          root: 'demo-repo',
+          entries: [{ name: 'src', path: 'src', kind: 'dir' }],
+        }),
+      }) as Response) as typeof fetch;
+    expect(await fetchTree('tok', fetcher)).toEqual({ error: 'cannot reach bindweed' });
   });
 });

@@ -1,5 +1,4 @@
 export function textLines(text: string): string[] {
-  if (text.length === 0) return [];
   const parts = text.split('\n');
   if (parts.at(-1) === '') parts.pop();
   return parts;
