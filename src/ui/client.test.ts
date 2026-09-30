@@ -166,6 +166,19 @@ describe('takeToken', () => {
     expect(takeToken(fakeLocation('http://127.0.0.1:4477/'), store, historyApi)).toBe('from-session');
     expect(asked).toEqual(['bindweed.token']);
   });
+
+  it('takes the token in the address over one the tab stored earlier', () => {
+    const storage = new Map([['bindweed.token', 'older']]);
+    const store = {
+      getItem: (k: string) => storage.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        storage.set(k, v);
+      },
+    } as Storage;
+    const historyApi = { replaceState: () => undefined } as unknown as History;
+    expect(takeToken(fakeLocation('http://127.0.0.1:4477/?token=newer'), store, historyApi)).toBe('newer');
+    expect(storage.get('bindweed.token')).toBe('newer');
+  });
 });
 
 describe('fileHashFrom', () => {

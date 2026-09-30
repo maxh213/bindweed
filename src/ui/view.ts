@@ -25,7 +25,7 @@ export function treeParts(data: TreeJson | { error: string } | undefined): {
   return { root: data.root, entries: data.entries };
 }
 
-export function titleForRoot(root: string): string | undefined {
+function titleForRoot(root: string): string | undefined {
   if (root === '') return undefined;
   return 'bindweed — '.concat(root);
 }

@@ -93,6 +93,19 @@ function json(res: Hit): unknown {
   return JSON.parse(res.body.toString());
 }
 
+function otherHexDigit(digit: string): string {
+  return digit === '0' ? '1' : '0';
+}
+
+function nearMisses(token: string): string[] {
+  return [
+    `${token.slice(0, -1)}${otherHexDigit(token.slice(-1))}`,
+    `${otherHexDigit(token.slice(0, 1))}${token.slice(1)}`,
+    token.slice(0, -1),
+    `${token}0`,
+  ];
+}
+
 async function hold(port: number): Promise<{ release(): Promise<void> }> {
   const server = createNetServer();
   server.listen(port, '127.0.0.1');
@@ -148,7 +161,13 @@ describe('the app on localhost', () => {
       expect(json(res)).toEqual(BAD_HOST);
       expect(res.type).toBe('application/json; charset=utf-8');
     }
-    for (const host of ['127.0.0.1:9999', '127.0.0.1', `localhost:${port + 1}`]) {
+    const lookAlikes = [
+      `127.0.0.1.evil.example:${port}`,
+      `localhost.evil.example:${port}`,
+      `evil.127.0.0.1:${port}`,
+      `evil-localhost:${port}`,
+    ];
+    for (const host of ['127.0.0.1:9999', '127.0.0.1', `localhost:${port + 1}`, ...lookAlikes]) {
       const res = await hit(port, 'GET', `/api/tree?token=${app.token}`, { Host: host });
       expect(res.status).toBe(403);
       expect(json(res)).toEqual(BAD_HOST);
@@ -166,6 +185,9 @@ describe('the app on localhost', () => {
       ['GET', '/api/file?path=src/a.ts', {}],
       ['POST', '/api/nope', {}],
     ];
+    for (const almost of nearMisses(app.token)) {
+      denied.push(['GET', `/api/tree?token=${almost}`, {}], ['GET', '/api/tree', { Authorization: `Bearer ${almost}` }]);
+    }
     for (const [method, path, headers] of denied) {
       const res = await hit(port, method, path, headers);
       expect(res.status).toBe(401);
@@ -192,7 +214,8 @@ describe('the app on localhost', () => {
     expect(ok.status).toBe(200);
     expect(ok.type).toBe('text/html; charset=utf-8');
     expect(ok.body.toString()).toBe('<html>bindweed — ui</html>');
-    for (const path of ['/', `/?token=${wrong}`, '/?token=']) {
+    const almostRight = nearMisses(app.token).map(almost => `/?token=${almost}`);
+    for (const path of ['/', `/?token=${wrong}`, '/?token=', ...almostRight]) {
       const res = await hit(port, 'GET', path, bearer);
       expect(res.status).toBe(401);
       expect(res.type).toBe('text/plain; charset=utf-8');
@@ -333,6 +356,7 @@ describe('the app on localhost', () => {
       '',
       '?path=',
       '?path=nope.ts',
+      '?path=readme.md',
       '?path=src',
       '?path=debug.log',
       '?path=build/out.log',

@@ -1,6 +1,6 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createElement } from 'react';
+import { createElement, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
 function installDom(url = 'http://127.0.0.1:4477/?token=abc'): JSDOM {
@@ -50,10 +50,17 @@ describe('TreeView and FilePanel rendering', () => {
     dom.window.close();
   });
 
+  async function show(element: ReactElement): Promise<void> {
+    const { act } = await import('react');
+    await act(async () => {
+      root.render(element);
+    });
+  }
+
   it('shows collapsed folders and select a file', async () => {
     const { TreeView } = await import('./TreeView.tsx');
     const { FilePanel } = await import('./FilePanel.tsx');
-    root.render(
+    await show(
       createElement(
         'div',
         null,
@@ -93,14 +100,13 @@ describe('TreeView and FilePanel rendering', () => {
         createElement(FilePanel, { state: { kind: 'idle' } }),
       ),
     );
-    await new Promise(r => setTimeout(r, 0));
     expect(rowTexts()).toEqual(['demo-repo/', 'docs/', 'src/', '.gitignore', 'README.md', 'Zebra.txt', 'apple.txt']);
     expect(document.querySelector('nav + div')?.textContent).toBe('select a file');
   });
 
   it('expands a folder and marks a selected file', async () => {
     const { TreeView } = await import('./TreeView.tsx');
-    root.render(
+    await show(
       createElement(TreeView, {
         root: 'demo-repo',
         entries: [
@@ -117,7 +123,6 @@ describe('TreeView and FilePanel rendering', () => {
         onSelect: () => undefined,
       }),
     );
-    await new Promise(r => setTimeout(r, 0));
     const buttons = Array.from(document.querySelectorAll('button'));
     const src = buttons.find(el => el.textContent === 'src/');
     const file = buttons.find(el => el.textContent === 'a.ts');
@@ -134,7 +139,7 @@ describe('TreeView and FilePanel rendering', () => {
     const { TreeView } = await import('./TreeView.tsx');
     const toggled: string[] = [];
     const selected: string[] = [];
-    root.render(
+    await show(
       createElement(TreeView, {
         root: 'demo-repo',
         entries: [
@@ -151,7 +156,6 @@ describe('TreeView and FilePanel rendering', () => {
         onSelect: path => selected.push(path),
       }),
     );
-    await new Promise(r => setTimeout(r, 0));
     const buttons = Array.from(document.querySelectorAll('button'));
     const src = buttons.find(el => el.textContent === 'src/');
     const file = buttons.find(el => el.textContent === 'a.ts');
@@ -165,7 +169,7 @@ describe('TreeView and FilePanel rendering', () => {
 
   it('leaves aria-current unset for files that are not selected', async () => {
     const { TreeView } = await import('./TreeView.tsx');
-    root.render(
+    await show(
       createElement(TreeView, {
         root: 'demo-repo',
         entries: [{ name: 'README.md', path: 'README.md', kind: 'file' }],
@@ -175,7 +179,6 @@ describe('TreeView and FilePanel rendering', () => {
         onSelect: () => undefined,
       }),
     );
-    await new Promise(r => setTimeout(r, 0));
     const file = Array.from(document.querySelectorAll('button')).find(el => el.textContent === 'README.md');
     expect(file?.hasAttribute('aria-current')).toBe(false);
     const rootRow = Array.from(document.querySelectorAll('button')).find(el => el.textContent === 'demo-repo/');
@@ -184,7 +187,7 @@ describe('TreeView and FilePanel rendering', () => {
 
   it('marks a collapsed folder with aria-expanded false', async () => {
     const { TreeView } = await import('./TreeView.tsx');
-    root.render(
+    await show(
       createElement(TreeView, {
         root: 'demo-repo',
         entries: [{ name: 'src', path: 'src', kind: 'dir', children: [] }],
@@ -194,14 +197,13 @@ describe('TreeView and FilePanel rendering', () => {
         onSelect: () => undefined,
       }),
     );
-    await new Promise(r => setTimeout(r, 0));
     const src = Array.from(document.querySelectorAll('button')).find(el => el.textContent === 'src/');
     expect(src?.getAttribute('aria-expanded')).toBe('false');
   });
 
   it('collapses the root to a single row', async () => {
     const { TreeView } = await import('./TreeView.tsx');
-    root.render(
+    await show(
       createElement(TreeView, {
         root: 'demo-repo',
         entries: [{ name: 'src', path: 'src', kind: 'dir', children: [] }],
@@ -211,13 +213,12 @@ describe('TreeView and FilePanel rendering', () => {
         onSelect: () => undefined,
       }),
     );
-    await new Promise(r => setTimeout(r, 0));
     expect(document.body.textContent).toBe('demo-repo/');
   });
 
   it('renders numbered lines for file text', async () => {
     const { FilePanel } = await import('./FilePanel.tsx');
-    root.render(
+    await show(
       createElement(FilePanel, {
         state: {
           kind: 'text',
@@ -226,7 +227,6 @@ describe('TreeView and FilePanel rendering', () => {
         },
       }),
     );
-    await new Promise(r => setTimeout(r, 0));
     expect(document.body.textContent).toContain('src/a.ts');
     expect(document.body.textContent).toContain('export const a = 1;');
     const pre = document.querySelector('pre') as HTMLElement;
@@ -238,7 +238,7 @@ describe('TreeView and FilePanel rendering', () => {
 
   it('numbers each line of file text in order', async () => {
     const { FilePanel } = await import('./FilePanel.tsx');
-    root.render(
+    await show(
       createElement(FilePanel, {
         state: {
           kind: 'text',
@@ -247,7 +247,6 @@ describe('TreeView and FilePanel rendering', () => {
         },
       }),
     );
-    await new Promise(r => setTimeout(r, 0));
     const rows = Array.from(document.querySelectorAll('pre div'));
     expect(rows[0]?.textContent).toBe('1 export const a = 1;');
     expect(rows[1]?.textContent).toBe("2 export const name = 'żółw';");
@@ -502,6 +501,22 @@ describe('App and boot', () => {
     expect(rowByText('demo-repo/').getAttribute('aria-expanded')).toBe('false');
   });
 
+  it('opens a folder without closing the folders already open', async () => {
+    const { act } = await import('react');
+    const { waitFor } = await import('@testing-library/dom');
+    freshDom('http://127.0.0.1:4477/?token=tok');
+    await renderDemoApp(root, demoFetcher([]));
+    await waitFor(() => {
+      expect(rowTexts()).toContain('src/');
+    });
+    for (const folder of ['src/', 'lib/', 'docs/']) {
+      await act(async () => {
+        click(rowByText(folder));
+      });
+    }
+    expect(rowTexts()).toEqual(['demo-repo/', 'docs/', 'guide.md', 'notes/', 'src/', 'lib/', 'util.ts', 'a.ts', '.gitignore', 'README.md', 'Zebra.txt', 'apple.txt']);
+  });
+
   it('keeps the tree and says why a file cannot be shown after bindweed stopped', async () => {
     const { act } = await import('react');
     const { waitFor } = await import('@testing-library/dom');
@@ -630,6 +645,9 @@ describe('App and boot', () => {
     await waitFor(() => {
       expect(document.title).toBe('bindweed — demo-repo');
     });
+    expect(window.sessionStorage.getItem('bindweed.token')).toBe('tok');
+    expect(window.localStorage).toHaveLength(0);
+    expect(window.location.href).toBe('http://127.0.0.1:4477/#file=src/a.ts');
   });
 
   it('skips boot without a token or root node', async () => {

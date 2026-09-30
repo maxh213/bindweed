@@ -1,18 +1,24 @@
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { request } from 'node:http';
+import { createRequire } from 'node:module';
 import { connect, createServer as createNetServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { createInterface } from 'node:readline';
+import type { Readable } from 'node:stream';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { afterAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { main, runIfMain, type Io } from './cli.ts';
 
 const WORKER = process.env.STRYKER_MUTATOR_WORKER;
 const PORT_BASE = 20000 + 70 * (WORKER === undefined ? 0 : Number(WORKER) + 1);
 const CLI_PATH = fileURLToPath(new URL('./cli.ts', import.meta.url));
 const CLI_URL = pathToFileURL(CLI_PATH).href;
+const SRC_DIR = dirname(CLI_PATH);
+const NODE_MODULES = dirname(dirname(createRequire(import.meta.url).resolve('zod/package.json')));
 const LINK = /^bindweed: http:\/\/127\.0\.0\.1:(\d+)\/\?token=([0-9a-f]{32})\n$/;
 const EXCLUDE_LINE = '.bindweed/';
 const PATIENCE = 3000;
@@ -25,6 +31,10 @@ type Started = { io: Captured; controller: AbortController; done: Promise<number
 type Link = { port: number; token: string };
 
 type Page = { status: number; type: string | null; body: string };
+
+type Ended = { code: number | null; signal: string | null; stderr: string };
+
+type Command = { child: ChildProcess; out: string[]; ended: Promise<Ended> };
 
 const tempDirs: string[] = [];
 
@@ -92,6 +102,40 @@ async function makeSymlinkInstall(): Promise<{ installCli: string; binLink: stri
   return { installCli, binLink };
 }
 
+async function makeInstalledCommand(): Promise<string> {
+  const outer = await tempDir('bw-cmd-');
+  const install = join(outer, 'pkg');
+  const prefix = join(outer, 'prefix');
+  const binLink = join(prefix, 'bin', 'bindweed');
+  await mkdir(join(install, 'dist', 'ui', 'assets'), { recursive: true });
+  await mkdir(join(prefix, 'bin'), { recursive: true });
+  await mkdir(join(prefix, 'dist', 'ui'), { recursive: true });
+  await cp(SRC_DIR, join(install, 'src'), { recursive: true });
+  await cp(join(dirname(SRC_DIR), 'package.json'), join(install, 'package.json'));
+  await symlink(NODE_MODULES, join(install, 'node_modules'));
+  await symlink(join(install, 'src', 'cli.ts'), binLink);
+  await writeFile(join(install, 'dist', 'ui', 'index.html'), '<html>own-ui</html>');
+  await writeFile(join(install, 'dist', 'ui', 'assets', 'app.js'), 'own-asset');
+  await writeFile(join(prefix, 'dist', 'ui', 'index.html'), '<html>wrong-ui</html>');
+  return binLink;
+}
+
+function linesFrom(stream: Readable): string[] {
+  const lines: string[] = [];
+  createInterface({ input: stream }).on('line', line => lines.push(`${line}\n`));
+  return lines;
+}
+
+function startCommand(command: string, cwd: string, env: NodeJS.ProcessEnv): Command {
+  const child = spawn(process.execPath, [command], { cwd, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+  onTestFinished(() => {
+    child.kill('SIGKILL');
+  });
+  const err = linesFrom(child.stderr);
+  const ended = once(child, 'close').then(([code, signal]) => ({ code, signal, stderr: err.join('') }));
+  return { child, out: linesFrom(child.stdout), ended };
+}
+
 function startMain(args: string[], cwd: string, installDir: string, env: NodeJS.ProcessEnv = {}): Started {
   const io = capture();
   const controller = new AbortController();
@@ -125,9 +169,9 @@ function linkIn(line: string | undefined): Link {
   return { port: Number(match[1]), token: String(match[2]) };
 }
 
-async function linkOnceServing(out: string[], done: Promise<number>): Promise<Link> {
+async function linkOnceServing(out: string[], done: Promise<unknown>): Promise<Link> {
   const early = await Promise.race([untilLines(out, 2), done]);
-  if (early !== undefined) throw new Error(`bindweed exited with ${early} before serving`);
+  if (early !== undefined) throw new Error(`bindweed exited with ${JSON.stringify(early)} before serving`);
   return linkIn(out[0]);
 }
 
@@ -157,6 +201,18 @@ async function getJson(port: number, path: string, token: string): Promise<{ sta
 async function getPage(link: Link): Promise<Page> {
   const res = await fetch(`http://127.0.0.1:${link.port}/?token=${link.token}`, { signal: AbortSignal.timeout(2000) });
   return { status: res.status, type: res.headers.get('content-type'), body: await res.text() };
+}
+
+function statusOf(port: number, path: string, headers: Record<string, string>): Promise<number | undefined> {
+  return new Promise((resolve, reject) => {
+    const req = request({ host: '127.0.0.1', port, path, headers }, res => {
+      res.resume();
+      res.once('end', () => resolve(res.statusCode));
+    });
+    req.setTimeout(2000, () => req.destroy(new Error(`no answer to ${path}`)));
+    req.once('error', reject);
+    req.end();
+  });
 }
 
 function connectionOutcome(port: number): Promise<string> {
@@ -498,5 +554,35 @@ describe('the entry process', () => {
     expect(result.status).toBe(2);
     expect(result.stderr).toBe(`bindweed: ${plain} is not inside a git repository\n`);
     expect(result.stdout).toBe('');
+  });
+
+  it('serves its own ui on BINDWEED_PORT as the installed command, prints only the two lines and exits with 0 on SIGTERM', async () => {
+    const command = await makeInstalledCommand();
+    const { repo } = await makeWorkspace();
+    await writeFile(join(repo, 'blob.bin'), Buffer.from([0x61, 0x00, 0x62]));
+    await writeFile(join(repo, 'big.txt'), 'x'.repeat(1048577));
+    const port = PORT_BASE + 32;
+    const started = startCommand(command, repo, { BINDWEED_PORT: String(port) });
+    const link = await linkOnceServing(started.out, started.ended);
+    expect(link.port).toBe(port);
+    expect(await getPage(link)).toEqual({ status: 200, type: 'text/html; charset=utf-8', body: '<html>own-ui</html>' });
+    const bearer = { Authorization: `Bearer ${link.token}` };
+    const answers: [string, Record<string, string>, number][] = [
+      ['/', {}, 401],
+      ['/assets/app.js', {}, 200],
+      ['/assets/missing.js', {}, 404],
+      ['/nope', {}, 404],
+      ['/api/tree', {}, 401],
+      ['/api/tree', { ...bearer, Host: `evil.example:${port}` }, 403],
+      ['/api/tree', bearer, 200],
+      ['/api/file?path=src/a.ts', bearer, 200],
+      ['/api/file?path=blob.bin', bearer, 200],
+      ['/api/file?path=big.txt', bearer, 413],
+      ['/api/file?path=nope.ts', bearer, 404],
+    ];
+    for (const [path, headers, status] of answers) expect(await statusOf(port, path, headers), path).toBe(status);
+    started.child.kill('SIGTERM');
+    expect(await within(SIGNAL_LIMIT, started.ended)).toEqual({ code: 0, signal: null, stderr: '' });
+    expect(started.out).toEqual([`bindweed: http://127.0.0.1:${port}/?token=${link.token}\n`, `serving ${repo}\n`]);
   });
 });
