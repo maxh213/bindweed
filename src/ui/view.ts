@@ -1,7 +1,6 @@
-import { decodeHashPath } from '../domain/lines.ts';
 import type { GraphView } from '../domain/graph.ts';
-import { withParentsOpen } from '../domain/tree.ts';
-import { atHashFrom, fileHashFrom, type FileJson, type TreeJson } from './client.ts';
+import { decodeHashPath, encodeHashPath } from '../domain/lines.ts';
+import { withParentsOpen, type TreeEntry, type TreeRoot } from '../domain/tree.ts';
 import { panelFromFile, type FilePanelState } from './FilePanel.tsx';
 
 export function selectedFromLocation(location: Location): string | null {
@@ -18,9 +17,9 @@ export function expandedFromLocation(location: Location): Set<string> {
   return opened;
 }
 
-export function treeParts(data: TreeJson | { error: string } | undefined): {
+export function treeParts(data: TreeRoot | { error: string } | undefined): {
   root: string;
-  entries: TreeJson['entries'];
+  entries: TreeEntry[];
 } {
   if (data === undefined || 'error' in data) return { root: '', entries: [] };
   return { root: data.root, entries: data.entries };
@@ -39,7 +38,7 @@ export function applyTitle(doc: { title: string }, root: string): void {
 
 export function panelFromQuery(
   selected: string | null,
-  data: FileJson | undefined,
+  data: { path: string; text: string } | { path: string; binary: true } | { error: string } | undefined,
   pending: boolean,
 ): FilePanelState {
   if (selected === null) return { kind: 'idle' };
@@ -93,4 +92,65 @@ export function graphStateOf(data: GraphView | { error: string } | undefined, pe
   if (pending || data === undefined) return { kind: 'loading' };
   if ('error' in data) return { kind: 'message', message: data.error };
   return { kind: 'ok', view: data };
+}
+
+const FILE_HASH_PREFIX = '#file=';
+const AT_HASH_PREFIX = '#at=';
+
+type HistoryWrite =
+  | { kind: 'file'; path: string; mode: 'push' | 'replace' }
+  | { kind: 'at'; at: string }
+  | { kind: 'path'; pathname: string };
+
+function hashValue(hash: string, prefix: string): string | null {
+  if (!hash.startsWith(prefix)) return null;
+  return hash.slice(prefix.length);
+}
+
+function fileHashFrom(location: Location): string | null {
+  return hashValue(location.hash, FILE_HASH_PREFIX);
+}
+
+function atHashFrom(location: Location): string | null {
+  return hashValue(location.hash, AT_HASH_PREFIX);
+}
+
+function fileHash(path: string): string {
+  return `${FILE_HASH_PREFIX}${encodeHashPath(path)}`;
+}
+
+function atHash(at: string): string {
+  return `${AT_HASH_PREFIX}${encodeHashPath(at)}`;
+}
+
+function pushState(history: History, url: string): void {
+  history.pushState(null, '', url);
+}
+
+function replaceState(history: History, url: string): void {
+  history.replaceState(null, '', url);
+}
+
+function pushOther(history: History, write: Exclude<HistoryWrite, { kind: 'file' }>): void {
+  if (write.kind === 'at') {
+    pushState(history, atHash(write.at));
+    return;
+  }
+  pushState(history, write.pathname);
+}
+
+function pushHistory(history: History, write: HistoryWrite): void {
+  if (write.kind === 'file') {
+    pushState(history, fileHash(write.path));
+    return;
+  }
+  pushOther(history, write);
+}
+
+export function writeHistory(history: History, write: HistoryWrite): void {
+  if (write.kind === 'file' && write.mode === 'replace') {
+    replaceState(history, fileHash(write.path));
+    return;
+  }
+  pushHistory(history, write);
 }

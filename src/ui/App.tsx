@@ -1,9 +1,8 @@
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { encodeHashPath } from '../domain/lines.ts';
 import { togglePath, type TreeEntry } from '../domain/tree.ts';
 import { ArchView } from './ArchView.tsx';
-import { fetchFile, fetchTree, pushFileHash, writeAtHash, writeFileHash } from './client.ts';
+import { fetchFile, fetchTree } from './client.ts';
 import { FilePanel } from './FilePanel.tsx';
 import { TreeView } from './TreeView.tsx';
 import {
@@ -17,6 +16,7 @@ import {
   selectedFromLocation,
   tabFromLocation,
   treeParts,
+  writeHistory,
   type Tab,
 } from './view.ts';
 
@@ -120,31 +120,31 @@ function BrowserApp(props: Readonly<AppProps>) {
 
   const showFiles = () => {
     setTab('files');
-    if (selected === null) props.historyApi.pushState(null, '', props.location.pathname);
-    else pushFileHash(props.historyApi, selected, encodeHashPath);
+    if (selected === null) writeHistory(props.historyApi, { kind: 'path', pathname: props.location.pathname });
+    else writeHistory(props.historyApi, { kind: 'file', path: selected, mode: 'push' });
   };
 
   const showArch = () => {
     setTab('arch');
-    writeAtHash(props.historyApi, at, encodeHashPath);
+    writeHistory(props.historyApi, { kind: 'at', at });
   };
 
   const drillTo = (dir: string) => {
     setTab('arch');
     setAt(dir);
-    writeAtHash(props.historyApi, dir, encodeHashPath);
+    writeHistory(props.historyApi, { kind: 'at', at: dir });
   };
 
   const openFile = (path: string) => {
     openSelection({ setSelected, setExpanded }, path);
     setTab('files');
-    pushFileHash(props.historyApi, path, encodeHashPath);
+    writeHistory(props.historyApi, { kind: 'file', path, mode: 'push' });
   };
 
   const toggleDir = (path: string) => setExpanded(current => togglePath(current, path));
 
   const selectFile = (path: string) => {
-    writeFileHash(props.historyApi, path, encodeHashPath);
+    writeHistory(props.historyApi, { kind: 'file', path, mode: 'replace' });
     setSelected(path);
   };
 

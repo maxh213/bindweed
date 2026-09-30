@@ -12,6 +12,7 @@ import {
   selectedFromLocation,
   tabFromLocation,
   treeParts,
+  writeHistory,
   type PageActions,
 } from './view.ts';
 
@@ -184,6 +185,43 @@ describe('applyPage', () => {
     const actions = recordingActions();
     applyPage(actions, { tab: 'files', at: '', selected: 'src/lib/util.ts' });
     expect(actions.calls).toEqual(['tab:files', 'at:', 'selected:src/lib/util.ts', 'expanded:,src,src/lib']);
+  });
+});
+
+describe('writeHistory', () => {
+  it('replaces a slash-preserving encoded file hash', () => {
+    let url = '';
+    let state: unknown = 'unset';
+    let title = 'unset';
+    const historyApi = {
+      replaceState: (s: unknown, t: string, next: string) => {
+        state = s;
+        title = t;
+        url = next;
+      },
+      pushState: () => undefined,
+    } as unknown as History;
+    writeHistory(historyApi, { kind: 'file', path: 'notes/żółw i zając.md', mode: 'replace' });
+    expect(state).toBeNull();
+    expect(title).toBe('');
+    expect(url).toBe('#file=notes/%C5%BC%C3%B3%C5%82w%20i%20zaj%C4%85c.md');
+    writeHistory(historyApi, { kind: 'file', path: 'src/a.ts', mode: 'replace' });
+    expect(url).toBe('#file=src/a.ts');
+  });
+
+  it('pushes view and file entries, and a bare path', () => {
+    const pushed: string[] = [];
+    const historyApi = {
+      pushState: (_s: unknown, _t: string, next: string) => {
+        pushed.push(next);
+      },
+      replaceState: () => undefined,
+    } as unknown as History;
+    writeHistory(historyApi, { kind: 'at', at: 'src/app' });
+    writeHistory(historyApi, { kind: 'at', at: '' });
+    writeHistory(historyApi, { kind: 'file', path: 'src/domain/model.ts', mode: 'push' });
+    writeHistory(historyApi, { kind: 'path', pathname: '/layered' });
+    expect(pushed).toEqual(['#at=src/app', '#at=', '#file=src/domain/model.ts', '/layered']);
   });
 });
 

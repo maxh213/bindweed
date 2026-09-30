@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { atHashFrom, fetchFile, fetchGraph, fetchTree, fileHashFrom, postRescan, pushFileHash, takeToken, writeAtHash, writeFileHash } from './client.ts';
+import { fetchFile, fetchGraph, fetchTree, postRescan, takeToken } from './client.ts';
 
 describe('fetchTree', () => {
   it('returns the tree with a bearer header and no token in the address', async () => {
@@ -178,60 +178,6 @@ describe('takeToken', () => {
     const historyApi = { replaceState: () => undefined } as unknown as History;
     expect(takeToken(fakeLocation('http://127.0.0.1:4477/?token=newer'), store, historyApi)).toBe('newer');
     expect(storage.get('bindweed.token')).toBe('newer');
-  });
-});
-
-describe('fileHashFrom', () => {
-  it('reads the file hash', () => {
-    expect(fileHashFrom(fakeLocation('http://127.0.0.1:4477/#file=src/a.ts'))).toBe('src/a.ts');
-    expect(fileHashFrom(fakeLocation('http://127.0.0.1:4477/'))).toBeNull();
-  });
-});
-
-describe('writeFileHash', () => {
-  it('writes a slash-preserving encoded hash', () => {
-    let url = '';
-    let state: unknown = 'unset';
-    let title = 'unset';
-    const historyApi = {
-      replaceState: (s: unknown, t: string, next: string) => {
-        state = s;
-        title = t;
-        url = next;
-      },
-    } as History;
-    writeFileHash(historyApi, 'notes/żółw i zając.md', p =>
-      p.split('/').map(encodeURIComponent).join('/'),
-    );
-    expect(state).toBeNull();
-    expect(title).toBe('');
-    expect(url).toBe('#file=notes/%C5%BC%C3%B3%C5%82w%20i%20zaj%C4%85c.md');
-    writeFileHash(historyApi, 'src/a.ts', p => p);
-    expect(url).toBe('#file=src/a.ts');
-  });
-});
-
-describe('atHashFrom', () => {
-  it('reads the view hash and tolerates missing or file hashes', () => {
-    expect(atHashFrom(fakeLocation('http://127.0.0.1:4477/#at=src/app'))).toBe('src/app');
-    expect(atHashFrom(fakeLocation('http://127.0.0.1:4477/#at='))).toBe('');
-    expect(atHashFrom(fakeLocation('http://127.0.0.1:4477/#file=src/a.ts'))).toBeNull();
-    expect(atHashFrom(fakeLocation('http://127.0.0.1:4477/'))).toBeNull();
-  });
-});
-
-describe('writeAtHash and pushFileHash', () => {
-  it('push new history entries for the view and the file', () => {
-    const pushed: string[] = [];
-    const historyApi = {
-      pushState: (s: unknown, t: string, next: string) => {
-        pushed.push(next);
-      },
-    } as unknown as History;
-    writeAtHash(historyApi, 'src/app', p => p);
-    writeAtHash(historyApi, '', p => p);
-    pushFileHash(historyApi, 'src/domain/model.ts', p => p);
-    expect(pushed).toEqual(['#at=src/app', '#at=', '#file=src/domain/model.ts']);
   });
 });
 

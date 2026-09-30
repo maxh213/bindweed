@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { graphView, isTestPath, type GraphView, type ScanResult, type WorkspacePackage } from './domain/graph.ts';
+import { graphView, type GraphView } from './domain/graph.ts';
+import { isTestPath, type ScanResult, type WorkspacePackage } from './domain/scan.ts';
 
 type RawSpec = [from: string, to: string, kind?: 'runtime' | 'type'];
 

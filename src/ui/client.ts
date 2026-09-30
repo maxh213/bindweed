@@ -139,8 +139,6 @@ export async function fetchFile(
 }
 
 const TOKEN_KEY = 'bindweed.token';
-const FILE_HASH_PREFIX = '#file=';
-const AT_HASH_PREFIX = '#at=';
 
 export function takeToken(location: Location, storage: Storage, historyApi: History): string | null {
   const url = new URL(location.href);
@@ -152,28 +150,4 @@ export function takeToken(location: Location, storage: Storage, historyApi: Hist
     return fromUrl;
   }
   return storage.getItem(TOKEN_KEY);
-}
-
-export function fileHashFrom(location: Location): string | null {
-  const hash = location.hash;
-  if (!hash.startsWith(FILE_HASH_PREFIX)) return null;
-  return hash.slice(FILE_HASH_PREFIX.length);
-}
-
-export function writeFileHash(historyApi: History, path: string, encode: (p: string) => string): void {
-  historyApi.replaceState(null, '', `${FILE_HASH_PREFIX}${encode(path)}`);
-}
-
-export function atHashFrom(location: Location): string | null {
-  const hash = location.hash;
-  if (!hash.startsWith(AT_HASH_PREFIX)) return null;
-  return hash.slice(AT_HASH_PREFIX.length);
-}
-
-export function writeAtHash(historyApi: History, at: string, encode: (p: string) => string): void {
-  historyApi.pushState(null, '', `${AT_HASH_PREFIX}${encode(at)}`);
-}
-
-export function pushFileHash(historyApi: History, path: string, encode: (p: string) => string): void {
-  historyApi.pushState(null, '', `${FILE_HASH_PREFIX}${encode(path)}`);
 }

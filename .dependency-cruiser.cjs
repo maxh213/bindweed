@@ -70,6 +70,97 @@ module.exports = {
       severity: 'error',
       from: { orphan: true, pathNot: ['\\.d\\.ts$', '(^|/)\\.[^/]+\\.(js|cjs|mjs|ts|json)$', '^src/cli\\.ts$', '^src/ui/main\\.tsx$', '\\.test\\.tsx?$'] },
       to: {}
+    },
+    {
+      name: 'scan-record-is-a-leaf',
+      severity: 'error',
+      comment: 'src/domain/scan.ts is the scan record and the test-path rule; it depends on nothing else under src',
+      from: { path: '^src/domain/scan\\.ts$' },
+      to: { path: '^src/' }
+    },
+    {
+      name: 'scanner-does-not-import-the-view',
+      severity: 'error',
+      comment: 'The scanner produces a scan record; it does not know how a view is laid out',
+      from: { path: '^src/(scan\\.ts|scanning/)' },
+      to: { path: '^src/domain/(graph|place)\\.ts$' }
+    },
+    {
+      name: 'only-serve-imports-the-scanner',
+      severity: 'error',
+      comment: 'Scanning a repository is server IO; only serve composes it among production files',
+      from: { pathNot: '^src/(serve\\.ts|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/scan\\.ts$' }
+    },
+    {
+      name: 'scanning-internals-are-private',
+      severity: 'error',
+      comment: 'Import parsing, workspace discovery, resolution and path rules stay inside the scanner',
+      from: { pathNot: '^src/(scan\\.ts|scanning/)' },
+      to: { path: '^src/scanning/' }
+    },
+    {
+      name: 'parse-is-a-leaf',
+      severity: 'error',
+      comment: 'Import syntax parsing depends only on the TypeScript compiler API',
+      from: { path: '^src/scanning/parse\\.ts$' },
+      to: { path: '^src/' }
+    },
+    {
+      name: 'workspaces-are-a-leaf',
+      severity: 'error',
+      comment: 'Workspace discovery reads manifests and entry files; it does not parse or resolve imports',
+      from: { path: '^src/scanning/workspaces\\.ts$' },
+      to: { path: '^src/', pathNot: '^src/scanning/paths\\.ts$' }
+    },
+    {
+      name: 'scan-paths-import-only-the-record',
+      severity: 'error',
+      comment: 'Which paths are code is decided from the scan record alone',
+      from: { path: '^src/scanning/paths\\.ts$' },
+      to: { path: '^src/', pathNot: '^src/domain/scan\\.ts$' }
+    },
+    {
+      name: 'resolve-imports-workspaces-paths-and-the-record',
+      severity: 'error',
+      comment: 'Resolution may use workspace entry points, path rules and the scan record, nothing else under src',
+      from: { path: '^src/scanning/resolve\\.ts$' },
+      to: { path: '^src/', pathNot: '^src/(scanning/(workspaces|paths)\\.ts|domain/scan\\.ts)$' }
+    },
+    {
+      name: 'placement-is-private',
+      severity: 'error',
+      comment: 'Layer, order and cycle placement stay inside the view',
+      from: { pathNot: '^src/domain/graph\\.ts$' },
+      to: { path: '^src/domain/place\\.ts$' }
+    },
+    {
+      name: 'placement-is-a-leaf',
+      severity: 'error',
+      comment: 'Placement is a pure algorithm; it does not import the rest of the view',
+      from: { path: '^src/domain/place\\.ts$' },
+      to: { path: '^src/' }
+    },
+    {
+      name: 'view-does-not-import-the-client',
+      severity: 'error',
+      comment: 'src/ui/view.ts is page state and the hash; it does not fetch',
+      from: { path: '^src/ui/view\\.ts$' },
+      to: { path: '^src/ui/client\\.ts$' }
+    },
+    {
+      name: 'client-does-not-import-the-view',
+      severity: 'error',
+      comment: 'src/ui/client.ts is the HTTP client; page state does not flow back into it',
+      from: { path: '^src/ui/client\\.ts$' },
+      to: { path: '^src/ui/view\\.ts$' }
+    },
+    {
+      name: 'ui-does-not-import-the-scan-record',
+      severity: 'error',
+      comment: 'The browser draws a view; the scan record stays on the server side of the API',
+      from: { path: '^src/ui/' },
+      to: { path: '^src/domain/scan\\.ts$' }
     }
   ],
   options: {
