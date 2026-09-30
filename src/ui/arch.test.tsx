@@ -14,7 +14,7 @@ vi.mock('@xyflow/react', async () => {
     data: Record<string, unknown>;
     draggable?: boolean;
   };
-  type FakeEdge = { id: string; source: string; target: string; type: string; data: Record<string, unknown> };
+  type FakeEdge = { id: string; source: string; target: string; type: string; data?: Record<string, unknown> };
   type FakeFlowProps = {
     nodes: FakeNode[];
     edges: FakeEdge[];
@@ -64,6 +64,7 @@ vi.mock('@xyflow/react', async () => {
   }
 
   function ReactFlow(props: FakeFlowProps) {
+    const probe = fakeEdgeView(props, { id: 'probe', source: '', target: '', type: 'arrow' });
     return ce(
       'div',
       {
@@ -75,7 +76,7 @@ vi.mock('@xyflow/react', async () => {
         'data-zoom-on-double-click': String(props.zoomOnDoubleClick),
       },
       props.nodes.map(node => fakeNodeView(props, node)),
-      ce('svg', { className: 'fake-edges' }, props.edges.map(edge => fakeEdgeView(props, edge))),
+      ce('svg', { className: 'fake-edges' }, ...props.edges.map(edge => fakeEdgeView(props, edge)), probe),
     );
   }
 

@@ -60,12 +60,11 @@ function adjacency(edges: RawEdge[]): Map<string, string[]> {
 }
 
 function popComponent(v: string, state: TarjanState): void {
-  let w: string;
-  do {
-    w = state.stack.pop() as string;
+  for (let w = state.stack.pop(); w !== undefined; w = state.stack.pop()) {
     state.onStack.delete(w);
     state.comp[w] = state.compCount;
-  } while (w !== v);
+    if (w === v) break;
+  }
   state.compCount += 1;
 }
 

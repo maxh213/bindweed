@@ -89,7 +89,8 @@ function ArrowLabel({ label, x, y }: Readonly<{ label: string | null; x: number;
 }
 
 function Arrow(props: EdgeProps<ArrowEdge>) {
-  const data = props.data as ArrowData;
+  const data = props.data;
+  if (data === undefined) return null;
   const [path, labelX, labelY] = getBezierPath(props);
   return (
     <g className={arrowClassOf(data.cycle)} data-cycle={cycleFlag(data.cycle)} data-from={props.source} data-to={props.target}>
