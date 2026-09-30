@@ -1,0 +1,49 @@
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: system-ui, sans-serif;
+}
+
+#root {
+  display: flex;
+}
+
+aside {
+  flex: none;
+  width: 18rem;
+  overflow: auto;
+  border-right: 1px solid #cccccc;
+}
+
+main {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 0 1rem;
+}
+
+nav ul {
+  margin: 0;
+  padding-left: 0.75rem;
+  list-style: none;
+}
+
+nav button {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+nav button[aria-current] {
+  font-weight: bold;
+}

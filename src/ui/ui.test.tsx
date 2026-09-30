@@ -20,6 +20,12 @@ function installDom(url = 'http://127.0.0.1:4477/?token=abc'): JSDOM {
   return dom;
 }
 
+function rowByText(text: string): HTMLButtonElement {
+  const row = Array.from(document.querySelectorAll('button')).find(el => el.textContent === text);
+  if (row === undefined) throw new Error(`missing row ${text}`);
+  return row;
+}
+
 describe('TreeView and FilePanel rendering', () => {
   let dom: JSDOM;
   let root: Root;
@@ -115,6 +121,9 @@ describe('TreeView and FilePanel rendering', () => {
     expect(src?.getAttribute('aria-expanded')).toBe('true');
     expect(top?.getAttribute('aria-expanded')).toBe('true');
     expect(file?.getAttribute('aria-current')).toBe('true');
+    expect(rowByText('demo-repo/').matches('nav > button')).toBe(true);
+    expect(rowByText('src/').matches('nav > ul > li > button')).toBe(true);
+    expect(rowByText('a.ts').matches('nav > ul > li > ul > li > button')).toBe(true);
   });
 
   it('wires tree row click callbacks', async () => {
@@ -310,6 +319,7 @@ describe('App and boot', () => {
     const files: Record<string, string> = {
       'src/a.ts': "export const a = 1;\n",
       'README.md': '# demo\n',
+      'notes/żółw i zając.md': 'cześć\n',
     };
     const fetcher = (async (url: string) => {
       if (url === '/api/tree') {
@@ -318,6 +328,12 @@ describe('App and boot', () => {
           json: async () => ({
             root: 'demo-repo',
             entries: [
+              {
+                name: 'notes',
+                path: 'notes',
+                kind: 'dir',
+                children: [{ name: 'żółw i zając.md', path: 'notes/żółw i zając.md', kind: 'file' }],
+              },
               {
                 name: 'src',
                 path: 'src',
@@ -381,6 +397,29 @@ describe('App and boot', () => {
         .find(el => el.textContent === 'README.md')
         ?.getAttribute('aria-current'),
     ).toBe('true');
+  });
+
+  it('writes the encoded hash for a non-ASCII path', async () => {
+    const { act } = await import('react');
+    const { waitFor } = await import('@testing-library/dom');
+    await renderDemoApp(root);
+    await waitFor(() => {
+      expect(rowByText('notes/').getAttribute('aria-expanded')).toBe('false');
+    });
+    await act(async () => {
+      rowByText('notes/').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    });
+    await waitFor(() => {
+      expect(rowByText('żółw i zając.md').matches('li > ul > li > button')).toBe(true);
+    });
+    await act(async () => {
+      rowByText('żółw i zając.md').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    });
+    await waitFor(() => {
+      expect(window.location.hash).toBe('#file=notes/%C5%BC%C3%B3%C5%82w%20i%20zaj%C4%85c.md');
+      expect(document.body.textContent).toContain('cześć');
+    });
+    expect(rowByText('żółw i zając.md').getAttribute('aria-current')).toBe('true');
   });
 
   it('toggles folders in the app tree', async () => {

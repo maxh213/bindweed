@@ -57,7 +57,7 @@ function BrowserApp(props: Readonly<AppProps>) {
   }, [root]);
 
   return (
-    <div>
+    <>
       <aside>
         <TreeView
           root={root}
@@ -76,7 +76,7 @@ function BrowserApp(props: Readonly<AppProps>) {
           <FileLoader token={props.token} path={selected} fetcher={props.fetcher} />
         )}
       </main>
-    </div>
+    </>
   );
 }
 

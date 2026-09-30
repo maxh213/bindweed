@@ -153,6 +153,17 @@ describe('createAppServer', () => {
     expect((await hit(port, 'GET', '/api/tree?token=')).status).toBe(401);
   });
 
+  it('checks the token before matching any API route', async () => {
+    for (const [method, path] of [
+      ['POST', '/api/nope'],
+      ['GET', '/api/file?path=src/a.ts'],
+    ]) {
+      const res = await hit(port, method, path);
+      expect(res.status).toBe(401);
+      expect(JSON.parse(res.body.toString())).toEqual({ error: 'missing or wrong token' });
+    }
+  });
+
   it('accepts the token in the header or query and localhost Host', async () => {
     const byHeader = await hit(port, 'GET', '/api/tree', { Authorization: `Bearer ${token}` });
     expect(byHeader.status).toBe(200);
@@ -376,6 +387,22 @@ describe('listenForChoice', () => {
     expect(ranged).toEqual({ port: 19062 });
     server.close();
     await held.close();
+  });
+
+  it('ends the range twenty ports after the first one', async () => {
+    const first = 19101;
+    const held = await Promise.all(Array.from({ length: 20 }, (_, i) => hold(first + i)));
+    const server = createServer();
+    expect(await listenForChoice(server, { mode: 'range', port: first })).toEqual({ port: first + 20 });
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    const last = await hold(first + 20);
+    const server2 = createServer();
+    expect(await listenForChoice(server2, { mode: 'range', port: first })).toEqual({
+      error: { kind: 'none-free', from: first, to: first + 20 },
+    });
+    server2.close();
+    await last.close();
+    await Promise.all(held.map(h => h.close()));
   });
 });
 
