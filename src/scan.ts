@@ -78,7 +78,7 @@ function bindingsTypeOnly(clause: ts.ImportClause): boolean {
 function isTypeOnlyImport(node: ts.ImportDeclaration): boolean {
   const clause = node.importClause;
   if (clause === undefined) return false;
-  return clause.isTypeOnly || bindingsTypeOnly(clause);
+  return clause.phaseModifier === ts.SyntaxKind.TypeKeyword || bindingsTypeOnly(clause);
 }
 
 function namedExportsTypeOnly(clause: ts.NamedExportBindings | undefined): boolean {
@@ -174,8 +174,8 @@ function stringField(manifest: Record<string, unknown>, key: string): string | u
 
 function firstStringField(record: Record<string, unknown>, keys: string[]): string | undefined {
   for (const key of keys) {
-    const hit = record[key];
-    if (typeof hit === 'string' && hit !== '') return hit;
+    const hit = stringField(record, key);
+    if (hit !== undefined) return hit;
   }
   return undefined;
 }
@@ -341,12 +341,24 @@ function readTextIfExists(path: string): string | undefined {
   }
 }
 
+function unquote(value: string): string {
+  const first = value.charAt(0);
+  const quoted = (first === "'" || first === '"') && value.endsWith(first);
+  return quoted ? value.slice(1, -1) : value;
+}
+
+function yamlListItem(line: string): string | undefined {
+  const trimmed = line.trim();
+  if (line.trimStart() !== line && trimmed.startsWith('-')) return unquote(trimmed.slice(1).trim());
+  return undefined;
+}
+
 function takeItems(lines: string[]): string[] {
   const items: string[] = [];
   for (const line of lines) {
-    const match = /^\s+-\s*['"]?([^'"]*?)['"]?\s*$/.exec(line);
-    if (match === null) break;
-    items.push(match[1]);
+    const item = yamlListItem(line);
+    if (item === undefined) break;
+    items.push(item);
   }
   return items;
 }
@@ -402,7 +414,7 @@ function patternsToDirs(root: string, patterns: string[]): string[] {
     patterns.filter(pattern => pattern.startsWith('!')).flatMap(pattern => expandPattern(root, pattern.slice(1))),
   );
   const dirs = include.flatMap(pattern => expandPattern(root, pattern)).filter(dir => !excluded.has(dir));
-  return [...new Set(dirs)].sort();
+  return [...new Set(dirs)].sort((a, b) => a.localeCompare(b));
 }
 
 function workspaceInfo(root: string, dir: string): WorkspaceInfo | undefined {
@@ -463,7 +475,7 @@ function stampOf(root: string, path: string): { mtimeMs: number; size: number } 
 
 function importsFor(root: string, path: string, stamp: { mtimeMs: number; size: number }, cache: Cache): RawImport[] {
   const hit = cache[path];
-  if (hit !== undefined && hit.mtimeMs === stamp.mtimeMs && hit.size === stamp.size) return hit.imports;
+  if (hit?.mtimeMs === stamp.mtimeMs && hit.size === stamp.size) return hit.imports;
   return importsOfText(path, readFileSync(join(root, path), 'utf8'));
 }
 

@@ -84,27 +84,9 @@ function errorFrom(raw: unknown): { error: string } {
   return apiError(err.success ? err.data : {});
 }
 
-function parseTreeBody(raw: unknown, ok: boolean): TreeJson | { error: string } {
+function parseBody<T>(schema: z.ZodType<T>, raw: unknown, ok: boolean): T | { error: string } {
   if (!ok) return errorFrom(raw);
-  const parsed = treeJsonSchema.safeParse(raw);
-  return parsed.success ? parsed.data : { error: 'cannot reach bindweed' };
-}
-
-function parseFileBody(raw: unknown, ok: boolean): FileJson {
-  if (!ok) return errorFrom(raw);
-  const parsed = fileOkSchema.safeParse(raw);
-  return parsed.success ? parsed.data : { error: 'cannot reach bindweed' };
-}
-
-function parseGraphBody(raw: unknown, ok: boolean): GraphView | { error: string } {
-  if (!ok) return errorFrom(raw);
-  const parsed = graphJsonSchema.safeParse(raw);
-  return parsed.success ? parsed.data : { error: 'cannot reach bindweed' };
-}
-
-function parseRescanBody(raw: unknown, ok: boolean): RescanJson | { error: string } {
-  if (!ok) return errorFrom(raw);
-  const parsed = rescanJsonSchema.safeParse(raw);
+  const parsed = schema.safeParse(raw);
   return parsed.success ? parsed.data : { error: 'cannot reach bindweed' };
 }
 
@@ -117,7 +99,7 @@ export async function fetchGraph(
     const res = await fetcher(`/api/graph?at=${encodeURIComponent(at)}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    return parseGraphBody(await res.json(), res.ok);
+    return parseBody(graphJsonSchema, await res.json(), res.ok);
   } catch {
     return { error: 'cannot reach bindweed' };
   }
@@ -126,7 +108,7 @@ export async function fetchGraph(
 export async function postRescan(token: string, fetcher: typeof fetch = fetch): Promise<RescanJson | { error: string }> {
   try {
     const res = await fetcher('/api/rescan', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
-    return parseRescanBody(await res.json(), res.ok);
+    return parseBody(rescanJsonSchema, await res.json(), res.ok);
   } catch {
     return { error: 'cannot reach bindweed' };
   }
@@ -135,7 +117,7 @@ export async function postRescan(token: string, fetcher: typeof fetch = fetch): 
 export async function fetchTree(token: string, fetcher: typeof fetch = fetch): Promise<TreeJson | { error: string }> {
   try {
     const res = await fetcher('/api/tree', { headers: { Authorization: `Bearer ${token}` } });
-    return parseTreeBody(await res.json(), res.ok);
+    return parseBody(treeJsonSchema, await res.json(), res.ok);
   } catch {
     return { error: 'cannot reach bindweed' };
   }
@@ -150,7 +132,7 @@ export async function fetchFile(
     const res = await fetcher(`/api/file?path=${encodeURIComponent(path)}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    return parseFileBody(await res.json(), res.ok);
+    return parseBody(fileOkSchema, await res.json(), res.ok);
   } catch {
     return { error: 'cannot reach bindweed' };
   }

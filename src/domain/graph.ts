@@ -68,12 +68,17 @@ export function isTestPath(path: string): boolean {
 }
 
 function baseName(path: string): string {
-  const parts = path.split('/');
-  return parts[parts.length - 1];
+  return path.slice(path.lastIndexOf('/') + 1);
+}
+
+function stripTrailingSlashes(text: string): string {
+  let end = text.length;
+  while (end > 0 && text[end - 1] === '/') end -= 1;
+  return text.slice(0, end);
 }
 
 function normalizeAt(at: string): string | null {
-  const cleaned = at.replace(/\/+$/, '');
+  const cleaned = stripTrailingSlashes(at);
   if (cleaned === '') return '';
   return validPath(cleaned) ? cleaned : null;
 }
@@ -240,16 +245,10 @@ function adjacency(edges: RawEdge[]): Map<string, string[]> {
   return map;
 }
 
-function popFromStack(state: TarjanState): string {
-  const top = state.stack[state.stack.length - 1];
-  state.stack.length -= 1;
-  return top;
-}
-
 function popComponent(v: string, state: TarjanState): void {
   let w: string;
   do {
-    w = popFromStack(state);
+    w = state.stack.pop() as string;
     state.onStack.delete(w);
     state.comp[w] = state.compCount;
   } while (w !== v);
@@ -430,7 +429,12 @@ function inSameCycle(edge: RawEdge, comp: Record<string, number>, sizes: number[
 
 function pushWithin(map: Record<string, string[]>, edge: RawEdge, compId: number, comp: Record<string, number>): void {
   if (comp[edge.from] !== compId) return;
-  (map[edge.from] ??= []).push(edge.to);
+  const existing = map[edge.from];
+  if (existing === undefined) {
+    map[edge.from] = [edge.to];
+    return;
+  }
+  existing.push(edge.to);
 }
 
 function edgesWithin(edges: RawEdge[], compId: number, comp: Record<string, number>): Record<string, string[]> {
