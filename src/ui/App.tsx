@@ -14,17 +14,8 @@ export type AppProps = {
   fetcher: typeof fetch;
 };
 
-const NO_RETRY = 0;
-
-export function makeQueryClient(): QueryClient {
-  return new QueryClient({
-    defaultOptions: {
-      queries: {
-        retry: NO_RETRY,
-        retryDelay: NO_RETRY,
-      },
-    },
-  });
+function makeQueryClient(): QueryClient {
+  return new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false, networkMode: 'always' } } });
 }
 
 type FileLoaderProps = Readonly<{

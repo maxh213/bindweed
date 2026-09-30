@@ -32,14 +32,8 @@ function MessagePanel({ path, message }: PathMessage) {
 
 type PathText = Readonly<{ path: string; text: string }>;
 
-function numberedRows(text: string): { id: string; n: number; line: string }[] {
-  const rows: { id: string; n: number; line: string }[] = [];
-  let n = 0;
-  for (const line of textLines(text)) {
-    n += 1;
-    rows.push({ id: String(n) + ':' + line, n, line });
-  }
-  return rows;
+function numberedRows(text: string): { n: number; line: string }[] {
+  return textLines(text).map((line, index) => ({ n: index + 1, line }));
 }
 
 function TextPanel({ path, text }: PathText) {
@@ -48,7 +42,7 @@ function TextPanel({ path, text }: PathText) {
       <header>{path}</header>
       <pre style={{ fontFamily: 'ui-monospace, monospace' }}>
         {numberedRows(text).map(row => (
-          <div key={row.id} data-line={row.n} data-row-id={row.id}>
+          <div key={row.n} data-line={row.n}>
             <span>{row.n}</span> {row.line}
           </div>
         ))}

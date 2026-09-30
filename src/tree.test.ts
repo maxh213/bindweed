@@ -47,6 +47,10 @@ describe('buildTree', () => {
     expect(buildTree('r', ['b.txt', 'a.txt']).entries.map(e => e.name)).toEqual(['a.txt', 'b.txt']);
   });
 
+  it('orders names by their UTF-8 bytes, not by UTF-16 code units', () => {
+    expect(buildTree('r', ['\u{1F600}.txt', '\uFF5E.txt']).entries.map(e => e.name)).toEqual(['\uFF5E.txt', '\u{1F600}.txt']);
+  });
+
   it('keeps directories ahead of files when files are listed first', () => {
     expect(buildTree('r', ['z.txt', 'a/b.txt']).entries.map(e => e.kind)).toEqual(['dir', 'file']);
   });

@@ -13,6 +13,7 @@ Status: being built by marestail, one slice per file in `tasks/`.
 - `npm test` runs the unit tests
 - `npm run build` builds the browser app into `dist/ui`
 - `npm run qa` runs the Playwright end-to-end checks in `qa/`
+- unit tests that listen on TCP take their ports from a 70-port block above 20000, chosen by `STRYKER_MUTATOR_WORKER`, so parallel Stryker workers never bind the same port
 
 ## Routes
 

@@ -1,184 +1,180 @@
-import { mkdtemp, mkdir, writeFile, symlink, readFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, unlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
-import {
-  gitCommonDir,
-  gitListedPaths,
-  gitToplevel,
-  listedRegularFiles,
-  runGit,
-  excludeFilePath,
-  withExcludeLine,
-  ensureExcludeLine,
-  ensureBindweedDir,
-  prepareBindweed,
-  exitCode,
-  isRegularFile,
-  type GitRunner,
-} from './repo.ts';
+import { delimiter, join } from 'node:path';
+import { afterAll, describe, expect, it } from 'vitest';
+import { gitToplevel, listedRegularFiles, prepareBindweed } from './repo.ts';
 
-async function gitInit(dir: string): Promise<void> {
-  await runGit(['init'], dir);
-  await runGit(['config', 'user.name', 'qa'], dir);
-  await runGit(['config', 'user.email', 'qa@example.test'], dir);
-  await runGit(['config', 'commit.gpgsign', 'false'], dir);
+const COMMIT = ['-c', 'user.name=qa', '-c', 'user.email=qa@example.test', '-c', 'commit.gpgsign=false', 'commit', '-qm'];
+const PATIENCE = 3000;
+
+const tempDirs: string[] = [];
+
+afterAll(async () => {
+  await Promise.all(tempDirs.map(dir => rm(dir, { recursive: true, force: true })));
+});
+
+async function tempDir(prefix: string): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+function git(cwd: string, ...args: string[]): string {
+  return execFileSync('git', args, { cwd, encoding: 'utf8' });
+}
+
+async function gitRepo(): Promise<string> {
+  const root = await tempDir('bw-repo-');
+  await writeFile(join(root, 'README.md'), '# demo\n');
+  git(root, 'init', '-q');
+  git(root, 'add', '-A');
+  git(root, ...COMMIT, 'fixture');
+  return root;
+}
+
+async function bareInit(): Promise<{ root: string; exclude: string }> {
+  const root = await tempDir('bw-excl-');
+  git(root, 'init', '-q', '--template=');
+  return { root, exclude: join(root, '.git', 'info', 'exclude') };
+}
+
+async function withPath(pathVar: string | undefined, run: () => Promise<void>): Promise<void> {
+  const original = process.env.PATH;
+  if (pathVar === undefined) delete process.env.PATH;
+  else process.env.PATH = pathVar;
+  try {
+    await run();
+  } finally {
+    process.env.PATH = original;
+  }
+}
+
+function toplevel(path: string): Promise<string | undefined> {
+  const hung = new Promise<'hung'>(resolve => {
+    setTimeout(() => resolve('hung'), PATIENCE).unref();
+  });
+  return Promise.race([gitToplevel(path), hung]);
 }
 
 describe('gitToplevel', () => {
-  it('returns the repository root', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'bw-git-'));
-    await gitInit(root);
+  it('returns the repository root from any folder inside it', async () => {
+    const root = await gitRepo();
     await mkdir(join(root, 'src', 'lib'), { recursive: true });
-    expect(await gitToplevel(join(root, 'src', 'lib'))).toBe(root);
-    expect(await gitToplevel(await mkdtemp(join(tmpdir(), 'bw-plain-')))).toBeUndefined();
+    expect(await toplevel(root)).toBe(root);
+    expect(await toplevel(join(root, 'src', 'lib'))).toBe(root);
+    expect(await toplevel(await tempDir('bw-plain-'))).toBeUndefined();
+    expect(await toplevel(join(root, 'missing'))).toBeUndefined();
   });
-});
 
-describe('gitCommonDir', () => {
-  it('returns the common git directory', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'bw-common-'));
-    await gitInit(root);
-    const common = await gitCommonDir(root);
-    expect(common === '.git' || common.endsWith('/.git')).toBe(true);
+  it('runs the git found on PATH and gives up when there is none or it cannot start', async () => {
+    const root = await gitRepo();
+    const bin = await tempDir('bw-bin-');
+    await withPath(bin, async () => {
+      expect(await toplevel(root)).toBeUndefined();
+      await expect(listedRegularFiles(root)).rejects.toThrow('git is not on PATH');
+      await writeFile(join(bin, 'git'), '#!/nonexistent/interpreter\n', { mode: 0o755 });
+      expect(await toplevel(root)).toBeUndefined();
+      await writeFile(join(bin, 'git'), '#!/bin/sh\nprintf "/found/on/path\\n"\n');
+      expect(await toplevel(root)).toBe('/found/on/path');
+    });
+    await withPath(`${join(bin, 'nowhere')}${delimiter}${bin}`, async () => {
+      expect(await toplevel(root)).toBe('/found/on/path');
+    });
+    await withPath(undefined, async () => {
+      expect(await toplevel(root)).toBe(root);
+    });
+  });
+
+  it('gives git no input to wait for and does not stall on what it prints to stderr', async () => {
+    const bin = await tempDir('bw-bin-');
+    const noisy = '#!/bin/sh\ncat >/dev/null\nhead -c 1000000 /dev/zero >&2\nprintf "/found/on/path\\n"\n';
+    await writeFile(join(bin, 'git'), noisy, { mode: 0o755 });
+    await withPath(`${bin}${delimiter}${process.env.PATH}`, async () => {
+      expect(await toplevel(bin)).toBe('/found/on/path');
+    });
   });
 });
 
 describe('listedRegularFiles', () => {
-  it('lists tracked and untracked files but not ignored or non-files', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'bw-ls-'));
-    await gitInit(root);
+  it('lists tracked and untracked files but not ignored, deleted, linked or nested ones', async () => {
+    const root = await gitRepo();
     await writeFile(join(root, '.gitignore'), '*.log\n');
-    await writeFile(join(root, 'README.md'), '# demo\n');
     await writeFile(join(root, 'gone.txt'), 'x\n');
     await writeFile(join(root, 'debug.log'), 'secret\n');
-    await runGit(['add', '-A'], root);
-    await runGit(['commit', '-m', 'fixture'], root);
+    git(root, 'add', '-A');
+    git(root, ...COMMIT, 'more');
     await writeFile(join(root, 'notes.txt'), 'todo\n');
     await symlink('README.md', join(root, 'link.txt'));
     await mkdir(join(root, 'vendor'));
-    await gitInit(join(root, 'vendor'));
     await writeFile(join(root, 'vendor', 'v.txt'), 'v\n');
-    await runGit(['add', '-A'], join(root, 'vendor'));
-    await runGit(['commit', '-m', 'v'], join(root, 'vendor'));
-    const { unlink } = await import('node:fs/promises');
+    git(join(root, 'vendor'), 'init', '-q');
+    git(join(root, 'vendor'), 'add', '-A');
+    git(join(root, 'vendor'), ...COMMIT, 'v');
     await unlink(join(root, 'gone.txt'));
-    const files = await listedRegularFiles(root);
-    expect(files.sort()).toEqual(['.gitignore', 'README.md', 'notes.txt']);
-    expect(await gitListedPaths(root)).toContain('vendor/');
-    expect(await gitListedPaths(root)).toContain('gone.txt');
+    expect((await listedRegularFiles(root)).sort()).toEqual(['.gitignore', 'README.md', 'notes.txt']);
   });
 
-  it('returns no paths when git fails', async () => {
-    const git = async () => ({ code: 1, stdout: '', stderr: 'fail' });
-    expect(await gitListedPaths('/tmp', git)).toEqual([]);
-  });
-
-  it('drops blank entries from a zero-byte ls-files split', async () => {
-    const git = async () => ({ code: 0, stdout: '\0', stderr: '' });
-    expect(await gitListedPaths('/tmp', git)).toEqual([]);
-    const withBlanks = async () => ({ code: 0, stdout: '\0a.txt\0\0b.txt\0', stderr: '' });
-    expect(await gitListedPaths('/tmp', withBlanks)).toEqual(['a.txt', 'b.txt']);
-  });
-
-  it('returns no paths when git reports failure even if stdout has names', async () => {
-    const git = async () => ({ code: 1, stdout: 'a.txt\0', stderr: 'fail' });
-    expect(await gitListedPaths('/tmp', git)).toEqual([]);
-  });
-});
-
-describe('isRegularFile', () => {
-  it('is false for missing paths and true for regular files', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'bw-reg-'));
-    await writeFile(join(root, 'a.txt'), 'x');
-    expect(await isRegularFile(root, 'a.txt')).toBe(true);
-    expect(await isRegularFile(root, 'missing.txt')).toBe(false);
-  });
-});
-
-describe('runGit', () => {
-  it('captures stdout from git', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'bw-run-'));
-    await gitInit(root);
-    const result = await runGit(['rev-parse', '--is-inside-work-tree'], root);
-    expect(result.code).toBe(0);
-    expect(result.stdout.trim()).toBe('true');
-  });
-
-  it('reports git missing when the binary cannot start', async () => {
-    const result = await runGit(['status'], await mkdtemp(join(tmpdir(), 'bw-miss-')), '/nonexistent/git-bin');
-    expect(result).toEqual({ code: 1, stdout: '', stderr: 'git missing' });
-  });
-
-  it('captures stderr from a failing git command', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'bw-err-'));
-    await gitInit(root);
-    const result = await runGit(['rev-parse', 'no-such-ref'], root);
-    expect(result.code).not.toBe(0);
-    expect(result.stderr.length).toBeGreaterThan(0);
-  });
-});
-
-describe('withExcludeLine', () => {
-  it('adds the line only when it is missing', () => {
-    expect(withExcludeLine('')).toBe('.bindweed/\n');
-    expect(withExcludeLine('*.tmp')).toBe('*.tmp\n.bindweed/\n');
-    expect(withExcludeLine('*.tmp\n.bindweed/\n*.bak\n')).toBe('*.tmp\n.bindweed/\n*.bak\n');
-    expect(withExcludeLine('.bindweed\n#.bindweed/\n')).toBe('.bindweed\n#.bindweed/\n.bindweed/\n');
-  });
-});
-
-describe('excludeFilePath', () => {
-  it('resolves a relative common dir against the repo root', () => {
-    expect(excludeFilePath('../../.git', '/tmp/qa/demo-repo/src/lib')).toBe(
-      '/tmp/qa/demo-repo/.git/info/exclude',
-    );
-  });
-
-  it('keeps an absolute common dir', () => {
-    expect(excludeFilePath('/tmp/qa/demo-repo/.git', '/tmp/qa/demo-wt')).toBe(
-      '/tmp/qa/demo-repo/.git/info/exclude',
-    );
+  it('lists nothing in a repository without files and fails outside a repository', async () => {
+    const { root } = await bareInit();
+    expect(await listedRegularFiles(root)).toEqual([]);
+    await expect(listedRegularFiles(await tempDir('bw-list-'))).rejects.toThrow('git ls-files failed');
   });
 });
 
 describe('prepareBindweed', () => {
-  it('writes the exclude line into a linked worktree common dir', async () => {
-    const mainRepo = await mkdtemp(join(tmpdir(), 'bw-main-'));
-    const worktree = await mkdtemp(join(tmpdir(), 'bw-wt-'));
-    const mainGit = join(mainRepo, '.git');
-    await mkdir(mainGit, { recursive: true });
-    const git: GitRunner = async (args, cwd) => {
-      expect(cwd).toBe(worktree);
-      expect(args).toEqual(['rev-parse', '--git-common-dir']);
-      return { code: 0, stdout: `${mainGit}\n`, stderr: '' };
-    };
-    await prepareBindweed(worktree, git);
-    await prepareBindweed(worktree, git);
-    expect(existsSync(join(worktree, '.bindweed'))).toBe(true);
-    expect(existsSync(join(worktree, '.git'))).toBe(false);
-    const exclude = await readFile(join(mainGit, 'info', 'exclude'), 'utf8');
-    expect(exclude.split('\n').filter(l => l === '.bindweed/')).toHaveLength(1);
-  });
-});
-
-describe('ensureExcludeLine', () => {
-  it('creates info/exclude when missing', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'bw-ex-'));
-    await ensureBindweedDir(root);
-    await ensureBindweedDir(root);
-    const path = join(root, '.git', 'info', 'exclude');
-    await ensureExcludeLine(path);
-    expect(await readFile(path, 'utf8')).toBe('.bindweed/\n');
+  it('creates .bindweed and adds the exclude line once across two starts', async () => {
+    const root = await gitRepo();
+    const template = await readFile(join(root, '.git', 'info', 'exclude'), 'utf8');
+    await prepareBindweed(root);
+    await prepareBindweed(root);
     expect(existsSync(join(root, '.bindweed'))).toBe(true);
+    expect(await readFile(join(root, '.git', 'info', 'exclude'), 'utf8')).toBe(`${template}.bindweed/\n`);
   });
-});
 
-describe('exitCode', () => {
-  it('maps null to 1 and keeps other codes', () => {
-    expect(exitCode(null)).toBe(1);
-    expect(exitCode(0)).toBe(0);
-    expect(exitCode(2)).toBe(2);
+  it.each([
+    ['is missing along with .git/info', undefined, '.bindweed/\n'],
+    ['is empty', '', '.bindweed/\n'],
+    ['ends without a newline', '*.tmp', '*.tmp\n.bindweed/\n'],
+    ['already holds the line', '*.tmp\n.bindweed/\n*.bak\n', '*.tmp\n.bindweed/\n*.bak\n'],
+    ['holds only look-alikes', '.bindweed\n#.bindweed/\n', '.bindweed\n#.bindweed/\n.bindweed/\n'],
+  ])('completes the exclude file when it %s', async (_case, before, after) => {
+    const { root, exclude } = await bareInit();
+    expect(existsSync(join(root, '.git', 'info'))).toBe(false);
+    if (before !== undefined) {
+      await mkdir(join(root, '.git', 'info'));
+      await writeFile(exclude, before);
+    }
+    await prepareBindweed(root);
+    expect(await readFile(exclude, 'utf8')).toBe(after);
+  });
+
+  it('does not rewrite an exclude file that already holds the line', async () => {
+    const { root, exclude } = await bareInit();
+    await mkdir(join(root, '.git', 'info'));
+    await writeFile(exclude, '*.tmp\n.bindweed/\n');
+    const old = new Date('2020-01-02T03:04:05Z');
+    await utimes(exclude, old, old);
+    await chmod(exclude, 0o444);
+    await prepareBindweed(root);
+    expect((await stat(exclude)).mtime).toEqual(old);
+    expect(await readFile(exclude, 'utf8')).toBe('*.tmp\n.bindweed/\n');
+  });
+
+  it('excludes .bindweed in a linked worktree through the main repository', async () => {
+    const mainRepo = await gitRepo();
+    const worktree = join(await tempDir('bw-wt-'), 'demo-wt');
+    git(mainRepo, 'worktree', 'add', '-q', worktree, '-b', 'wt');
+    const gitFile = await readFile(join(worktree, '.git'), 'utf8');
+    const template = await readFile(join(mainRepo, '.git', 'info', 'exclude'), 'utf8');
+    expect(await toplevel(worktree)).toBe(worktree);
+    await prepareBindweed(worktree);
+    await prepareBindweed(worktree);
+    await writeFile(join(worktree, '.bindweed', 'state'), 'kept out of git status\n');
+    expect(await readFile(join(worktree, '.git'), 'utf8')).toBe(gitFile);
+    expect(await readFile(join(mainRepo, '.git', 'info', 'exclude'), 'utf8')).toBe(`${template}.bindweed/\n`);
+    expect(existsSync(join(mainRepo, '.bindweed'))).toBe(false);
+    expect(git(worktree, 'status', '--porcelain')).toBe('');
   });
 });

@@ -1,90 +1,68 @@
 import { spawn } from 'node:child_process';
+import { accessSync, constants } from 'node:fs';
 import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 
-export type GitRunner = (args: string[], cwd: string) => Promise<{ code: number; stdout: string; stderr: string }>;
-
-const GIT_BIN = '/usr/bin/git';
 const EXCLUDE_LINE = '.bindweed/';
+const DEFAULT_PATH = '/usr/bin';
 
-export function exitCode(code: number | null): number {
-  if (code === null) return 1;
-  return code;
+function isExecutable(file: string): boolean {
+  try {
+    accessSync(file, constants.X_OK);
+  } catch {
+    return false;
+  }
+  return true;
 }
 
-export async function runGit(
-  args: string[],
-  cwd: string,
-  bin: string = GIT_BIN,
-): Promise<{ code: number; stdout: string; stderr: string }> {
-  return new Promise(resolvePromise => {
-    const child = spawn(bin, args, { cwd });
+function gitOnPath(): string | undefined {
+  for (const dir of (process.env.PATH ?? DEFAULT_PATH).split(delimiter)) {
+    const candidate = join(dir, 'git');
+    if (isExecutable(candidate)) return candidate;
+  }
+  return undefined;
+}
+
+function runGit(args: string[], cwd: string): Promise<string> {
+  return new Promise((done, failed) => {
+    const bin = gitOnPath();
+    if (bin === undefined) {
+      failed(new Error('git is not on PATH'));
+      return;
+    }
+    const child = spawn(bin, args, { cwd, stdio: ['ignore', 'pipe', 'ignore'] });
     const out: Buffer[] = [];
-    const err: Buffer[] = [];
     child.stdout.on('data', (piece: Buffer) => {
       out.push(piece);
     });
-    child.stderr.on('data', (piece: Buffer) => {
-      err.push(piece);
-    });
-    child.on('error', () => resolvePromise({ code: 1, stdout: '', stderr: 'git missing' }));
+    child.on('error', () => undefined);
     child.on('close', code => {
-      resolvePromise({
-        code: exitCode(code),
-        stdout: Buffer.concat(out).toString('utf8'),
-        stderr: Buffer.concat(err).toString('utf8'),
-      });
+      if (code === 0) done(Buffer.concat(out).toString());
+      else failed(new Error(`git ${args[0]} failed`));
     });
   });
 }
 
-export async function gitToplevel(path: string, git: GitRunner = runGit): Promise<string | undefined> {
-  const result = await git(['rev-parse', '--show-toplevel'], path);
-  if (result.code !== 0) return undefined;
-  return result.stdout.trim();
+export function gitToplevel(path: string): Promise<string | undefined> {
+  return runGit(['rev-parse', '--show-toplevel'], path).then(out => out.trim(), () => undefined);
 }
 
-export async function gitCommonDir(repoRoot: string, git: GitRunner = runGit): Promise<string> {
-  const result = await git(['rev-parse', '--git-common-dir'], repoRoot);
-  return result.stdout.trim();
-}
-
-export async function gitListedPaths(repoRoot: string, git: GitRunner = runGit): Promise<string[]> {
-  const result = await git(
-    ['ls-files', '-z', '--cached', '--others', '--exclude-standard'],
-    repoRoot,
-  );
-  if (result.code !== 0) return [];
-  return result.stdout.split('\0').filter(p => p.length > 0);
-}
-
-export async function isRegularFile(repoRoot: string, rel: string): Promise<boolean> {
-  try {
-    const st = await lstat(`${repoRoot}/${rel}`);
-    return st.isFile();
-  } catch {
-    return false;
-  }
-}
-
-export async function listedRegularFiles(repoRoot: string, git: GitRunner = runGit): Promise<string[]> {
-  const paths = await gitListedPaths(repoRoot, git);
+export async function listedRegularFiles(repoRoot: string): Promise<string[]> {
+  const listing = await runGit(['ls-files', '-z', '--cached', '--others', '--exclude-standard'], repoRoot);
   const kept: string[] = [];
-  for (const path of paths) {
-    if (await isRegularFile(repoRoot, path)) kept.push(path);
+  for (const path of listing.split('\0')) {
+    const onDisk = await lstat(join(repoRoot, path)).catch(() => undefined);
+    if (onDisk?.isFile()) kept.push(path);
   }
   return kept;
 }
 
-export function withExcludeLine(content: string): string {
-  const lines = content.split('\n');
-  if (lines.includes(EXCLUDE_LINE)) return content;
-  if (content.length === 0) return `${EXCLUDE_LINE}\n`;
-  if (content.endsWith('\n')) return `${content}${EXCLUDE_LINE}\n`;
-  return `${content}\n${EXCLUDE_LINE}\n`;
+function withExcludeLine(content: string): string {
+  const separator = content.length === 0 || content.endsWith('\n') ? '' : '\n';
+  return `${content}${separator}${EXCLUDE_LINE}\n`;
 }
 
-export function excludeFilePath(commonDir: string, repoRoot: string): string {
+function excludeFilePath(commonDir: string, repoRoot: string): string {
   const absolute = isAbsolute(commonDir) ? commonDir : resolve(repoRoot, commonDir);
   return join(absolute, 'info', 'exclude');
 }
@@ -97,18 +75,15 @@ async function readOrEmpty(path: string): Promise<string> {
   }
 }
 
-export async function ensureExcludeLine(excludePath: string): Promise<void> {
-  await mkdir(dirname(excludePath), { recursive: true });
+async function ensureExcludeLine(excludePath: string): Promise<void> {
   const content = await readOrEmpty(excludePath);
+  if (content.split('\n').includes(EXCLUDE_LINE)) return;
+  await mkdir(dirname(excludePath), { recursive: true });
   await writeFile(excludePath, withExcludeLine(content));
 }
 
-export async function ensureBindweedDir(repoRoot: string): Promise<void> {
+export async function prepareBindweed(repoRoot: string): Promise<void> {
   await mkdir(join(repoRoot, '.bindweed'), { recursive: true });
-}
-
-export async function prepareBindweed(repoRoot: string, git: GitRunner = runGit): Promise<void> {
-  await ensureBindweedDir(repoRoot);
-  const common = await gitCommonDir(repoRoot, git);
-  await ensureExcludeLine(excludeFilePath(common, repoRoot));
+  const common = await runGit(['rev-parse', '--git-common-dir'], repoRoot);
+  await ensureExcludeLine(excludeFilePath(common.trim(), repoRoot));
 }

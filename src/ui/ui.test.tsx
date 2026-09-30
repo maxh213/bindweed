@@ -26,6 +26,14 @@ function rowByText(text: string): HTMLButtonElement {
   return row;
 }
 
+function rowTexts(): string[] {
+  return Array.from(document.querySelectorAll('nav button')).map(el => el.textContent ?? '');
+}
+
+function click(row: HTMLElement): void {
+  row.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+}
+
 describe('TreeView and FilePanel rendering', () => {
   let dom: JSDOM;
   let root: Root;
@@ -86,12 +94,8 @@ describe('TreeView and FilePanel rendering', () => {
       ),
     );
     await new Promise(r => setTimeout(r, 0));
-    const text = document.body.textContent ?? '';
-    expect(text).toContain('demo-repo/');
-    expect(text).toContain('docs/');
-    expect(text).toContain('src/');
-    expect(text).not.toContain('guide.md');
-    expect(text).toContain('select a file');
+    expect(rowTexts()).toEqual(['demo-repo/', 'docs/', 'src/', '.gitignore', 'README.md', 'Zebra.txt', 'apple.txt']);
+    expect(document.querySelector('nav + div')?.textContent).toBe('select a file');
   });
 
   it('expands a folder and marks a selected file', async () => {
@@ -230,11 +234,6 @@ describe('TreeView and FilePanel rendering', () => {
     const rows = Array.from(pre.querySelectorAll('div'));
     expect(rows).toHaveLength(3);
     expect(rows.map(r => r.getAttribute('data-line'))).toEqual(['1', '2', '3']);
-    expect(rows.map(r => r.getAttribute('data-row-id'))).toEqual([
-      '1:export const a = 1;',
-      "2:export const name = 'żółw';",
-      '3:export const sum = a + 2;',
-    ]);
   });
 
   it('numbers each line of file text in order', async () => {
@@ -313,41 +312,58 @@ describe('App and boot', () => {
     dom.window.close();
   });
 
-  async function renderDemoApp(currentRoot: Root): Promise<typeof fetch> {
+  type Call = { url: string; headers: HeadersInit | undefined };
+
+  const demoTree = {
+    root: 'demo-repo',
+    entries: [
+      { name: 'docs', path: 'docs', kind: 'dir', children: [{ name: 'guide.md', path: 'docs/guide.md', kind: 'file' }] },
+      {
+        name: 'notes',
+        path: 'notes',
+        kind: 'dir',
+        children: [{ name: 'żółw i zając.md', path: 'notes/żółw i zając.md', kind: 'file' }],
+      },
+      {
+        name: 'src',
+        path: 'src',
+        kind: 'dir',
+        children: [
+          { name: 'lib', path: 'src/lib', kind: 'dir', children: [{ name: 'util.ts', path: 'src/lib/util.ts', kind: 'file' }] },
+          { name: 'a.ts', path: 'src/a.ts', kind: 'file' },
+        ],
+      },
+      { name: '.gitignore', path: '.gitignore', kind: 'file' },
+      { name: 'README.md', path: 'README.md', kind: 'file' },
+      { name: 'Zebra.txt', path: 'Zebra.txt', kind: 'file' },
+      { name: 'apple.txt', path: 'apple.txt', kind: 'file' },
+    ],
+  };
+
+  const demoFiles: Record<string, string> = {
+    'src/a.ts': "export const a = 1;\nexport const name = 'żółw';\nexport const sum = a + 2;\n",
+    'src/lib/util.ts': 'export const id = 1;\n',
+    'README.md': '# demo\n',
+    'notes/żółw i zając.md': 'cześć\n',
+  };
+
+  function demoBody(url: string): unknown {
+    if (url === '/api/tree') return demoTree;
+    const path = new URL(url, 'http://x').searchParams.get('path') ?? '';
+    return { path, text: demoFiles[path] ?? '' };
+  }
+
+  function demoFetcher(calls: Call[], failAfter = Number.POSITIVE_INFINITY): typeof fetch {
+    return (async (url: string, init?: RequestInit) => {
+      calls.push({ url, headers: init?.headers });
+      if (calls.length > failAfter) throw new Error('down');
+      return { ok: true, json: async () => demoBody(url) } as Response;
+    }) as typeof fetch;
+  }
+
+  async function renderDemoApp(currentRoot: Root, fetcher: typeof fetch): Promise<void> {
     const { App } = await import('./App.tsx');
     const { act } = await import('react');
-    const files: Record<string, string> = {
-      'src/a.ts': "export const a = 1;\n",
-      'README.md': '# demo\n',
-      'notes/żółw i zając.md': 'cześć\n',
-    };
-    const fetcher = (async (url: string) => {
-      if (url === '/api/tree') {
-        return {
-          ok: true,
-          json: async () => ({
-            root: 'demo-repo',
-            entries: [
-              {
-                name: 'notes',
-                path: 'notes',
-                kind: 'dir',
-                children: [{ name: 'żółw i zając.md', path: 'notes/żółw i zając.md', kind: 'file' }],
-              },
-              {
-                name: 'src',
-                path: 'src',
-                kind: 'dir',
-                children: [{ name: 'a.ts', path: 'src/a.ts', kind: 'file' }],
-              },
-              { name: 'README.md', path: 'README.md', kind: 'file' },
-            ],
-          }),
-        } as Response;
-      }
-      const path = new URL(url, 'http://x').searchParams.get('path') ?? '';
-      return { ok: true, json: async () => ({ path, text: files[path] ?? '' }) } as Response;
-    }) as typeof fetch;
     await act(async () => {
       currentRoot.render(
         createElement(App, {
@@ -358,62 +374,92 @@ describe('App and boot', () => {
         }),
       );
     });
-    return fetcher;
   }
 
-  it('loads the tree, opens a deep link, and selects a file on click', async () => {
+  function freshDom(url: string): void {
+    dom.window.close();
+    dom = installDom(url);
+    const el = document.getElementById('root');
+    if (el === null) throw new Error('missing root');
+    root = createRoot(el);
+  }
+
+  it('loads the tree, opens a deep link, and sends the token as a bearer header', async () => {
     const { waitFor } = await import('@testing-library/dom');
-    await renderDemoApp(root);
+    const calls: Call[] = [];
+    await renderDemoApp(root, demoFetcher(calls));
     await waitFor(() => {
       expect(document.title).toBe('bindweed — demo-repo');
-      expect(document.body.textContent).toContain('export const a = 1;');
+      expect(document.body.textContent).toContain('export const sum = a + 2;');
     });
-    const buttons = Array.from(document.querySelectorAll('button'));
-    expect(buttons.find(el => el.textContent === 'demo-repo/')?.getAttribute('aria-expanded')).toBe(
-      'true',
-    );
-    expect(buttons.find(el => el.textContent === 'src/')?.getAttribute('aria-expanded')).toBe('true');
-    expect(buttons.find(el => el.textContent === 'a.ts')?.getAttribute('aria-current')).toBe('true');
+    expect(rowTexts()).toEqual(['demo-repo/', 'docs/', 'notes/', 'src/', 'lib/', 'a.ts', '.gitignore', 'README.md', 'Zebra.txt', 'apple.txt']);
+    expect(rowByText('demo-repo/').getAttribute('aria-expanded')).toBe('true');
+    expect(rowByText('src/').getAttribute('aria-expanded')).toBe('true');
+    expect(rowByText('lib/').getAttribute('aria-expanded')).toBe('false');
+    expect(rowByText('docs/').getAttribute('aria-expanded')).toBe('false');
+    expect(rowByText('a.ts').getAttribute('aria-current')).toBe('true');
+    expect(document.querySelector('main header')?.textContent).toBe('src/a.ts');
+    expect(Array.from(document.querySelectorAll('pre div')).map(el => el.textContent)).toEqual([
+      '1 export const a = 1;',
+      "2 export const name = 'żółw';",
+      '3 export const sum = a + 2;',
+    ]);
+    expect(calls.map(c => c.url).sort()).toEqual(['/api/file?path=src%2Fa.ts', '/api/tree']);
+    for (const call of calls) expect(call.headers).toEqual({ Authorization: 'Bearer tok' });
   });
 
-  it('selects a file and updates the hash', async () => {
+  it('opens a percent-encoded deep link and expands only its folders', async () => {
+    const { waitFor } = await import('@testing-library/dom');
+    freshDom('http://127.0.0.1:4477/?token=tok#file=notes/%C5%BC%C3%B3%C5%82w%20i%20zaj%C4%85c.md');
+    await renderDemoApp(root, demoFetcher([]));
+    await waitFor(() => {
+      expect(document.body.textContent).toContain('cześć');
+      expect(rowTexts()).toContain('żółw i zając.md');
+    });
+    expect(document.querySelector('main header')?.textContent).toBe('notes/żółw i zając.md');
+    expect(Array.from(document.querySelectorAll('pre div')).map(el => el.textContent)).toEqual(['1 cześć']);
+    expect(rowByText('żółw i zając.md').getAttribute('aria-current')).toBe('true');
+    expect(rowByText('notes/').getAttribute('aria-expanded')).toBe('true');
+    expect(rowByText('src/').getAttribute('aria-expanded')).toBe('false');
+    expect(rowByText('docs/').getAttribute('aria-expanded')).toBe('false');
+    expect(window.location.hash).toBe('#file=notes/%C5%BC%C3%B3%C5%82w%20i%20zaj%C4%85c.md');
+  });
+
+  it('selects a file on click and updates the hash', async () => {
     const { act } = await import('react');
     const { waitFor } = await import('@testing-library/dom');
-    await renderDemoApp(root);
+    await renderDemoApp(root, demoFetcher([]));
     await waitFor(() => {
-      expect(document.body.textContent).toContain('README.md');
+      expect(rowTexts()).toContain('README.md');
     });
-    const readme = Array.from(document.querySelectorAll('button')).find(el => el.textContent === 'README.md');
-    if (readme === undefined) throw new Error('missing README.md');
     await act(async () => {
-      readme.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      click(rowByText('README.md'));
     });
     await waitFor(() => {
       expect(window.location.hash).toBe('#file=README.md');
-      expect(document.body.textContent).toContain('# demo');
+      expect(document.querySelector('main header')?.textContent).toBe('README.md');
+      expect(Array.from(document.querySelectorAll('pre div')).map(el => el.textContent)).toEqual(['1 # demo']);
     });
-    expect(
-      Array.from(document.querySelectorAll('button'))
-        .find(el => el.textContent === 'README.md')
-        ?.getAttribute('aria-current'),
-    ).toBe('true');
+    expect(document.querySelector('pre')?.style.fontFamily).toBe('ui-monospace, monospace');
+    expect(rowByText('README.md').getAttribute('aria-current')).toBe('true');
+    expect(rowByText('a.ts').hasAttribute('aria-current')).toBe(false);
   });
 
   it('writes the encoded hash for a non-ASCII path', async () => {
     const { act } = await import('react');
     const { waitFor } = await import('@testing-library/dom');
-    await renderDemoApp(root);
+    await renderDemoApp(root, demoFetcher([]));
     await waitFor(() => {
       expect(rowByText('notes/').getAttribute('aria-expanded')).toBe('false');
     });
     await act(async () => {
-      rowByText('notes/').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      click(rowByText('notes/'));
     });
     await waitFor(() => {
       expect(rowByText('żółw i zając.md').matches('li > ul > li > button')).toBe(true);
     });
     await act(async () => {
-      rowByText('żółw i zając.md').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      click(rowByText('żółw i zając.md'));
     });
     await waitFor(() => {
       expect(window.location.hash).toBe('#file=notes/%C5%BC%C3%B3%C5%82w%20i%20zaj%C4%85c.md');
@@ -422,43 +468,90 @@ describe('App and boot', () => {
     expect(rowByText('żółw i zając.md').getAttribute('aria-current')).toBe('true');
   });
 
-  it('toggles folders in the app tree', async () => {
+  it('opens with every folder collapsed and toggles folders on click', async () => {
     const { act } = await import('react');
     const { waitFor } = await import('@testing-library/dom');
-    await renderDemoApp(root);
+    freshDom('http://127.0.0.1:4477/?token=tok');
+    await renderDemoApp(root, demoFetcher([]));
+    const collapsed = ['demo-repo/', 'docs/', 'notes/', 'src/', '.gitignore', 'README.md', 'Zebra.txt', 'apple.txt'];
     await waitFor(() => {
-      expect(Array.from(document.querySelectorAll('button')).some(el => el.textContent === 'src/')).toBe(true);
+      expect(rowTexts()).toEqual(collapsed);
     });
-    const srcOpen = Array.from(document.querySelectorAll('button')).find(el => el.textContent === 'src/');
-    if (srcOpen === undefined) throw new Error('missing src/');
+    expect(document.title).toBe('bindweed — demo-repo');
+    expect(document.querySelector('main')?.textContent).toBe('select a file');
     await act(async () => {
-      srcOpen.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      click(rowByText('src/'));
     });
     await waitFor(() => {
-      expect(
-        Array.from(document.querySelectorAll('button'))
-          .find(el => el.textContent === 'src/')
-          ?.getAttribute('aria-expanded'),
-      ).toBe('false');
+      expect(rowTexts()).toEqual(['demo-repo/', 'docs/', 'notes/', 'src/', 'lib/', 'a.ts', '.gitignore', 'README.md', 'Zebra.txt', 'apple.txt']);
     });
-    const rootRow = Array.from(document.querySelectorAll('button')).find(el => el.textContent === 'demo-repo/');
-    if (rootRow === undefined) throw new Error('missing root');
+    expect(rowByText('src/').getAttribute('aria-expanded')).toBe('true');
     await act(async () => {
-      rootRow.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      click(rowByText('src/'));
     });
     await waitFor(() => {
-      expect(Array.from(document.querySelectorAll('nav button')).map(el => el.textContent)).toEqual(['demo-repo/']);
+      expect(rowTexts()).toEqual(collapsed);
     });
+    expect(rowByText('src/').getAttribute('aria-expanded')).toBe('false');
+    await act(async () => {
+      click(rowByText('demo-repo/'));
+    });
+    await waitFor(() => {
+      expect(rowTexts()).toEqual(['demo-repo/']);
+    });
+    expect(rowByText('demo-repo/').getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('keeps the tree and says why a file cannot be shown after bindweed stopped', async () => {
+    const { act } = await import('react');
+    const { waitFor } = await import('@testing-library/dom');
+    freshDom('http://127.0.0.1:4477/?token=tok');
+    const calls: Call[] = [];
+    const rows = ['demo-repo/', 'docs/', 'notes/', 'src/', '.gitignore', 'README.md', 'Zebra.txt', 'apple.txt'];
+    await renderDemoApp(root, demoFetcher(calls, 1));
+    await waitFor(() => {
+      expect(rowTexts()).toContain('README.md');
+    });
+    for (const event of ['visibilitychange', 'focus', 'offline', 'online']) window.dispatchEvent(new window.Event(event));
+    await new Promise(r => setTimeout(r, 150));
+    expect(calls).toHaveLength(1);
+    expect(rowTexts()).toEqual(rows);
+    expect(document.title).toBe('bindweed — demo-repo');
+    await act(async () => {
+      click(rowByText('README.md'));
+    });
+    await waitFor(() => {
+      expect(document.querySelector('main')?.textContent).toBe('README.mdcannot reach bindweed');
+    });
+    expect(document.querySelector('main header')?.textContent).toBe('README.md');
+    expect(document.querySelector('pre')).toBeNull();
+    expect(calls.map(c => c.url)).toEqual(['/api/tree', '/api/file?path=README.md']);
+    expect(rowTexts()).toEqual(rows);
+  });
+
+  it('loads a file while the browser reports being offline', async () => {
+    const { act } = await import('react');
+    const { waitFor } = await import('@testing-library/dom');
+    freshDom('http://127.0.0.1:4477/?token=tok');
+    await renderDemoApp(root, demoFetcher([]));
+    await waitFor(() => {
+      expect(rowTexts()).toContain('README.md');
+    });
+    window.dispatchEvent(new window.Event('offline'));
+    await act(async () => {
+      click(rowByText('README.md'));
+    });
+    try {
+      await waitFor(() => {
+        expect(Array.from(document.querySelectorAll('pre div')).map(el => el.textContent)).toEqual(['1 # demo']);
+      });
+    } finally {
+      window.dispatchEvent(new window.Event('online'));
+    }
   });
 
   it('handles a tree fetch error', async () => {
-    dom.window.close();
-    dom = installDom('http://127.0.0.1:4477/?token=tok');
-    Object.defineProperty(globalThis, 'window', { value: dom.window, configurable: true });
-    Object.defineProperty(globalThis, 'document', { value: dom.window.document, configurable: true });
-    const el = document.getElementById('root');
-    if (el === null) throw new Error('missing root');
-    root = createRoot(el);
+    freshDom('http://127.0.0.1:4477/?token=tok');
     const { App } = await import('./App.tsx');
     const { waitFor } = await import('@testing-library/dom');
     let calls = 0;
@@ -475,22 +568,14 @@ describe('App and boot', () => {
       }),
     );
     await waitFor(() => {
-      expect(calls).toBeGreaterThanOrEqual(1);
+      expect(calls).toBe(1);
       expect(document.body.textContent).toContain('select a file');
     });
-    await new Promise(r => setTimeout(r, 2500));
-    expect(calls).toBe(1);
     expect(document.title).not.toBe('bindweed — ');
   });
 
   it('loads a tree without a file hash', async () => {
-    dom.window.close();
-    dom = installDom('http://127.0.0.1:4477/?token=tok');
-    Object.defineProperty(globalThis, 'window', { value: dom.window, configurable: true });
-    Object.defineProperty(globalThis, 'document', { value: dom.window.document, configurable: true });
-    const el = document.getElementById('root');
-    if (el === null) throw new Error('missing root');
-    root = createRoot(el);
+    freshDom('http://127.0.0.1:4477/?token=tok');
     const { App } = await import('./App.tsx');
     const { act } = await import('react');
     const { waitFor } = await import('@testing-library/dom');
@@ -515,19 +600,25 @@ describe('App and boot', () => {
     });
   });
 
-  it('boots from the token in the address', async () => {
+  it('boots from the token in the address and sends it as a bearer header', async () => {
     const { bootUi } = await import('./boot.tsx');
     const { waitFor } = await import('@testing-library/dom');
-    const fetcher = (async () =>
-      ({ ok: true, json: async () => ({ root: 'demo-repo', entries: [] }) }) as Response) as typeof fetch;
+    const calls: Call[] = [];
     const original = globalThis.fetch;
-    globalThis.fetch = fetcher;
-    expect(bootUi(document, window.location, window.sessionStorage, window.history)).toBe(true);
-    await waitFor(() => {
-      expect(document.title).toBe('bindweed — demo-repo');
-    });
+    globalThis.fetch = demoFetcher(calls);
+    try {
+      expect(bootUi(document, window.location, window.sessionStorage, window.history)).toBe(true);
+      await waitFor(() => {
+        expect(document.title).toBe('bindweed — demo-repo');
+        expect(document.body.textContent).toContain('export const a = 1;');
+      });
+    } finally {
+      globalThis.fetch = original;
+    }
     expect(window.sessionStorage.getItem('bindweed.token')).toBe('tok');
-    globalThis.fetch = original;
+    expect(window.location.href).toBe('http://127.0.0.1:4477/#file=src/a.ts');
+    expect(calls.map(c => c.url).sort()).toEqual(['/api/file?path=src%2Fa.ts', '/api/tree']);
+    for (const call of calls) expect(call.headers).toEqual({ Authorization: 'Bearer tok' });
   });
 
   it('runs main.tsx against the current document', async () => {
