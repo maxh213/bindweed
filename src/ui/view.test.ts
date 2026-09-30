@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { parentDirs, togglePath, withParentsOpen } from '../domain/tree.ts';
 import { panelFromFile } from './FilePanel.tsx';
-import { expandedFromLocation, panelFromQuery, selectedFromLocation, applyTitle, treeParts } from './view.ts';
+import {
+  applyPage,
+  applyTitle,
+  atFromLocation,
+  expandedFromLocation,
+  graphStateOf,
+  pageFromLocation,
+  panelFromQuery,
+  selectedFromLocation,
+  tabFromLocation,
+  treeParts,
+  type PageActions,
+} from './view.ts';
 
 describe('parentDirs', () => {
   it('lists the root and each folder above a file', () => {
@@ -116,5 +128,71 @@ describe('panelFromQuery', () => {
       path: 'a.ts',
       text: 'x',
     });
+  });
+});
+
+describe('tabFromLocation and atFromLocation', () => {
+  it('read the tab and view from the hash', () => {
+    expect(tabFromLocation(fakeLocation('http://127.0.0.1/'))).toBe('files');
+    expect(tabFromLocation(fakeLocation('http://127.0.0.1/#file=src/a.ts'))).toBe('files');
+    expect(tabFromLocation(fakeLocation('http://127.0.0.1/#at=src'))).toBe('arch');
+    expect(atFromLocation(fakeLocation('http://127.0.0.1/'))).toBe('');
+    expect(atFromLocation(fakeLocation('http://127.0.0.1/#at='))).toBe('');
+    expect(atFromLocation(fakeLocation('http://127.0.0.1/#at=src/app'))).toBe('src/app');
+    expect(atFromLocation(fakeLocation('http://127.0.0.1/#at=src/%C5%BC%C3%B3%C5%82w'))).toBe('src/żółw');
+  });
+});
+
+describe('pageFromLocation', () => {
+  it('maps hashes to page state', () => {
+    expect(pageFromLocation(fakeLocation('http://127.0.0.1/'))).toEqual({ tab: 'files', at: '', selected: null });
+    expect(pageFromLocation(fakeLocation('http://127.0.0.1/#file=src/a.ts'))).toEqual({
+      tab: 'files',
+      at: '',
+      selected: 'src/a.ts',
+    });
+    expect(pageFromLocation(fakeLocation('http://127.0.0.1/#at=src/app'))).toEqual({
+      tab: 'arch',
+      at: 'src/app',
+      selected: null,
+    });
+  });
+});
+
+function recordingActions(): PageActions & { calls: string[] } {
+  const calls: string[] = [];
+  return {
+    calls,
+    setTab: tab => calls.push(`tab:${tab}`),
+    setAt: at => calls.push(`at:${at}`),
+    setSelected: path => calls.push(`selected:${String(path)}`),
+    setExpanded: update => {
+      const next = update(new Set());
+      calls.push(`expanded:${[...next].sort().join(',')}`);
+    },
+  };
+}
+
+describe('applyPage', () => {
+  it('applies an architecture page without touching the file selection', () => {
+    const actions = recordingActions();
+    applyPage(actions, { tab: 'arch', at: 'src', selected: null });
+    expect(actions.calls).toEqual(['tab:arch', 'at:src']);
+  });
+
+  it('applies a file page and opens its folders', () => {
+    const actions = recordingActions();
+    applyPage(actions, { tab: 'files', at: '', selected: 'src/lib/util.ts' });
+    expect(actions.calls).toEqual(['tab:files', 'at:', 'selected:src/lib/util.ts', 'expanded:,src,src/lib']);
+  });
+});
+
+describe('graphStateOf', () => {
+  it('maps query status to a graph state', () => {
+    expect(graphStateOf(undefined, true)).toEqual({ kind: 'loading' });
+    expect(graphStateOf(undefined, false)).toEqual({ kind: 'loading' });
+    expect(graphStateOf({ error: 'no such directory' }, false)).toEqual({ kind: 'message', message: 'no such directory' });
+    const view = { at: '', crumbs: [{ name: 'r', at: '' }], nodes: [], edges: [] };
+    expect(graphStateOf(view, false)).toEqual({ kind: 'ok', view });
   });
 });

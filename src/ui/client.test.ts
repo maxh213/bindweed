@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fetchFile, fetchTree, fileHashFrom, takeToken, writeFileHash } from './client.ts';
+import { atHashFrom, fetchFile, fetchGraph, fetchTree, fileHashFrom, postRescan, pushFileHash, takeToken, writeAtHash, writeFileHash } from './client.ts';
 
 describe('fetchTree', () => {
   it('returns the tree with a bearer header and no token in the address', async () => {
@@ -208,6 +208,98 @@ describe('writeFileHash', () => {
     expect(url).toBe('#file=notes/%C5%BC%C3%B3%C5%82w%20i%20zaj%C4%85c.md');
     writeFileHash(historyApi, 'src/a.ts', p => p);
     expect(url).toBe('#file=src/a.ts');
+  });
+});
+
+describe('atHashFrom', () => {
+  it('reads the view hash and tolerates missing or file hashes', () => {
+    expect(atHashFrom(fakeLocation('http://127.0.0.1:4477/#at=src/app'))).toBe('src/app');
+    expect(atHashFrom(fakeLocation('http://127.0.0.1:4477/#at='))).toBe('');
+    expect(atHashFrom(fakeLocation('http://127.0.0.1:4477/#file=src/a.ts'))).toBeNull();
+    expect(atHashFrom(fakeLocation('http://127.0.0.1:4477/'))).toBeNull();
+  });
+});
+
+describe('writeAtHash and pushFileHash', () => {
+  it('push new history entries for the view and the file', () => {
+    const pushed: string[] = [];
+    const historyApi = {
+      pushState: (s: unknown, t: string, next: string) => {
+        pushed.push(next);
+      },
+    } as unknown as History;
+    writeAtHash(historyApi, 'src/app', p => p);
+    writeAtHash(historyApi, '', p => p);
+    pushFileHash(historyApi, 'src/domain/model.ts', p => p);
+    expect(pushed).toEqual(['#at=src/app', '#at=', '#file=src/domain/model.ts']);
+  });
+});
+
+const GRAPH_BODY = {
+  at: 'src',
+  crumbs: [
+    { name: 'layered', at: '' },
+    { name: 'src', at: 'src' },
+  ],
+  nodes: [
+    { id: 'src/app', kind: 'package', name: 'app', path: 'src/app', files: 2, row: 0, order: 0, cycle: false },
+    { id: 'src/infra', kind: 'package', name: 'infra', path: 'src/infra', files: 1, row: 1, order: 0, cycle: false },
+  ],
+  edges: [
+    { from: 'src/app', to: 'src/infra', runtime: 2, type: 0, cycle: false },
+    { from: 'src/app', to: 'src/domain', runtime: 0, type: 1, cycle: true, cycleText: 'app → domain → app' },
+  ],
+};
+
+describe('fetchGraph', () => {
+  it('requests the view with the bearer header and the encoded at', async () => {
+    const calls: { url: string; headers: HeadersInit | undefined }[] = [];
+    const fetcher = (async (url: string, init?: RequestInit) => {
+      calls.push({ url, headers: init?.headers });
+      return { ok: true, json: async () => GRAPH_BODY } as Response;
+    }) as typeof fetch;
+    const body = await fetchGraph('tok', 'src/app', fetcher);
+    expect(body).toEqual(GRAPH_BODY);
+    expect(calls[0]?.url).toBe('/api/graph?at=src%2Fapp');
+    expect(calls[0]?.headers).toEqual({ Authorization: 'Bearer tok' });
+  });
+
+  it('maps failures and bad bodies to error text', async () => {
+    const down = (async () => {
+      throw new Error('down');
+    }) as typeof fetch;
+    expect(await fetchGraph('tok', '', down)).toEqual({ error: 'cannot reach bindweed' });
+    const missing = (async () =>
+      ({ ok: false, json: async () => ({ error: 'no such directory' }) }) as Response) as typeof fetch;
+    expect(await fetchGraph('tok', 'notes', missing)).toEqual({ error: 'no such directory' });
+    const bad = (async () => ({ ok: true, json: async () => ({ at: 5 }) }) as Response) as typeof fetch;
+    expect(await fetchGraph('tok', '', bad)).toEqual({ error: 'cannot reach bindweed' });
+    const bare = (async () => ({ ok: false, json: async () => null }) as Response) as typeof fetch;
+    expect(await fetchGraph('tok', '', bare)).toEqual({ error: 'cannot reach bindweed' });
+  });
+});
+
+describe('postRescan', () => {
+  it('posts with the bearer header and returns the counts', async () => {
+    const calls: { url: string; method: string | undefined; headers: HeadersInit | undefined }[] = [];
+    const fetcher = (async (url: string, init?: RequestInit) => {
+      calls.push({ url, method: init?.method, headers: init?.headers });
+      return { ok: true, json: async () => ({ files: 4, ms: 12 }) } as Response;
+    }) as typeof fetch;
+    expect(await postRescan('tok', fetcher)).toEqual({ files: 4, ms: 12 });
+    expect(calls).toEqual([{ url: '/api/rescan', method: 'POST', headers: { Authorization: 'Bearer tok' } }]);
+  });
+
+  it('maps failures and bad bodies to error text', async () => {
+    const down = (async () => {
+      throw new Error('down');
+    }) as typeof fetch;
+    expect(await postRescan('tok', down)).toEqual({ error: 'cannot reach bindweed' });
+    const denied = (async () =>
+      ({ ok: false, json: async () => ({ error: 'missing or wrong token' }) }) as Response) as typeof fetch;
+    expect(await postRescan('tok', denied)).toEqual({ error: 'missing or wrong token' });
+    const bad = (async () => ({ ok: true, json: async () => ({ files: 'x' }) }) as Response) as typeof fetch;
+    expect(await postRescan('tok', bad)).toEqual({ error: 'cannot reach bindweed' });
   });
 });
 

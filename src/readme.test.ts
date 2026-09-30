@@ -9,6 +9,8 @@ describe('README routes', () => {
     expect(text).toContain('| `/assets/` | live |');
     expect(text).toContain('| `/api/tree` | live |');
     expect(text).toContain('| `/api/file` | live |');
+    expect(text).toContain('| `/api/graph` | live |');
+    expect(text).toContain('| `/api/rescan` | live |');
     expect(text).toContain('BINDWEED_PORT');
   });
 });

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { GraphView } from '../domain/graph.ts';
 import type { TreeEntry } from '../domain/tree.ts';
 
 const treeEntrySchema: z.ZodType<TreeEntry> = z.lazy(() =>
@@ -29,6 +30,48 @@ const fileOkSchema = z.union([
 
 const errorBodySchema = z.object({ error: z.string().optional() });
 
+const graphNodeSchema = z.discriminatedUnion('kind', [
+  z.object({
+    id: z.string(),
+    kind: z.literal('package'),
+    name: z.string(),
+    path: z.string(),
+    files: z.number(),
+    row: z.number(),
+    order: z.number(),
+    cycle: z.boolean(),
+  }),
+  z.object({
+    id: z.string(),
+    kind: z.literal('file'),
+    name: z.string(),
+    path: z.string(),
+    row: z.number(),
+    order: z.number(),
+    cycle: z.boolean(),
+  }),
+]);
+
+const graphEdgeSchema = z.object({
+  from: z.string(),
+  to: z.string(),
+  runtime: z.number(),
+  type: z.number(),
+  cycle: z.boolean(),
+  cycleText: z.string().optional(),
+});
+
+const graphJsonSchema: z.ZodType<GraphView> = z.object({
+  at: z.string(),
+  crumbs: z.array(z.object({ name: z.string(), at: z.string() })),
+  nodes: z.array(graphNodeSchema),
+  edges: z.array(graphEdgeSchema),
+});
+
+const rescanJsonSchema = z.object({ files: z.number(), ms: z.number() });
+
+export type RescanJson = z.infer<typeof rescanJsonSchema>;
+
 export type TreeJson = z.infer<typeof treeJsonSchema>;
 export type FileJson = z.infer<typeof fileOkSchema> | { error: string };
 
@@ -51,6 +94,42 @@ function parseFileBody(raw: unknown, ok: boolean): FileJson {
   if (!ok) return errorFrom(raw);
   const parsed = fileOkSchema.safeParse(raw);
   return parsed.success ? parsed.data : { error: 'cannot reach bindweed' };
+}
+
+function parseGraphBody(raw: unknown, ok: boolean): GraphView | { error: string } {
+  if (!ok) return errorFrom(raw);
+  const parsed = graphJsonSchema.safeParse(raw);
+  return parsed.success ? parsed.data : { error: 'cannot reach bindweed' };
+}
+
+function parseRescanBody(raw: unknown, ok: boolean): RescanJson | { error: string } {
+  if (!ok) return errorFrom(raw);
+  const parsed = rescanJsonSchema.safeParse(raw);
+  return parsed.success ? parsed.data : { error: 'cannot reach bindweed' };
+}
+
+export async function fetchGraph(
+  token: string,
+  at: string,
+  fetcher: typeof fetch = fetch,
+): Promise<GraphView | { error: string }> {
+  try {
+    const res = await fetcher(`/api/graph?at=${encodeURIComponent(at)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return parseGraphBody(await res.json(), res.ok);
+  } catch {
+    return { error: 'cannot reach bindweed' };
+  }
+}
+
+export async function postRescan(token: string, fetcher: typeof fetch = fetch): Promise<RescanJson | { error: string }> {
+  try {
+    const res = await fetcher('/api/rescan', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+    return parseRescanBody(await res.json(), res.ok);
+  } catch {
+    return { error: 'cannot reach bindweed' };
+  }
 }
 
 export async function fetchTree(token: string, fetcher: typeof fetch = fetch): Promise<TreeJson | { error: string }> {
@@ -79,6 +158,7 @@ export async function fetchFile(
 
 const TOKEN_KEY = 'bindweed.token';
 const FILE_HASH_PREFIX = '#file=';
+const AT_HASH_PREFIX = '#at=';
 
 export function takeToken(location: Location, storage: Storage, historyApi: History): string | null {
   const url = new URL(location.href);
@@ -100,4 +180,18 @@ export function fileHashFrom(location: Location): string | null {
 
 export function writeFileHash(historyApi: History, path: string, encode: (p: string) => string): void {
   historyApi.replaceState(null, '', `${FILE_HASH_PREFIX}${encode(path)}`);
+}
+
+export function atHashFrom(location: Location): string | null {
+  const hash = location.hash;
+  if (!hash.startsWith(AT_HASH_PREFIX)) return null;
+  return hash.slice(AT_HASH_PREFIX.length);
+}
+
+export function writeAtHash(historyApi: History, at: string, encode: (p: string) => string): void {
+  historyApi.pushState(null, '', `${AT_HASH_PREFIX}${encode(at)}`);
+}
+
+export function pushFileHash(historyApi: History, path: string, encode: (p: string) => string): void {
+  historyApi.pushState(null, '', `${FILE_HASH_PREFIX}${encode(path)}`);
 }

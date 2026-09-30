@@ -4,8 +4,10 @@ import { readFile, stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { basename, extname, join } from 'node:path';
 import { z } from 'zod';
+import { graphView, type ScanResult } from './domain/graph.ts';
 import { buildTree, filePathSet, type TreeRoot } from './domain/tree.ts';
 import { listedRegularFiles } from './repo.ts';
+import { scanRepo } from './scan.ts';
 
 export type PortChoice = { mode: 'fixed' | 'range'; port: number };
 
@@ -24,6 +26,8 @@ type FileResult = { status: 200; body: FileBody } | { status: 404 | 413; body: {
 type Handler = (res: ServerResponse, url: URL) => Promise<void>;
 
 type Routes = Map<string, Handler>;
+
+type GraphHolder = { scan?: ScanResult };
 
 const MAX_BYTES = 1048576;
 const NUL_WINDOW = 8192;
@@ -168,17 +172,42 @@ async function serveFile(app: App, res: ServerResponse, url: URL): Promise<void>
   sendJson(res, result.status, result.body);
 }
 
-function routesFor(app: App): Routes {
+async function scanFor(app: App): Promise<ScanResult> {
+  return scanRepo(app.repoRoot, await listedRegularFiles(app.repoRoot));
+}
+
+async function serveGraph(app: App, graphs: GraphHolder, res: ServerResponse, url: URL): Promise<void> {
+  graphs.scan ??= await scanFor(app);
+  const view = graphView(graphs.scan, url.searchParams.get('at') ?? '', basename(app.repoRoot));
+  if (view === null) {
+    sendJson(res, 404, { error: 'no such directory' });
+    return;
+  }
+  sendJson(res, 200, view);
+}
+
+async function serveRescan(app: App, graphs: GraphHolder, res: ServerResponse): Promise<void> {
+  const started = Date.now();
+  graphs.scan = await scanFor(app);
+  sendJson(res, 200, { files: graphs.scan.files.length, ms: Date.now() - started });
+}
+
+function routesFor(app: App, graphs: GraphHolder): Routes {
   const table: Routes = new Map();
   const router = {
     get(path: string, handler: Handler) {
       table.set(`GET ${path}`, handler);
+    },
+    post(path: string, handler: Handler) {
+      table.set(`POST ${path}`, handler);
     },
   };
   router.get('/', (res, url) => serveIndex(app, res, url));
   router.get('/assets/', (res, url) => serveAsset(app, res, url));
   router.get('/api/tree', res => serveTree(app, res));
   router.get('/api/file', (res, url) => serveFile(app, res, url));
+  router.get('/api/graph', (res, url) => serveGraph(app, graphs, res, url));
+  router.post('/api/rescan', res => serveRescan(app, graphs, res));
   return table;
 }
 
@@ -206,7 +235,8 @@ async function dispatch(app: App, routes: Routes, req: IncomingMessage, res: Ser
 }
 
 function createAppServer(app: App): Server {
-  const routes = routesFor(app);
+  const graphs: GraphHolder = {};
+  const routes = routesFor(app, graphs);
   return createServer((req, res) => {
     dispatch(app, routes, req, res).catch(() => sendJson(res, 500, { error: 'internal error' }));
   });

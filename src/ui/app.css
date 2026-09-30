@@ -13,6 +13,40 @@ body {
   display: flex;
 }
 
+.page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.tabbar {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0 0.5rem;
+  border-bottom: 1px solid #cccccc;
+}
+
+.tabbar button {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+
+.tabbar button[aria-selected='true'] {
+  border-bottom-color: #2563eb;
+  font-weight: 600;
+}
+
+.files-pane {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
 aside {
   flex: none;
   width: 18rem;
@@ -46,4 +80,103 @@ nav button {
 
 nav button[aria-current] {
   font-weight: bold;
+}
+
+.arch-pane {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.arch-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.35rem 0.75rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+nav[aria-label='breadcrumb'] {
+  display: flex;
+  align-items: center;
+}
+
+nav[aria-label='breadcrumb'] button {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: #2563eb;
+  cursor: pointer;
+  padding: 0;
+}
+
+.arch-canvas {
+  flex: 1;
+  min-height: 0;
+}
+
+.arch-canvas .react-flow {
+  height: 100%;
+}
+
+.box {
+  border: 1px solid #94a3b8;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 0.4rem 0.9rem;
+  min-width: 7rem;
+  text-align: center;
+  font-size: 0.85rem;
+}
+
+.box.package {
+  position: relative;
+  background: #fef3c7;
+  border-top-color: transparent;
+  margin-top: 0.5rem;
+}
+
+.box.package::before {
+  content: '';
+  position: absolute;
+  top: -0.55rem;
+  left: 0.35rem;
+  width: 2.4rem;
+  height: 0.55rem;
+  background: #fef3c7;
+  border: 1px solid #94a3b8;
+  border-bottom: 0;
+  border-radius: 3px 3px 0 0;
+}
+
+.box.cycle {
+  border-color: #dc2626;
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.box.cycle.package::before {
+  border-color: #dc2626;
+  background: #fee2e2;
+}
+
+.box-count {
+  display: block;
+  font-size: 0.7rem;
+  color: #64748b;
+}
+
+.box.cycle .box-count {
+  color: #991b1b;
+}
+
+.arrow-label {
+  font-size: 11px;
+  fill: #334155;
+}
+
+.arrow.cycle .arrow-label {
+  fill: #dc2626;
+  font-weight: 700;
 }
