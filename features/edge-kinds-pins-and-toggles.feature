@@ -278,10 +278,10 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       When I send "GET /api/graph?tests=1" with the token
       Then the node "half" has "files" 4 and no abstract field
       When I send "GET /api/graph?at=half&tests=1" with the token
-      Then the node "iface.ts" has abstract true
-      And the node "value.test.ts" has "test" true and no abstract field
-      And the node "value.spec.ts" has "test" true and no abstract field
-      And the package "half/__tests__" has "files" 1
+      Then the status is 200 and the body is this JSON:
+        """
+        {"at":"half","crumbs":[{"name":"kinds","at":""},{"name":"half","at":"half"}],"nodes":[{"id":"half/__tests__","kind":"package","name":"__tests__","path":"half/__tests__","files":1,"row":0,"order":0,"cycle":false},{"id":"half/iface.ts","kind":"file","name":"iface.ts","path":"half/iface.ts","row":0,"order":1,"cycle":false,"abstract":true},{"id":"half/value.spec.ts","kind":"file","name":"value.spec.ts","path":"half/value.spec.ts","row":0,"order":2,"cycle":false,"test":true},{"id":"half/value.test.ts","kind":"file","name":"value.test.ts","path":"half/value.test.ts","row":0,"order":3,"cycle":false,"test":true}],"edges":[]}
+        """
       When I send "GET /api/graph?at=half/__tests__&tests=1" with the token
       Then the only node is "n.ts", and it has "test" true and no abstract field
 
@@ -496,7 +496,9 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
     and opens the panel; a double-click still drills into a package or opens a file,
     and the panel closes. An entry whose id is already a box is selected and centred
     (its centre is the box centre closest to the canvas centre). Any other entry opens
-    the view of the id's parent directory and selects the box there.
+    the view of the id's parent directory and selects the box there. A box that appears
+    because Tests or External packages is on takes its layer cell, steps right by 260
+    while that cell holds a pin, and that step is not written to the layout.
 
     Scenario: The src view shows green, a hollow head, a solid mix and a dashed arrow
       When I open "http://127.0.0.1:4800/?token={token}#at=src" in a browser
@@ -622,6 +624,17 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       Then the "main.ts" box has data-x 0 and data-y 0
       And the "app" box has data-x 0 and data-y -8
 
+    Scenario: An external that appears on a pin steps right and the pin is not rewritten
+      Given "PUT /api/layout" has saved {"version":1,"views":{"src":{"src/domain":{"x":260,"y":420}}},"settings":{"tests":false,"external":true}}
+      When I open "http://127.0.0.1:4800/?token={token}#at=src" in a browser
+      Then "External packages" is checked and "Tests" is not
+      And the "app" box has data-x 0 and data-y 0
+      And the "infra" box has data-x 0 and data-y 140
+      And the "node:fs" box has data-x 0 and data-y 420
+      And the "react" box has data-x 520 and data-y 420
+      And the "domain" box has data-x 260 and data-y 420
+      And "GET /api/layout" returns {"version":1,"views":{"src":{"src/domain":{"x":260,"y":420}}},"settings":{"tests":false,"external":true}}
+
     Scenario: A pin for a deleted file is ignored and left in the file
       Given "PUT /api/layout" has saved {"version":1,"views":{"src/domain":{"src/domain/gone.ts":{"x":0,"y":0}}},"settings":{"tests":false,"external":false}}
       When I open "http://127.0.0.1:4800/?token={token}#at=src/domain" in a browser
@@ -631,7 +644,8 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
     Scenario: The Tests checkbox shows a.test.ts and is remembered
       Given the Architecture tab shows the "src/app" view
       When I check "Tests"
-      Then the box "a.test.ts" is above "a.ts" and "b.ts", it shows a "test" tag, and an arrow runs from "a.test.ts" to "a.ts"
+      Then the box "a.test.ts" is above "a.ts" and "b.ts", and it shows a "test" tag
+      And the arrow from "a.test.ts" to "a.ts" carries data-line "solid" and data-head "filled", has no label, and its tooltip is "1 runtime · 0 type-only · 0 extends/implements"
       And "GET /api/layout" has "settings" "tests" true
       When I click the "a.ts" box
       Then under "Imported by" the only buttons are "a.test.ts" and "b.ts", each showing "1 runtime · 0 type-only · 0 extends/implements"
@@ -649,7 +663,8 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       When I check "External packages"
       Then the boxes "node:fs" and "react" have a dashed border and the same data-y, greater than the "domain" box's data-y
       And the "node:fs" box's data-x is less than the "react" box's data-x
-      And an arrow runs from "infra" to "node:fs" and an arrow runs from "infra" to "react"
+      And the arrow from "infra" to "node:fs" carries data-line "solid" and data-head "filled", has no label, and its tooltip is "1 runtime · 0 type-only · 0 extends/implements"
+      And the arrow from "infra" to "react" carries data-line "solid" and data-head "filled", has no label, and its tooltip is "1 runtime · 0 type-only · 0 extends/implements"
       And the "app" box's data-y is less than the "infra" box's, which is less than the "domain" box's, and "domain" is still green
       And "GET /api/layout" has "settings" "external" true and "settings" "tests" false
       When I open "http://127.0.0.1:4800/?token={token}#at=src" in a browser
@@ -658,10 +673,12 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       Then under "Imports" the only buttons are "domain" showing "2 runtime · 0 type-only · 1 extends/implements", "node:fs" showing "1 runtime · 0 type-only · 0 extends/implements" and "react" showing "1 runtime · 0 type-only · 0 extends/implements"
       When I click the "node:fs" box
       Then the panel's heading is "node:fs"
+      And the panel shows the path "node:fs", the word "external", and no file count
       And under "Imported by" one button shows "infra" and "1 runtime · 0 type-only · 0 extends/implements"
       And under "Imports" there is no button
       When I click the "react" box
       Then the panel's heading is "react"
+      And the panel shows the path "react", the word "external", and no file count
       And under "Imported by" one button shows "infra" and "1 runtime · 0 type-only · 0 extends/implements"
       And under "Imports" there is no button
       When I uncheck "External packages"
