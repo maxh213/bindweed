@@ -5,6 +5,7 @@ import {
   absent,
   cleanup,
   emit,
+  emitOnce,
   fixtureRepo,
   fixtureUi,
   hit,
@@ -12,14 +13,16 @@ import {
   loadExport,
   loadModule,
   sample,
+  timeMs,
 } from './harness.mjs';
 
 const TARGETS = ['GET /', 'GET /assets/app.js', 'GET /api/tree', 'GET /api/file'];
 const GRAPH_TARGETS = ['GET /api/graph', 'GET /api/graph?at=src', 'POST /api/rescan'];
+const FIRST_GRAPH = 'GET /api/graph (first request)';
 
 const serve = await loadModule('src/serve.ts');
 if (serve === undefined || typeof serve.bindApp !== 'function') {
-  absent(...TARGETS, ...GRAPH_TARGETS);
+  absent(...TARGETS, ...GRAPH_TARGETS, FIRST_GRAPH);
   process.exit(0);
 }
 
@@ -79,6 +82,14 @@ try {
   emit('GET /assets/app.js', await sample(getAsset, VALUES, WARMUP));
   emit('GET /api/tree', await sample(getTree, VALUES, WARMUP));
   emit('GET /api/file', await sample(getFile, VALUES, WARMUP));
+
+  let firstStatus = 0;
+  const firstMs = await timeMs(async () => {
+    firstStatus = (await hit(agent, port, 'GET', '/api/graph', auth)).status;
+  });
+  if (firstStatus === 404) absent(FIRST_GRAPH);
+  else if (firstStatus === 200) emitOnce(FIRST_GRAPH, firstMs);
+  else throw new Error(`${FIRST_GRAPH} -> ${firstStatus}`);
 
   const probes = [
     [GRAPH_TARGETS[0], await hit(agent, port, 'GET', '/api/graph', auth), getGraph],
