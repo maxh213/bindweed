@@ -5,6 +5,7 @@ import { request, type Server } from 'node:http';
 import { connect, createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { bindApp, listenErrorMessage } from './serve.ts';
 
@@ -470,5 +471,19 @@ describe('bindApp ports', () => {
 
   it('passes on listen errors that are not a taken port', async () => {
     await expect(bindApp(deps, { mode: 'fixed', port: 70000 })).rejects.toThrow(/port/i);
+  });
+});
+
+describe('the server module', () => {
+  it('does not load the TypeScript compiler until a scan is asked for', () => {
+    const servePath = join(dirname(fileURLToPath(import.meta.url)), 'serve.ts');
+    const probe = [
+      "import { createRequire } from 'node:module';",
+      'const require = createRequire(import.meta.url);',
+      `await import(${JSON.stringify(pathToFileURL(servePath).href)});`,
+      "process.stdout.write(String(Object.keys(require.cache).some(path => path.includes('/typescript/'))));",
+    ].join('\n');
+    const loaded = execFileSync(process.execPath, ['--input-type=module', '-e', probe], { encoding: 'utf8' });
+    expect(loaded).toBe('false');
   });
 });

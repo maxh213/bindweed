@@ -8,7 +8,6 @@ import { graphView } from './domain/graph.ts';
 import type { ScanResult } from './domain/scan.ts';
 import { buildTree, filePathSet, type TreeRoot } from './domain/tree.ts';
 import { listedRegularFiles } from './repo.ts';
-import { scanRepo } from './scan.ts';
 
 export type PortChoice = { mode: 'fixed' | 'range'; port: number };
 
@@ -174,6 +173,7 @@ async function serveFile(app: App, res: ServerResponse, url: URL): Promise<void>
 }
 
 async function scanFor(app: App): Promise<ScanResult> {
+  const { scanRepo } = await import('./scan.ts');
   return scanRepo(app.repoRoot, await listedRegularFiles(app.repoRoot));
 }
 
