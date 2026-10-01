@@ -5,6 +5,7 @@ import { request, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { prepareBindweed } from './repo.ts';
 import { bindApp, listenErrorMessage } from './serve.ts';
 
 const WORKER = process.env.STRYKER_MUTATOR_WORKER;
@@ -42,9 +43,22 @@ async function gitRepo(name: string, files: Record<string, string>): Promise<str
     await mkdir(dirname(full), { recursive: true });
     await writeFile(full, text);
   }
-  git(root, 'init', '-q');
+  git(root, 'init', '-q', '--template=');
   git(root, 'add', '-A');
-  git(root, '-c', 'user.name=qa', '-c', 'user.email=qa@example.test', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'fixture');
+  git(
+    root,
+    '-c',
+    'user.name=qa',
+    '-c',
+    'user.email=qa@example.test',
+    '-c',
+    'commit.gpgsign=false',
+    '-c',
+    'gc.auto=0',
+    'commit',
+    '-qm',
+    'fixture',
+  );
   return root;
 }
 
@@ -87,13 +101,14 @@ describe('the graph api over the layered fixture', () => {
 
   beforeAll(async () => {
     root = await gitRepo('layered', LAYERED_FILES);
+    await prepareBindweed(root);
     app = await boundOn(root, port);
     bearer = { Authorization: `Bearer ${app.token}` };
   });
 
   afterAll(async () => {
     await closeServer(app.server);
-    await rm(dirname(root), { recursive: true, force: true });
+    await rm(dirname(root), { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('answers the root view and the empty-at view identically', async () => {
@@ -198,6 +213,16 @@ describe('the graph api over the layered fixture', () => {
     expect(typeof body.ms).toBe('number');
   });
 
+  it('answers the tree and file routes on the same server', async () => {
+    const tree = await hit(port, 'GET', '/api/tree', bearer);
+    expect(tree.status).toBe(200);
+    const entries = json(tree) as { entries: { name: string }[] };
+    expect(entries.entries.map(entry => entry.name)).toEqual(['notes', 'src', 'tsconfig.json']);
+    const file = await hit(port, 'GET', '/api/file?path=src/domain/model.ts', bearer);
+    expect(file.status).toBe(200);
+    expect(json(file)).toEqual({ path: 'src/domain/model.ts', text: 'export class Model { id = 0; }\n' });
+  });
+
   it('picks up a new file and its arrow on rescan', async () => {
     await writeFile(join(root, 'src', 'main.ts'), "import { a } from './app/a';\n");
     const rescan = json(await hit(port, 'POST', '/api/rescan', bearer)) as { files: number };
@@ -257,7 +282,7 @@ describe('the graph api over the workspace fixture', () => {
       });
     } finally {
       await closeServer(app.server);
-      await rm(dirname(root), { recursive: true, force: true });
+      await rm(dirname(root), { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
   });
 });

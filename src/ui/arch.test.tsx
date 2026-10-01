@@ -330,6 +330,8 @@ describe('ArchView with a fake flow', () => {
     await showArchView('', GRAPHS, noopDir, noopPath);
     expect(nodeEls().map(node => node.textContent)).toEqual(['src4 files']);
     expect(nodeById('src').dataset).toMatchObject({ x: '0', y: '0', draggable: 'false' });
+    expect(nodeById('src').querySelector('.box')?.classList.contains('nodrag')).toBe(true);
+    expect(nodeById('src').querySelector('.box')?.classList.contains('nopan')).toBe(true);
     expect(boxCycleFlag(nodeById('src'))).toBe('false');
     expect(edgeEls()).toEqual([]);
     expect(attrOf('.fake-flow', 'data-draggable-nodes')).toBe('false');
