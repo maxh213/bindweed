@@ -1,0 +1,38 @@
+#!/usr/bin/env node
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { TREE, absent, emitOnce, hasFile, moduleUrl } from './harness.mjs';
+
+const ENTRIES = [
+  ['serve module import', 'src/serve.ts'],
+  ['cli module import', 'src/cli.ts'],
+];
+
+const run = promisify(execFile);
+const MISSING = ENTRIES.filter(([, rel]) => !hasFile(...rel.split('/')));
+const PRESENT = ENTRIES.filter(([, rel]) => hasFile(...rel.split('/')));
+
+if (MISSING.length > 0) absent(...MISSING.map(([target]) => target));
+
+async function importOnce(url) {
+  const script = `const t = performance.now(); await import(${JSON.stringify(url)}); process.stdout.write(String(performance.now() - t));`;
+  const { stdout, stderr } = await run(process.execPath, ['--input-type=module', '-e', script], {
+    cwd: TREE,
+    timeout: 60000,
+    maxBuffer: 1048576,
+  });
+  const ms = Number(stdout.trim());
+  if (!Number.isFinite(ms)) throw new Error(`no import timing for ${url}: ${stderr.trim()}`);
+  return ms;
+}
+
+async function medianImportMs(url) {
+  const values = [];
+  for (let i = 0; i < 5; i += 1) values.push(await importOnce(url));
+  values.sort((a, b) => a - b);
+  return values[2];
+}
+
+for (const [target, rel] of PRESENT) {
+  emitOnce(target, await medianImportMs(moduleUrl(...rel.split('/'))));
+}
