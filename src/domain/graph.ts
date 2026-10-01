@@ -1,4 +1,4 @@
-import { byStrings, placeView, type RawEdge, type RawNode, type ViewEdge, type ViewNode } from './place.ts';
+import { byStrings, placeView, toViewEdge, type RawEdge, type RawNode, type ViewEdge, type ViewNode } from './place.ts';
 import type { ExternalRef, ScanEdge, ScanResult, ScannedFile, WorkspacePackage } from './scan.ts';
 
 export type { ViewEdge };
@@ -7,7 +7,7 @@ export type Crumb = { name: string; at: string };
 
 export type GraphView = { at: string; crumbs: Crumb[]; nodes: GraphNode[]; edges: ViewEdge[] };
 
-type NodeCount = { file: boolean; count: number; abstract: boolean; test: boolean };
+type NodeCount = { isFile: boolean; files: number; abstract: boolean; test: boolean };
 
 type EdgeKind = 'runtime' | 'type';
 
@@ -89,36 +89,36 @@ function nodeIdFor(path: string, at: string, ws: WorkspaceOrder): string {
   return childNodeId(path, at);
 }
 
-function freshCount(isFile: boolean, file: ScannedFile): NodeCount {
-  return { file: isFile, count: 1, abstract: file.abstract === true, test: isFile && file.test };
+function newCount(isFile: boolean, file: ScannedFile): NodeCount {
+  return { isFile, files: 1, abstract: file.abstract === true, test: isFile && file.test };
 }
 
-function growCount(hit: NodeCount, file: ScannedFile): void {
-  hit.count += 1;
-  if (file.abstract !== true) hit.abstract = false;
+function mergeFile(count: NodeCount, file: ScannedFile): void {
+  count.files += 1;
+  if (file.abstract !== true) count.abstract = false;
 }
 
-function bump(counts: Map<string, NodeCount>, id: string, file: ScannedFile): void {
-  const hit = counts.get(id);
-  if (hit === undefined) {
-    counts.set(id, freshCount(id === file.path, file));
+function countFile(counts: Map<string, NodeCount>, id: string, file: ScannedFile): void {
+  const found = counts.get(id);
+  if (found === undefined) {
+    counts.set(id, newCount(id === file.path, file));
     return;
   }
-  growCount(hit, file);
+  mergeFile(found, file);
 }
 
 function insideView(path: string, at: string): boolean {
   return at === '' || path.startsWith(`${at}/`);
 }
 
-function counted(file: ScannedFile, at: string, includeTests: boolean): boolean {
+function countsInView(file: ScannedFile, at: string, includeTests: boolean): boolean {
   if (!insideView(file.path, at)) return false;
   return includeTests || !file.test;
 }
 
 function addFileNode(counts: Map<string, NodeCount>, file: ScannedFile, at: string, ws: WorkspaceOrder, includeTests: boolean): void {
-  if (!counted(file, at, includeTests)) return;
-  bump(counts, nodeIdFor(file.path, at, ws), file);
+  if (!countsInView(file, at, includeTests)) return;
+  countFile(counts, nodeIdFor(file.path, at, ws), file);
 }
 
 function abstractMark(abstract: boolean): { abstract?: true } {
@@ -127,15 +127,15 @@ function abstractMark(abstract: boolean): { abstract?: true } {
 }
 
 function testMark(info: NodeCount): { test?: true } {
-  if (!info.file || !info.test) return {};
+  if (!info.isFile || !info.test) return {};
   return { test: true };
 }
 
 function rawNode(id: string, info: NodeCount, ws: WorkspaceOrder): RawNode {
   const name = ws.byDir.get(id) ?? baseName(id);
   const marks = { ...abstractMark(info.abstract), ...testMark(info) };
-  if (info.file) return { id, kind: 'file', name, path: id, ...marks };
-  return { id, kind: 'package', name, path: id, files: info.count, ...marks };
+  if (info.isFile) return { id, kind: 'file', name, path: id, ...marks };
+  return { id, kind: 'package', name, path: id, files: info.files, ...marks };
 }
 
 function viewNodes(scan: ScanResult, at: string, ws: WorkspaceOrder, includeTests: boolean): RawNode[] {
@@ -153,11 +153,11 @@ function kindCounts(kind: EdgeKind): { runtime: number; type: number } {
   return { runtime: 0, type: 1 };
 }
 
-function freshEdge(from: string, to: string, kind: EdgeKind): RawEdge {
+function newEdge(from: string, to: string, kind: EdgeKind): RawEdge {
   return { from, to, ...kindCounts(kind) };
 }
 
-function addCount(edge: { runtime: number; type: number }, kind: EdgeKind): void {
+function addKind(edge: { runtime: number; type: number }, kind: EdgeKind): void {
   if (kind === 'runtime') edge.runtime += 1;
   else edge.type += 1;
 }
@@ -167,17 +167,17 @@ function addHeritage(edge: RawEdge, heritage: number): void {
   edge.heritage = (edge.heritage ?? 0) + heritage;
 }
 
-function bumpEdge(agg: Map<string, RawEdge>, from: string, to: string, kind: EdgeKind, heritage: number): void {
+function mergeEdge(agg: Map<string, RawEdge>, from: string, to: string, kind: EdgeKind, heritage: number): void {
   const key = `${from} ${to}`;
-  const hit = agg.get(key);
-  if (hit === undefined) {
-    const created = freshEdge(from, to, kind);
+  const found = agg.get(key);
+  if (found === undefined) {
+    const created = newEdge(from, to, kind);
     addHeritage(created, heritage);
     agg.set(key, created);
     return;
   }
-  addCount(hit, kind);
-  addHeritage(hit, heritage);
+  addKind(found, kind);
+  addHeritage(found, heritage);
 }
 
 function endpointsVisible(from: string, to: string, nodeIds: Set<string>): [string, string] | undefined {
@@ -189,48 +189,46 @@ function mappedEndpoints(edge: ScanEdge, at: string, nodeIds: Set<string>, ws: W
   return endpointsVisible(nodeIdFor(edge.from, at, ws), nodeIdFor(edge.to, at, ws), nodeIds);
 }
 
-function hidesTest(path: string, testFiles: Set<string>, includeTests: boolean): boolean {
-  if (includeTests) return false;
-  return testFiles.has(path);
-}
-
-function hidesEdge(from: string, to: string, testFiles: Set<string>, includeTests: boolean): boolean {
-  return hidesTest(from, testFiles, includeTests) || hidesTest(to, testFiles, includeTests);
-}
-
-function edgeEnds(edge: ScanEdge, at: string, nodeIds: Set<string>, testFiles: Set<string>, includeTests: boolean, ws: WorkspaceOrder): [string, string] | undefined {
-  if (hidesEdge(edge.from, edge.to, testFiles, includeTests)) return undefined;
-  return mappedEndpoints(edge, at, nodeIds, ws);
-}
-
-function addEdge(agg: Map<string, RawEdge>, edge: ScanEdge, at: string, nodeIds: Set<string>, testFiles: Set<string>, includeTests: boolean, ws: WorkspaceOrder): void {
-  const ends = edgeEnds(edge, at, nodeIds, testFiles, includeTests, ws);
-  if (ends === undefined) return;
-  bumpEdge(agg, ends[0], ends[1], edge.kind, edge.heritage ?? 0);
-}
-
 function testFileSet(scan: ScanResult): Set<string> {
   return new Set(scan.files.filter(file => file.test).map(file => file.path));
 }
 
+function hiddenTest(path: string, testFiles: Set<string>, includeTests: boolean): boolean {
+  if (includeTests) return false;
+  return testFiles.has(path);
+}
+
+function shownEdges(scan: ScanResult, includeTests: boolean): ScanEdge[] {
+  const testFiles = testFileSet(scan);
+  return scan.edges.filter(edge => !hiddenTest(edge.from, testFiles, includeTests) && !hiddenTest(edge.to, testFiles, includeTests));
+}
+
+function shownExternals(scan: ScanResult, includeTests: boolean): ExternalRef[] {
+  const testFiles = testFileSet(scan);
+  return scan.externals.filter(ext => !hiddenTest(ext.from, testFiles, includeTests));
+}
+
+function addEdge(agg: Map<string, RawEdge>, edge: ScanEdge, at: string, nodeIds: Set<string>, ws: WorkspaceOrder): void {
+  const ends = mappedEndpoints(edge, at, nodeIds, ws);
+  if (ends === undefined) return;
+  mergeEdge(agg, ends[0], ends[1], edge.kind, edge.heritage ?? 0);
+}
+
 function viewEdges(scan: ScanResult, at: string, nodeIds: Set<string>, includeTests: boolean, ws: WorkspaceOrder): RawEdge[] {
   const agg = new Map<string, RawEdge>();
-  const testFiles = testFileSet(scan);
-  for (const edge of scan.edges) addEdge(agg, edge, at, nodeIds, testFiles, includeTests, ws);
+  for (const edge of shownEdges(scan, includeTests)) addEdge(agg, edge, at, nodeIds, ws);
   return [...agg.values()].sort(byEndpoints);
 }
 
-function noteExternal(agg: Map<string, RawEdge>, ext: ExternalRef, at: string, nodeIds: Set<string>, testFiles: Set<string>, includeTests: boolean, ws: WorkspaceOrder): void {
-  if (hidesTest(ext.from, testFiles, includeTests)) return;
+function noteExternal(agg: Map<string, RawEdge>, ext: ExternalRef, at: string, nodeIds: Set<string>, ws: WorkspaceOrder): void {
   const from = nodeIdFor(ext.from, at, ws);
   if (!nodeIds.has(from)) return;
-  bumpEdge(agg, from, ext.name, ext.kind, ext.heritage ?? 0);
+  mergeEdge(agg, from, ext.name, ext.kind, ext.heritage ?? 0);
 }
 
 function externalEdges(scan: ScanResult, at: string, nodeIds: Set<string>, includeTests: boolean, ws: WorkspaceOrder): RawEdge[] {
   const agg = new Map<string, RawEdge>();
-  const testFiles = testFileSet(scan);
-  for (const ext of scan.externals) noteExternal(agg, ext, at, nodeIds, testFiles, includeTests, ws);
+  for (const ext of shownExternals(scan, includeTests)) noteExternal(agg, ext, at, nodeIds, ws);
   return [...agg.values()].sort(byEndpoints);
 }
 
@@ -246,31 +244,11 @@ function nextRow(nodes: ViewNode[]): number {
   return nodes.reduce((max, node) => Math.max(max, node.row), -1) + 1;
 }
 
-function plainEdge(edge: RawEdge): ViewEdge {
-  const base: ViewEdge = { from: edge.from, to: edge.to, runtime: edge.runtime, type: edge.type, cycle: false };
-  if (edge.heritage === undefined || edge.heritage === 0) return base;
-  return { ...base, heritage: edge.heritage };
-}
-
-function applyMarks(node: ViewNode, source: ViewNode): ViewNode {
-  if (source.abstract === true) node.abstract = true;
-  if (source.test === true) node.test = true;
-  return node;
-}
-
-function orderedNode(node: ViewNode): ViewNode {
-  if (node.abstract !== true && node.test !== true) return node;
-  const copy = { ...node };
-  delete copy.abstract;
-  delete copy.test;
-  return applyMarks(copy, node);
-}
-
 function withExternals(nodes: ViewNode[], edges: ViewEdge[], ext: RawEdge[]): { nodes: GraphNode[]; edges: ViewEdge[] } {
   if (ext.length === 0) return { nodes, edges };
   return {
     nodes: [...nodes, ...externalNodes(externalNames(ext), nextRow(nodes))],
-    edges: [...edges, ...ext.map(plainEdge)],
+    edges: [...edges, ...ext.map(edge => toViewEdge(edge, false))],
   };
 }
 
@@ -301,7 +279,7 @@ function assemble(scan: ScanResult, dir: string, rootName: string, nodes: RawNod
   const nodeIds = new Set(nodes.map(node => node.id));
   const placed = placeView(nodes, viewEdges(scan, dir, nodeIds, flags.tests, ws));
   const ext = flags.external ? externalEdges(scan, dir, nodeIds, flags.tests, ws) : [];
-  const drawn = withExternals(placed.nodes.map(orderedNode), placed.edges, ext);
+  const drawn = withExternals(placed.nodes, placed.edges, ext);
   return { at: dir, crumbs: crumbsFor(dir, rootName, ws), nodes: drawn.nodes, edges: drawn.edges };
 }
 
@@ -317,22 +295,22 @@ type Tally = { runtime: number; type: number; heritage: number };
 
 type Sides = { imports: Map<string, Tally>; importedBy: Map<string, Tally> };
 
-function freshTally(kind: EdgeKind, heritage: number): Tally {
+function newTally(kind: EdgeKind, heritage: number): Tally {
   return { ...kindCounts(kind), heritage };
 }
 
-function growTally(hit: Tally, kind: EdgeKind, heritage: number): void {
-  addCount(hit, kind);
-  hit.heritage += heritage;
+function mergeKind(tally: Tally, kind: EdgeKind, heritage: number): void {
+  addKind(tally, kind);
+  tally.heritage += heritage;
 }
 
-function tallyAdd(map: Map<string, Tally>, id: string, kind: EdgeKind, heritage: number): void {
-  const hit = map.get(id);
-  if (hit === undefined) {
-    map.set(id, freshTally(kind, heritage));
+function mergeTally(map: Map<string, Tally>, id: string, kind: EdgeKind, heritage: number): void {
+  const found = map.get(id);
+  if (found === undefined) {
+    map.set(id, newTally(kind, heritage));
     return;
   }
-  growTally(hit, kind, heritage);
+  mergeKind(found, kind, heritage);
 }
 
 function sideOf(from: string, to: string, id: string): 'import' | 'importedBy' | undefined {
@@ -344,26 +322,26 @@ function sideOf(from: string, to: string, id: string): 'import' | 'importedBy' |
 
 function recordLink(sides: Sides, from: string, to: string, id: string, kind: EdgeKind, heritage: number): void {
   const side = sideOf(from, to, id);
-  if (side === 'import') tallyAdd(sides.imports, to, kind, heritage);
-  else if (side === 'importedBy') tallyAdd(sides.importedBy, from, kind, heritage);
+  if (side === 'import') mergeTally(sides.imports, to, kind, heritage);
+  else if (side === 'importedBy') mergeTally(sides.importedBy, from, kind, heritage);
 }
 
-function recordScan(edge: ScanEdge, at: string, id: string, testFiles: Set<string>, includeTests: boolean, ws: WorkspaceOrder, sides: Sides): void {
-  if (hidesEdge(edge.from, edge.to, testFiles, includeTests)) return;
-  recordLink(sides, nodeIdFor(edge.from, at, ws), nodeIdFor(edge.to, at, ws), id, edge.kind, edge.heritage ?? 0);
+function scanLinks(scan: ScanResult, at: string, id: string, includeTests: boolean, ws: WorkspaceOrder, sides: Sides): void {
+  for (const edge of shownEdges(scan, includeTests)) {
+    recordLink(sides, nodeIdFor(edge.from, at, ws), nodeIdFor(edge.to, at, ws), id, edge.kind, edge.heritage ?? 0);
+  }
 }
 
-function recordExternal(ext: ExternalRef, at: string, id: string, testFiles: Set<string>, includeTests: boolean, ws: WorkspaceOrder, sides: Sides): void {
-  if (hidesTest(ext.from, testFiles, includeTests)) return;
-  recordLink(sides, nodeIdFor(ext.from, at, ws), ext.name, id, ext.kind, ext.heritage ?? 0);
+function externalLinks(scan: ScanResult, at: string, id: string, includeTests: boolean, ws: WorkspaceOrder, sides: Sides): void {
+  for (const ext of shownExternals(scan, includeTests)) {
+    recordLink(sides, nodeIdFor(ext.from, at, ws), ext.name, id, ext.kind, ext.heritage ?? 0);
+  }
 }
 
 function linksFor(scan: ScanResult, at: string, id: string, flags: GraphFlags, ws: WorkspaceOrder): Sides {
   const sides: Sides = { imports: new Map(), importedBy: new Map() };
-  const testFiles = testFileSet(scan);
-  for (const edge of scan.edges) recordScan(edge, at, id, testFiles, flags.tests, ws, sides);
-  if (!flags.external) return sides;
-  for (const ext of scan.externals) recordExternal(ext, at, id, testFiles, flags.tests, ws, sides);
+  scanLinks(scan, at, id, flags.tests, ws, sides);
+  if (flags.external) externalLinks(scan, at, id, flags.tests, ws, sides);
   return sides;
 }
 
@@ -382,14 +360,14 @@ function entriesOf(map: Map<string, Tally>, nodes: Map<string, GraphNode>): Deta
   return [...map.entries()].map(([id, tally]) => entryFrom(id, tally, nodes)).sort(byEntry);
 }
 
-function fileAbstract(node: GraphNode): { abstract?: true } {
+function fileMeta(node: GraphNode): { abstract?: true } {
   if (node.kind !== 'file') return {};
   if (node.abstract !== true) return {};
   return { abstract: true };
 }
 
-function packageMeta(node: GraphNode): { files?: number; abstract?: true } {
-  if (node.kind !== 'package') return fileAbstract(node);
+function nodeMeta(node: GraphNode): { files?: number; abstract?: true } {
+  if (node.kind !== 'package') return fileMeta(node);
   if (node.abstract === true) return { files: node.files, abstract: true };
   return { files: node.files };
 }
@@ -407,7 +385,7 @@ export function nodeDetail(scan: ScanResult, id: string, at: string, rootName: s
     name: node.name,
     path: node.path,
     kind: node.kind,
-    ...packageMeta(node),
+    ...nodeMeta(node),
     imports: entriesOf(sides.imports, nodes),
     importedBy: entriesOf(sides.importedBy, nodes),
   };

@@ -15,8 +15,12 @@ export type PlacedBox = { id: string; x: number; y: number };
 const COL = 260;
 const ROW = 140;
 
+export function emptySettings(): LayoutSettings {
+  return { tests: false, external: false };
+}
+
 export function emptyLayout(): LayoutDoc {
-  return { version: 1, views: {}, settings: { tests: false, external: false } };
+  return { version: 1, views: {}, settings: emptySettings() };
 }
 
 function recordOf(value: unknown): Record<string, unknown> | undefined {

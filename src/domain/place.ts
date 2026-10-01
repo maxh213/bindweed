@@ -302,15 +302,15 @@ function cycleTextFor(edge: RawEdge, edges: RawEdge[], comp: Record<string, numb
   return [edge.from, ...path].map(id => names[id]).join(' → ');
 }
 
-function withCycle(edge: RawEdge, cycle: boolean): ViewEdge {
-  const counts = { from: edge.from, to: edge.to, runtime: edge.runtime, type: edge.type };
-  const marked = edge.heritage === undefined || edge.heritage === 0 ? counts : { ...counts, heritage: edge.heritage };
-  return { ...marked, cycle };
+export function toViewEdge(edge: RawEdge, cycle: boolean): ViewEdge {
+  const base = { from: edge.from, to: edge.to, runtime: edge.runtime, type: edge.type, cycle };
+  if (edge.heritage === undefined || edge.heritage === 0) return base;
+  return { ...base, heritage: edge.heritage };
 }
 
 function finishEdge(edge: RawEdge, edges: RawEdge[], comp: Record<string, number>, sizes: number[], names: Record<string, string>): ViewEdge {
   const cycle = inSameCycle(edge, comp, sizes);
-  const base = withCycle(edge, cycle);
+  const base = toViewEdge(edge, cycle);
   if (!cycle) return base;
   return { ...base, cycleText: cycleTextFor(edge, edges, comp, names) };
 }

@@ -134,11 +134,15 @@ function withFlag(params: URLSearchParams, name: string, on: boolean | undefined
   if (on === true) params.set(name, '1');
 }
 
+function queryUrl(path: string, params: Record<string, string>, query: GraphQuery): string {
+  const search = new URLSearchParams(params);
+  withFlag(search, 'tests', query.tests);
+  withFlag(search, 'external', query.external);
+  return `${path}?${search.toString()}`;
+}
+
 function graphUrl(at: string, query: GraphQuery): string {
-  const params = new URLSearchParams({ at });
-  withFlag(params, 'tests', query.tests);
-  withFlag(params, 'external', query.external);
-  return `/api/graph?${params.toString()}`;
+  return queryUrl('/api/graph', { at }, query);
 }
 
 export async function fetchGraph(
@@ -195,10 +199,7 @@ export async function putLayout(
 }
 
 function detailUrl(id: string, at: string, query: GraphQuery): string {
-  const params = new URLSearchParams({ id, at });
-  withFlag(params, 'tests', query.tests);
-  withFlag(params, 'external', query.external);
-  return `/api/detail?${params.toString()}`;
+  return queryUrl('/api/detail', { id, at }, query);
 }
 
 export async function fetchDetail(

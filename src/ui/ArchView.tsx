@@ -18,16 +18,18 @@ import { useMemo, useState, useSyncExternalStore } from 'react';
 import type { Crumb, GraphNode, GraphView, NodeDetail, ViewEdge } from '../domain/graph.ts';
 import {
   arrange,
+  emptySettings,
   pointsUp,
   type LayerNode,
   type LayoutDoc,
+  type LayoutSettings,
   type Pin,
   type PlacedBox,
   withPin,
   withoutView,
   withSettings,
 } from '../domain/layout.ts';
-import { fetchDetail, fetchGraph, fetchLayout, postRescan, putLayout, type GraphQuery } from './client.ts';
+import { fetchDetail, fetchGraph, fetchLayout, postRescan, putLayout } from './client.ts';
 import { DetailSlot } from './DetailPanel.tsx';
 import {
   arrowColor,
@@ -74,6 +76,16 @@ type ArrowData = {
 type ArrowEdge = Edge<ArrowData, 'arrow'>;
 
 type MarkerEnd = string | { type: MarkerType; width: number; height: number; color: string };
+
+type CanvasProps = {
+  spots: PlacedBox[];
+  hover: string | null;
+  chosen: string | null;
+  onHover: (id: string | null) => void;
+  onSelect: (id: string) => void;
+  onOpen: (id: string, kind: BoxKind) => void;
+  onPin: (id: string, x: number, y: number) => void;
+};
 
 export type ArchViewProps = {
   token: string;
@@ -197,9 +209,13 @@ function Arrow(props: EdgeProps<ArrowEdge>) {
   );
 }
 
+function hollowMarkerId(color: string): string {
+  return `hollow-${color.slice(1)}`;
+}
+
 function HollowMarker({ color }: Readonly<{ color: string }>) {
   return (
-    <marker id={`hollow-${color.slice(1)}`} viewBox="0 0 14 14" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto">
+    <marker id={hollowMarkerId(color)} viewBox="0 0 14 14" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto">
       <path d="M 0 0 L 14 7 L 0 14 Z" fill="none" stroke={color} />
     </marker>
   );
@@ -208,8 +224,8 @@ function HollowMarker({ color }: Readonly<{ color: string }>) {
 function MarkerSvg() {
   return (
     <svg className="marker-defs">
-      <HollowMarker color="#64748b" />
-      <HollowMarker color="#dc2626" />
+      <HollowMarker color={arrowColor(false)} />
+      <HollowMarker color={arrowColor(true)} />
     </svg>
   );
 }
@@ -265,9 +281,8 @@ function spotsOf(state: GraphState, pins: Record<string, Pin>): PlacedBox[] {
   return arrange(state.view.nodes.map(layerOf), pins);
 }
 
-function movedUp(from: PlacedBox | undefined, to: PlacedBox | undefined, height: number): boolean {
-  if (from === undefined) return false;
-  if (to === undefined) return false;
+function pointsUpward(from: PlacedBox | undefined, to: PlacedBox | undefined, height: number): boolean {
+  if (from === undefined || to === undefined) return false;
   return pointsUp(from.y, to.y, height);
 }
 
@@ -285,7 +300,7 @@ function arrowDimmed(from: string, to: string, hover: string | null): boolean {
 }
 
 function markerFor(head: 'filled' | 'hollow', color: string): MarkerEnd {
-  if (head === 'hollow') return `url(#hollow-${color.slice(1)})`;
+  if (head === 'hollow') return `url(#${hollowMarkerId(color)})`;
   return { type: MarkerType.ArrowClosed, width: 14, height: 14, color };
 }
 
@@ -306,7 +321,7 @@ function arrowData(edge: ViewEdge, up: boolean, hover: string | null, names: Map
 }
 
 function toArrow(edge: ViewEdge, spots: Map<string, PlacedBox>, names: Map<string, string>, hover: string | null, height: number): ArrowEdge {
-  const data = arrowData(edge, movedUp(spots.get(edge.from), spots.get(edge.to), height), hover, names);
+  const data = arrowData(edge, pointsUpward(spots.get(edge.from), spots.get(edge.to), height), hover, names);
   return {
     id: `${edge.from}->${edge.to}`,
     source: edge.from,
@@ -325,16 +340,7 @@ function spotMap(spots: PlacedBox[]): Map<string, PlacedBox> {
   return new Map(spots.map(spot => [spot.id, spot]));
 }
 
-function FlowCanvas(props: Readonly<{
-  view: GraphView;
-  spots: PlacedBox[];
-  hover: string | null;
-  chosen: string | null;
-  onHover: (id: string | null) => void;
-  onSelect: (id: string) => void;
-  onOpen: (id: string, kind: BoxKind) => void;
-  onPin: (id: string, x: number, y: number) => void;
-}>) {
+function FlowCanvas(props: Readonly<CanvasProps & { view: GraphView }>) {
   const height = useBoxHeight();
   const nodes = useMemo(
     () => zipBoxes(props.view.nodes, props.spots, props.hover, props.chosen, props.onHover),
@@ -366,16 +372,7 @@ function FlowCanvas(props: Readonly<{
   );
 }
 
-function ArchCanvas(props: Readonly<{
-  state: GraphState;
-  spots: PlacedBox[];
-  hover: string | null;
-  chosen: string | null;
-  onHover: (id: string | null) => void;
-  onSelect: (id: string) => void;
-  onOpen: (id: string, kind: BoxKind) => void;
-  onPin: (id: string, x: number, y: number) => void;
-}>) {
+function ArchCanvas(props: Readonly<CanvasProps & { state: GraphState }>) {
   if (props.state.kind === 'loading') return <div className="arch-canvas">loading…</div>;
   if (props.state.kind === 'message') return <div className="arch-canvas">{props.state.message}</div>;
   return (
@@ -431,8 +428,8 @@ function MaybePanel(props: Readonly<{ chosen: string | null; data: NodeDetail | 
   return <DetailSlot data={props.data} onPick={props.onPick} />;
 }
 
-function settingsOf(doc: LayoutDoc | undefined): { tests: boolean; external: boolean } {
-  if (doc === undefined) return { tests: false, external: false };
+function settingsOf(doc: LayoutDoc | undefined): LayoutSettings {
+  if (doc === undefined) return emptySettings();
   return doc.settings;
 }
 
@@ -459,26 +456,18 @@ function commitLayout(doc: LayoutDoc | undefined, next: (doc: LayoutDoc) => Layo
   store(next(doc));
 }
 
-function testsDoc(checked: boolean): (doc: LayoutDoc) => LayoutDoc {
-  return doc => withSettings(doc, { tests: checked, external: doc.settings.external });
+function settingsDoc(change: Partial<LayoutSettings>): (doc: LayoutDoc) => LayoutDoc {
+  return doc => withSettings(doc, { ...doc.settings, ...change });
 }
 
-function externalDoc(checked: boolean): (doc: LayoutDoc) => LayoutDoc {
-  return doc => withSettings(doc, { tests: doc.settings.tests, external: checked });
-}
-
-function queryOf(settings: { tests: boolean; external: boolean }): GraphQuery {
-  return { tests: settings.tests, external: settings.external };
-}
-
-function elementSize(found: Element | null): { width: number; height: number } {
-  if (!(found instanceof HTMLElement)) return { width: 0, height: 0 };
-  return { width: found.offsetWidth, height: found.offsetHeight };
+function boxElement(id: string): HTMLElement | undefined {
+  return [...document.querySelectorAll<HTMLElement>('.box')].find(box => box.dataset.id === id);
 }
 
 function measure(id: string): { width: number; height: number } {
-  const found = [...document.querySelectorAll('.box')].find(el => el.getAttribute('data-id') === id);
-  return elementSize(found ?? null);
+  const box = boxElement(id);
+  if (box === undefined) return { width: 0, height: 0 };
+  return { width: box.offsetWidth, height: box.offsetHeight };
 }
 
 function openNode(kind: BoxKind, id: string, onDrill: (dir: string) => void, onOpenFile: (path: string) => void): void {
@@ -496,7 +485,7 @@ function ArchPane(props: Readonly<ArchViewProps>) {
   const settings = settingsOf(layoutQuery.data);
   const graphQuery = useQuery({
     queryKey: ['graph', props.token, props.at, settings.tests, settings.external] as const,
-    queryFn: () => fetchGraph(props.token, props.at, props.fetcher, queryOf(settings)),
+    queryFn: () => fetchGraph(props.token, props.at, props.fetcher, settings),
     enabled: layoutQuery.data !== undefined,
   });
   const [picked, setPicked] = useState<string | null>(null);
@@ -507,7 +496,7 @@ function ArchPane(props: Readonly<ArchViewProps>) {
   const chosen = chosenId(picked, armed, ids);
   const detailQuery = useQuery({
     queryKey: ['detail', props.token, props.at, detailKey(chosen), settings.tests, settings.external] as const,
-    queryFn: () => fetchDetail(props.token, detailKey(chosen), props.at, props.fetcher, queryOf(settings)),
+    queryFn: () => fetchDetail(props.token, detailKey(chosen), props.at, props.fetcher, settings),
     enabled: detailEnabled(chosen),
   });
   const pins = pinsOf(layoutQuery.data, props.at);
@@ -555,11 +544,11 @@ function ArchPane(props: Readonly<ArchViewProps>) {
             props.onDrill(dir);
           }}
         />
-        <FlagBox label="Tests" checked={settings.tests} onCheck={checked => commitLayout(layoutQuery.data, testsDoc(checked), store)} />
+        <FlagBox label="Tests" checked={settings.tests} onCheck={checked => commitLayout(layoutQuery.data, settingsDoc({ tests: checked }), store)} />
         <FlagBox
           label="External packages"
           checked={settings.external}
-          onCheck={checked => commitLayout(layoutQuery.data, externalDoc(checked), store)}
+          onCheck={checked => commitLayout(layoutQuery.data, settingsDoc({ external: checked }), store)}
         />
         <button type="button" onClick={() => commitLayout(layoutQuery.data, doc => withoutView(doc, props.at), store)}>
           Reset layout

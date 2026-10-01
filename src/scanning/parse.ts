@@ -4,9 +4,9 @@ export type RawImport = { specifier: string; typeOnly: boolean; heritage?: numbe
 
 export type ParsedFile = { imports: RawImport[]; abstract: boolean };
 
-type Draft = { specifier: string; typeOnly: boolean; heritage: number };
+type ImportDraft = { specifier: string; typeOnly: boolean; heritage: number };
 
-type Binding = { name: string; index: number; namespace: boolean };
+type ImportBinding = { name: string; index: number; namespace: boolean };
 
 function bindingsTypeOnly(clause: ts.ImportClause): boolean {
   const bindings = clause.namedBindings as ts.NamedImportBindings;
@@ -79,14 +79,14 @@ function importOfNode(node: ts.Node): RawImport | undefined {
   return importOfStatement(node);
 }
 
-function recordImport(node: ts.Node, drafts: Draft[]): number | undefined {
+function recordImport(node: ts.Node, drafts: ImportDraft[]): number | undefined {
   const hit = importOfNode(node);
   if (hit === undefined) return undefined;
   drafts.push({ specifier: hit.specifier, typeOnly: hit.typeOnly, heritage: 0 });
   return drafts.length - 1;
 }
 
-function bindNamed(named: ts.NamedImportBindings | undefined, index: number, bindings: Binding[]): void {
+function bindNamed(named: ts.NamedImportBindings | undefined, index: number, bindings: ImportBinding[]): void {
   if (named === undefined) return;
   if (ts.isNamespaceImport(named)) {
     bindings.push({ name: named.name.text, index, namespace: true });
@@ -95,18 +95,18 @@ function bindNamed(named: ts.NamedImportBindings | undefined, index: number, bin
   for (const element of named.elements) bindings.push({ name: element.name.text, index, namespace: false });
 }
 
-function bindClause(clause: ts.ImportClause | undefined, index: number, bindings: Binding[]): void {
+function bindClause(clause: ts.ImportClause | undefined, index: number, bindings: ImportBinding[]): void {
   if (clause === undefined) return;
   if (clause.name !== undefined) bindings.push({ name: clause.name.text, index, namespace: false });
   bindNamed(clause.namedBindings, index, bindings);
 }
 
-function recordBinding(node: ts.Node, index: number, bindings: Binding[]): void {
+function recordBinding(node: ts.Node, index: number, bindings: ImportBinding[]): void {
   if (ts.isImportDeclaration(node)) bindClause(node.importClause, index, bindings);
   else if (ts.isImportEqualsDeclaration(node)) bindings.push({ name: node.name.text, index, namespace: false });
 }
 
-function collectImports(node: ts.Node, drafts: Draft[], bindings: Binding[]): void {
+function collectImports(node: ts.Node, drafts: ImportDraft[], bindings: ImportBinding[]): void {
   const index = recordImport(node, drafts);
   if (index !== undefined) recordBinding(node, index, bindings);
   node.forEachChild(child => collectImports(child, drafts, bindings));
@@ -118,9 +118,8 @@ function classOrFunctionName(node: ts.Node): string | undefined {
 }
 
 function typeLikeName(node: ts.Node): string | undefined {
-  if (ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node)) return node.name.text;
-  if (!ts.isEnumDeclaration(node)) return undefined;
-  return node.name.text;
+  if (ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node) || ts.isEnumDeclaration(node)) return node.name.text;
+  return undefined;
 }
 
 function moduleIdent(node: ts.Node): string | undefined {
@@ -143,11 +142,6 @@ function collectDeclared(node: ts.Node, names: Set<string>): void {
   node.forEachChild(child => collectDeclared(child, names));
 }
 
-function heritageClausesOf(node: ts.Node): ts.NodeArray<ts.HeritageClause> | undefined {
-  if (ts.isClassLike(node) || ts.isInterfaceDeclaration(node)) return node.heritageClauses;
-  return undefined;
-}
-
 function memberLabel(expr: ts.PropertyAccessExpression): string | undefined {
   if (!ts.isIdentifier(expr.expression)) return undefined;
   return `${expr.expression.text}.${expr.name.text}`;
@@ -166,6 +160,11 @@ function pushTypes(clause: ts.HeritageClause, names: string[]): void {
   }
 }
 
+function heritageClausesOf(node: ts.Node): ts.NodeArray<ts.HeritageClause> | undefined {
+  if (ts.isClassLike(node) || ts.isInterfaceDeclaration(node)) return node.heritageClauses;
+  return undefined;
+}
+
 function pushHeritage(node: ts.Node, names: string[]): void {
   const clauses = heritageClausesOf(node);
   if (clauses === undefined) return;
@@ -177,29 +176,29 @@ function collectHeritageNames(node: ts.Node, names: string[]): void {
   node.forEachChild(child => collectHeritageNames(child, names));
 }
 
-function valueIndex(name: string, bindings: Binding[], declared: Set<string>): number | undefined {
+function valueIndex(name: string, bindings: ImportBinding[], declared: Set<string>): number | undefined {
   if (declared.has(name)) return undefined;
   return bindings.find(binding => binding.name === name && !binding.namespace)?.index;
 }
 
-function namespaceIndex(ns: string, bindings: Binding[], declared: Set<string>): number | undefined {
+function namespaceIndex(ns: string, bindings: ImportBinding[], declared: Set<string>): number | undefined {
   if (declared.has(ns)) return undefined;
   return bindings.find(binding => binding.namespace && binding.name === ns)?.index;
 }
 
-function bindingIndex(name: string, bindings: Binding[], declared: Set<string>): number | undefined {
+function bindingIndex(name: string, bindings: ImportBinding[], declared: Set<string>): number | undefined {
   const dot = name.indexOf('.');
   if (dot === -1) return valueIndex(name, bindings, declared);
   return namespaceIndex(name.slice(0, dot), bindings, declared);
 }
 
-function countHeritage(name: string, bindings: Binding[], declared: Set<string>, drafts: Draft[]): void {
+function countHeritage(name: string, bindings: ImportBinding[], declared: Set<string>, drafts: ImportDraft[]): void {
   const index = bindingIndex(name, bindings, declared);
   if (index === undefined) return;
   drafts[index].heritage += 1;
 }
 
-function stampHeritage(source: ts.SourceFile, drafts: Draft[], bindings: Binding[]): void {
+function markHeritage(source: ts.SourceFile, drafts: ImportDraft[], bindings: ImportBinding[]): void {
   const declared = new Set<string>();
   collectDeclared(source, declared);
   const names: string[] = [];
@@ -242,16 +241,16 @@ function fileIsAbstract(source: ts.SourceFile): boolean {
   return source.statements.every(isAbstractStatement);
 }
 
-function toRaw(draft: Draft): RawImport {
+function toRawImport(draft: ImportDraft): RawImport {
   if (draft.heritage === 0) return { specifier: draft.specifier, typeOnly: draft.typeOnly };
   return { specifier: draft.specifier, typeOnly: draft.typeOnly, heritage: draft.heritage };
 }
 
 export function parseSource(path: string, text: string): ParsedFile {
   const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest);
-  const drafts: Draft[] = [];
-  const bindings: Binding[] = [];
+  const drafts: ImportDraft[] = [];
+  const bindings: ImportBinding[] = [];
   collectImports(source, drafts, bindings);
-  stampHeritage(source, drafts, bindings);
-  return { imports: drafts.map(toRaw), abstract: fileIsAbstract(source) };
+  markHeritage(source, drafts, bindings);
+  return { imports: drafts.map(toRawImport), abstract: fileIsAbstract(source) };
 }
