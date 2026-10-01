@@ -161,6 +161,48 @@ module.exports = {
       comment: 'The browser draws a view; the scan record stays on the server side of the API',
       from: { path: '^src/ui/' },
       to: { path: '^src/domain/scan\\.ts$' }
+    },
+    {
+      name: 'only-the-view-imports-the-canvas',
+      severity: 'error',
+      comment: 'The architecture canvas is the view drawing module; nothing but the view reaches it',
+      from: { pathNot: '^src/ui/(ArchView\\.tsx|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/ui/ArchCanvas\\.tsx$' }
+    },
+    {
+      name: 'canvas-only-draws',
+      severity: 'error',
+      comment: 'The canvas is handed a view and draws it; it does not fetch, own page state or open panels',
+      from: { path: '^src/ui/ArchCanvas\\.tsx$' },
+      to: { path: ['^src/ui/(client|view|App|DetailPanel)\\.tsx?$', '^src/domain/(tree|scan)\\.ts$', 'node_modules/@tanstack'] }
+    },
+    {
+      name: 'arch-view-does-not-import-xyflow',
+      severity: 'error',
+      comment: 'All xyflow knowledge lives in the canvas module',
+      from: { path: '^src/ui/ArchView\\.tsx$' },
+      to: { path: 'node_modules/@xyflow' }
+    },
+    {
+      name: 'the-client-parses-the-json',
+      severity: 'error',
+      comment: 'The API client owns the response schemas; components work with parsed values',
+      from: { path: '^src/ui/', pathNot: '^src/ui/(client\\.ts|.+\\.test\\.tsx?)$' },
+      to: { path: 'node_modules/zod' }
+    },
+    {
+      name: 'drawing-helpers-are-a-leaf',
+      severity: 'error',
+      comment: 'The drawing helpers turn graph facts into strings; they import nothing under src',
+      from: { path: '^src/ui/draw\\.ts$' },
+      to: { path: '^src/' }
+    },
+    {
+      name: 'layout-is-a-leaf',
+      severity: 'error',
+      comment: 'The layout document and its box placement depend on nothing else under src',
+      from: { path: '^src/domain/layout\\.ts$' },
+      to: { path: '^src/' }
     }
   ],
   options: {
