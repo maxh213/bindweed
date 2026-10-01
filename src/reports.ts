@@ -108,7 +108,7 @@ function readReport<T>(full: string, newest: number | undefined, schema: z.ZodTy
 }
 
 function crapMaxIn(text: string): number {
-  const match = text.match(CRAP_MAX_KEY);
+  const match = CRAP_MAX_KEY.exec(text);
   if (match === null) return DEFAULT_CRAP_MAX;
   return Number(match[1]);
 }
