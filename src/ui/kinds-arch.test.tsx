@@ -15,6 +15,7 @@ vi.mock('@xyflow/react', async () => {
     position: { x: number; y: number };
     data: Record<string, unknown>;
     draggable?: boolean;
+    measured?: { width?: number; height?: number };
   };
   type FakeEdge = { id: string; source: string; target: string; type: string; data?: Record<string, unknown>; markerEnd?: unknown };
   type FakeFlowProps = {
@@ -100,6 +101,7 @@ vi.mock('@xyflow/react', async () => {
         'data-node': node.id,
         'data-x': node.position.x,
         'data-y': node.position.y,
+        'data-measured': node.measured?.width === undefined || node.measured.height === undefined ? '' : `${node.measured.width}x${node.measured.height}`,
         onClick: () => props.onNodeClick?.({}, node),
         onDoubleClick: (event: unknown) => props.onNodeDoubleClick?.(event, node),
         onMouseUp: (event: { altKey: boolean }) => onDrop(props, node, event),
@@ -1037,10 +1039,21 @@ describe('Architecture kinds, pins and toggles', () => {
     expect(namedBox('domain').classList.contains('dim')).toBe(true);
     expect(arrowNamed('app', 'domain').classList.contains('dim')).toBe(true);
     expect(window.getComputedStyle(namedBox('app')).opacity).toBe('0.25');
+    expect(nodeById(idNamed('app')).dataset.measured).toBe('120x40');
+    expect(nodeById(idNamed('domain')).dataset.measured).toBe('80x40');
     await pointAt('infra', false);
     expect(nodeEls().every(node => node.querySelector('.box')?.classList.contains('dim') === false)).toBe(true);
     expect(edgeEls().every(edge => edge.classList.contains('dim') === false)).toBe(true);
+    expect(nodeById(idNamed('app')).dataset.measured).toBe('120x40');
     expect(window.location.href).toBe(href);
+    Object.defineProperty(window.HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get() {
+        return 0;
+      },
+    });
+    await pointAt('infra', true);
+    expect(nodeById(idNamed('app')).dataset.measured).toBe('');
   });
 
   it('Clicking infra opens the panel, and domain in the panel selects that box', async () => {

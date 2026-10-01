@@ -230,8 +230,15 @@ function toBox(node: GraphNode, spot: PlacedBox, hover: string | null, chosen: s
   };
 }
 
+function sizedBox(node: BoxNode): BoxNode {
+  const size = measureBox(node.id);
+  if (size.width === 0) return node;
+  if (size.height === 0) return node;
+  return { ...node, measured: { width: size.width, height: size.height } };
+}
+
 function zipBoxes(nodes: GraphNode[], spots: PlacedBox[], hover: string | null, chosen: string | null, onHover: (id: string | null) => void): BoxNode[] {
-  return nodes.map((node, index) => toBox(node, spots[index], hover, chosen, onHover));
+  return nodes.map((node, index) => sizedBox(toBox(node, spots[index], hover, chosen, onHover)));
 }
 
 function pointsUpward(from: PlacedBox | undefined, to: PlacedBox | undefined, height: number): boolean {

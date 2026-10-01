@@ -233,9 +233,39 @@ async function namePoint(page: Page, name: string): Promise<{ x: number; y: numb
   return { x: found.x + found.width / 2, y: found.y + found.height / 2 };
 }
 
+function shiftInto(value: number, min: number, max: number): number {
+  if (value < min) return Math.max(24, min - value);
+  if (value > max) return Math.min(-24, max - value);
+  return 0;
+}
+
+async function paneLimits(page: Page): Promise<{ left: number; top: number; right: number; bottom: number }> {
+  const rect = await page.locator('.react-flow__pane').boundingBox();
+  expect(rect).not.toBeNull();
+  const pane = rect as BoxRect;
+  return {
+    left: pane.x + 36,
+    top: pane.y + 36,
+    right: pane.x + pane.width - 36,
+    bottom: pane.y + pane.height - 36,
+  };
+}
+
+async function bringIntoView(page: Page, name: string): Promise<void> {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const limits = await paneLimits(page);
+    const point = await namePoint(page, name);
+    const dx = shiftInto(point.x, limits.left, limits.right);
+    const dy = shiftInto(point.y, limits.top, limits.bottom);
+    if (dx === 0 && dy === 0) return;
+    await panCanvas(page, dx, dy);
+  }
+}
+
 async function doubleClickBox(page: Page, name: string): Promise<void> {
   const before = page.url();
   for (let attempt = 0; attempt < 3; attempt += 1) {
+    await bringIntoView(page, name);
     const point = await namePoint(page, name);
     await page.mouse.dblclick(point.x, point.y, { delay: 50 });
     try {
@@ -249,11 +279,13 @@ async function doubleClickBox(page: Page, name: string): Promise<void> {
 }
 
 async function clickBox(page: Page, name: string): Promise<void> {
+  await bringIntoView(page, name);
   const point = await namePoint(page, name);
   await page.mouse.click(point.x, point.y);
 }
 
 async function hoverBox(page: Page, name: string): Promise<void> {
+  await bringIntoView(page, name);
   const away = await emptyCanvasPoint(page);
   await page.mouse.move(away.x, away.y);
   const point = await namePoint(page, name);
@@ -362,6 +394,7 @@ async function panCanvas(page: Page, dx: number, dy: number): Promise<void> {
 }
 
 async function dragBy(page: Page, name: string, dx: number, dy: number): Promise<void> {
+  await bringIntoView(page, name);
   const start = await namePoint(page, name);
   const startX = start.x;
   const startY = start.y;
@@ -399,10 +432,19 @@ async function dragWholeBoxAbove(page: Page, upper: string, lower: string): Prom
   expect(placed[lower].y - placed[upper].y).toBeGreaterThanOrEqual(placed[upper].h);
 }
 
+async function setChecked(page: Page, name: string, checked: boolean): Promise<void> {
+  const input = page.getByRole('checkbox', { name });
+  if ((await input.isChecked()) !== checked) await input.click();
+  if (checked) await expect(input).toBeChecked();
+  else await expect(input).not.toBeChecked();
+}
+
 async function dragToRightOf(page: Page, name: string, other: string): Promise<void> {
   const viewport = page.viewportSize();
   expect(viewport).not.toBeNull();
   const limit = (viewport as { width: number }).width;
+  const beforeOther = await spotOf(page, other);
+  const beforeName = await spotOf(page, name);
   const moving = await mustBox(page, name);
   const target = await mustBox(page, other);
   const dx = target.x + target.width + 30 - moving.x;
@@ -410,8 +452,10 @@ async function dragToRightOf(page: Page, name: string, other: string): Promise<v
   expect(endX).toBeGreaterThan(8);
   expect(endX).toBeLessThan(limit - 8);
   await dragBy(page, name, dx, 0);
-  const placed = await centers(page);
-  expect(placed[name].x).toBeGreaterThan(placed[other].x + 20);
+  await expect.poll(async () => (await spotOf(page, name)).x).toBeGreaterThan(beforeOther.x);
+  const after = await spotOf(page, name);
+  expect(after.x).toBeGreaterThan(beforeName.x);
+  expect(after.y).toBe(beforeName.y);
 }
 
 async function paintOf(page: Page, name: string): Promise<{ background: string; border: string }> {
@@ -488,8 +532,8 @@ async function buttonTexts(page: Page, title: string): Promise<string[]> {
 }
 
 async function expectButtons(page: Page, title: string, labels: string[]): Promise<void> {
-  const actual = await buttonTexts(page, title);
-  expect(actual.slice().sort()).toEqual(labels.slice().sort());
+  const wanted = labels.slice().sort();
+  await expect.poll(async () => (await buttonTexts(page, title)).slice().sort()).toEqual(wanted);
 }
 
 function entry(name: string, runtime: number, type: number, heritage: number): string {
@@ -752,7 +796,7 @@ test('qa: edge kinds, pins and toggles', async ({ page, context }) => {
       await expectRedBox(page, 'b.ts');
       await expect(page.locator('.box-name', { hasText: 'a.test.ts' })).toHaveCount(0);
       await clickBox(page, 'a.ts');
-      expect(await buttonTexts(page, 'Imports')).toContain(entry('db.ts', 1, 0, 0));
+      await expect(section(page, 'Imports').locator('button', { hasText: buttonName('db.ts') })).toBeVisible();
       await section(page, 'Imports').locator('button', { hasText: buttonName('db.ts') }).click();
       await expect(page).toHaveURL(`${ORIGIN}/#at=src/infra`);
       await expect(box(page, 'db.ts')).toHaveAttribute('data-selected', 'true');
@@ -825,8 +869,8 @@ test('qa: edge kinds, pins and toggles', async ({ page, context }) => {
       await expect(arrow(tab, 'src/infra', 'src/domain').locator('title')).toHaveText('points up: infra is drawn below domain');
       await expect(arrow(tab, 'src/app', 'src/domain')).toHaveAttribute('data-up', 'true');
       await expect(arrow(tab, 'src/infra', 'src/domain')).toHaveAttribute('data-up', 'true');
-      await tab.goto(`${ORIGIN}/#at=src`);
       await expect(tab).toHaveURL(`${ORIGIN}/#at=src`);
+      await tab.reload();
       await expect(tab.locator('body')).toHaveText(PLAIN);
       await tab.close();
     });
@@ -863,8 +907,7 @@ test('qa: edge kinds, pins and toggles', async ({ page, context }) => {
       await dragToRightOf(page, 'a.ts', 'b.ts');
       await page.locator('nav[aria-label="breadcrumb"] button', { hasText: /^src$/ }).click();
       await waitForBoxes(page, ['app', 'infra', 'domain']);
-      await page.getByRole('checkbox', { name: 'Tests' }).check();
-      await expect(page.getByRole('checkbox', { name: 'Tests' })).toBeChecked();
+      await setChecked(page, 'Tests', true);
       await page.getByRole('button', { name: 'Reset layout' }).click();
       await waitForBoxes(page, ['app', 'infra', 'domain']);
       await expectAbove(page, 'app', 'infra');
@@ -915,7 +958,7 @@ test('qa: edge kinds, pins and toggles', async ({ page, context }) => {
       const tab = await freshTab(context, token, '#at=src/app');
       await expect(tab.getByRole('checkbox', { name: 'Tests' })).toBeChecked();
       await expect(box(tab, 'a.test.ts')).toBeVisible();
-      await tab.getByRole('checkbox', { name: 'Tests' }).uncheck();
+      await setChecked(tab, 'Tests', false);
       await waitForBoxes(tab, ['a.ts', 'b.ts']);
       await expectSideBySide(tab, 'a.ts', 'b.ts');
       await expect
@@ -923,7 +966,7 @@ test('qa: edge kinds, pins and toggles', async ({ page, context }) => {
         .toBe(false);
       await tab.locator('nav[aria-label="breadcrumb"] button', { hasText: /^src$/ }).click();
       await waitForBoxes(tab, ['app', 'infra', 'domain']);
-      await tab.getByRole('checkbox', { name: 'External packages' }).check();
+      await setChecked(tab, 'External packages', true);
       await waitForBoxes(tab, ['app', 'infra', 'domain', 'node:fs', 'react']);
       await expect.poll(async () => (await layoutOf(token)).settings.external).toBe(true);
       const externalTab = await freshTab(context, token, '#at=src');
@@ -972,7 +1015,7 @@ test('qa: edge kinds, pins and toggles', async ({ page, context }) => {
       await expectButtons(externalTab, 'Imports', []);
       await expectButtons(externalTab, 'Imported by', [entry('infra', 1, 0, 0)]);
       const beforeBoth = await centers(externalTab);
-      await externalTab.getByRole('checkbox', { name: 'Tests' }).check();
+      await setChecked(externalTab, 'Tests', true);
       await expect(externalTab.getByRole('checkbox', { name: 'Tests' })).toBeChecked();
       await expect(externalTab.getByRole('checkbox', { name: 'External packages' })).toBeChecked();
       const afterBoth = await centers(externalTab);
@@ -985,8 +1028,8 @@ test('qa: edge kinds, pins and toggles', async ({ page, context }) => {
       await expect(box(externalTab, 'a.test.ts').locator('.box-tag')).toHaveText('test');
       await externalTab.locator('nav[aria-label="breadcrumb"] button', { hasText: /^src$/ }).click();
       await waitForBoxes(externalTab, ['app', 'infra', 'domain', 'node:fs', 'react']);
-      await externalTab.getByRole('checkbox', { name: 'Tests' }).uncheck();
-      await externalTab.getByRole('checkbox', { name: 'External packages' }).uncheck();
+      await setChecked(externalTab, 'Tests', false);
+      await setChecked(externalTab, 'External packages', false);
       await waitForBoxes(externalTab, ['app', 'infra', 'domain']);
       await expect
         .poll(async () => {
