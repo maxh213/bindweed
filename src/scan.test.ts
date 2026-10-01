@@ -598,15 +598,19 @@ describe('scanRepo workspaces', () => {
       '  set value(v) { if (v) {} }',
       '  method() { if (true) return 1; return 0; }',
       '}',
+      'export default function () { return 1; }',
     ].join('\n');
     const root = await makeRepo({ 'src/fn.ts': fnCode });
     const scanned = scanRepo(root, ['src/fn.ts']);
-    const names = scanned.files[0].functions?.map(f => f.name);
-    expect(names).toContain('demo');
-    expect(names).toContain('arrow');
-    expect(names).toContain('prop');
-    expect(names).toContain('<anonymous>');
-    expect(names).toContain('value');
-    expect(names).toContain('method');
+    const found = scanned.files[0].functions ?? [];
+    const ccOf = (name: string): number[] => found.filter(fn => fn.name === name).map(fn => fn.cc);
+    expect(ccOf('demo')).toEqual([15]);
+    expect(ccOf('nested')).toEqual([2]);
+    expect(ccOf('arrow')).toEqual([1]);
+    expect(ccOf('prop')).toEqual([1]);
+    expect(ccOf('value')).toEqual([1, 2]);
+    expect(ccOf('method')).toEqual([2]);
+    expect(ccOf('<anonymous>')).toEqual([2, 1]);
+    expect(ccOf('')).toEqual([]);
   });
 });

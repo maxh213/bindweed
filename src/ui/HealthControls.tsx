@@ -82,7 +82,7 @@ export function MetricsDrawer(props: Readonly<{ open: boolean; boxes: MetricBox[
   if (!props.open) return null;
   const rows = sortRows(metricRows(props.boxes), sort);
   return (
-    <aside aria-label="metrics">
+    <aside aria-label="metrics" data-boxes={props.boxes.length}>
       <table>
         <MetricsHead sort={sort} onSort={key => setSort(current => nextSort(current, key))} />
         <MetricsBody rows={rows} onPick={props.onPick} />

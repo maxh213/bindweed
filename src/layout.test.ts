@@ -26,6 +26,10 @@ describe('parseLayout', () => {
     expect(parseLayout(withOverlays)).toEqual(withOverlays);
     const withNone = doc({}, { tests: false, external: false, overlay: 'none' });
     expect(parseLayout(withNone)).toEqual(withNone);
+    const withMutants = doc({}, { tests: true, external: true, overlay: 'mutants' });
+    expect(parseLayout(withMutants)).toEqual(withMutants);
+    const withCoverage = doc({}, { tests: false, external: true, overlay: 'coverage' });
+    expect(parseLayout(withCoverage)).toEqual(withCoverage);
 
     const refused = [
       null,

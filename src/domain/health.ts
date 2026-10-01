@@ -98,16 +98,19 @@ function scoreFile(health: Health, file: FileLike): ScoredFile {
 
 export function fileStats(health: Health, file: FileLike): FileStats {
   const stats = scoreFile(health, file);
-  if (stats.kind === 'no-entry') return stats;
-  return { kind: 'entry', coverage: stats.coverage, crap: stats.crap, hot: stats.hot, mutants: stats.mutants };
+  if (stats.kind !== 'entry') return stats;
+  return { kind: stats.kind, coverage: stats.coverage, crap: stats.crap, hot: stats.hot, mutants: stats.mutants };
 }
 
-type Scored = { inReport: false } | { inReport: true; coverage: string; crap: number | null };
+function presentFields(stats: { coverage: string; crap: number | null }): HealthFields {
+  if (stats.crap === null) return { coverage: stats.coverage };
+  return { crap: stats.crap, coverage: stats.coverage };
+}
 
-function scoredFields(scored: Scored): HealthFields {
-  if (!scored.inReport) return { crap: DASH };
-  if (scored.crap === null) return { coverage: scored.coverage };
-  return { crap: scored.crap, coverage: scored.coverage };
+function shownFields(health: Health, stats: ScoredFile): HealthFields {
+  if (health.coverage === 'off') return {};
+  if (stats.kind === 'no-entry') return { crap: DASH };
+  return presentFields(stats);
 }
 
 function withMutants(health: Health, mutants: number, fields: HealthFields): HealthFields {
@@ -115,30 +118,25 @@ function withMutants(health: Health, mutants: number, fields: HealthFields): Hea
   return { ...fields, mutants };
 }
 
-function reportedFields(health: Health, scored: Scored, mutants: number): HealthFields {
-  const base = health.coverage === 'off' ? {} : scoredFields(scored);
-  return withMutants(health, mutants, base);
-}
-
-function fileScore(stats: ScoredFile): Scored {
-  if (stats.kind === 'no-entry') return { inReport: false };
-  return { inReport: true, coverage: stats.coverage, crap: stats.crap };
-}
-
 export function fileFields(health: Health, file: FileLike): HealthFields {
   const stats = scoreFile(health, file);
-  return reportedFields(health, fileScore(stats), stats.mutants);
+  return withMutants(health, stats.mutants, shownFields(health, stats));
 }
 
-type PackageAcc = { covered: number; statements: number; hasEntry: boolean; crap: number | null; mutants: number };
+type PackageAcc = { covered: number; statements: number; hasEntry: boolean; craps: number[]; mutants: number };
 
 function freshAcc(): PackageAcc {
-  return { covered: 0, statements: 0, hasEntry: false, crap: null, mutants: 0 };
+  return { covered: 0, statements: 0, hasEntry: false, craps: [], mutants: 0 };
 }
 
 function addCrap(acc: PackageAcc, crap: number | null): void {
   if (crap === null) return;
-  acc.crap = acc.crap === null ? crap : Math.max(acc.crap, crap);
+  acc.craps.push(crap);
+}
+
+function worstCrap(craps: number[]): number | null {
+  if (craps.length === 0) return null;
+  return Math.max(...craps);
 }
 
 function addStats(acc: PackageAcc, health: Health, file: FileLike): void {
@@ -154,15 +152,16 @@ function addStats(acc: PackageAcc, health: Health, file: FileLike): void {
 function packageStats(health: Health, files: FileLike[]): PackageStats {
   const acc = freshAcc();
   for (const file of files) addStats(acc, health, file);
-  return { hasEntry: acc.hasEntry, coverage: coverageRatio(acc.covered, acc.statements), crap: acc.crap, mutants: acc.mutants };
+  return { hasEntry: acc.hasEntry, coverage: coverageRatio(acc.covered, acc.statements), crap: worstCrap(acc.craps), mutants: acc.mutants };
 }
 
-function packageScore(stats: PackageStats): Scored {
-  if (!stats.hasEntry) return { inReport: false };
-  return { inReport: true, coverage: stats.coverage, crap: stats.crap };
+function packageShown(health: Health, stats: PackageStats): HealthFields {
+  if (health.coverage === 'off') return {};
+  if (!stats.hasEntry) return { crap: DASH };
+  return presentFields(stats);
 }
 
 export function packageFields(health: Health, files: FileLike[]): HealthFields {
   const stats = packageStats(health, files);
-  return reportedFields(health, packageScore(stats), stats.mutants);
+  return withMutants(health, stats.mutants, packageShown(health, stats));
 }

@@ -12,20 +12,26 @@ function internalPaths(scan: ScanResult): Set<string> {
   return new Set(scan.files.filter(file => !file.test).map(file => file.path));
 }
 
-function internalEdges(scan: ScanResult, internal: ReadonlySet<string>): ScanEdge[] {
-  return scan.edges.filter(edge => internal.has(edge.from) && internal.has(edge.to));
+function keptEdges(scan: ScanResult, internal: ReadonlySet<string>): ScanEdge[] {
+  return scan.edges.filter(edge => internal.has(edge.to));
+}
+
+function rememberEdge(map: Map<string, Set<string>>, edge: ScanEdge): void {
+  const found = map.get(edge.from);
+  if (found === undefined) return;
+  found.add(edge.to);
 }
 
 function importMap(paths: string[], edges: ScanEdge[]): Map<string, Set<string>> {
   const map = new Map(paths.map(path => [path, new Set<string>()]));
-  for (const edge of edges) map.get(edge.from)?.add(edge.to);
+  for (const edge of edges) rememberEdge(map, edge);
   return map;
 }
 
 export function martinIndex(scan: ScanResult): MartinIndex {
   const internal = internalPaths(scan);
   const files = scan.files.filter(file => !file.test);
-  return { files, imports: importMap(files.map(file => file.path), internalEdges(scan, internal)) };
+  return { files, imports: importMap(files.map(file => file.path), keptEdges(scan, internal)) };
 }
 
 function memberOf(id: string, kind: 'package' | 'file', path: string): boolean {

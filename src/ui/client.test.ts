@@ -214,6 +214,20 @@ describe('fetchGraph', () => {
     expect(calls[0]?.headers).toEqual({ Authorization: 'Bearer tok' });
   });
 
+  it('defaults missing report flags and keeps a pain zone', async () => {
+    const body = {
+      at: '',
+      crumbs: [{ name: 'repo', at: '' }],
+      nodes: [
+        { id: 'src/pain', kind: 'package', name: 'pain', path: 'src/pain', files: 1, row: 0, order: 0, cycle: false, zone: 'pain', crap: '–' },
+        { id: 'src/use', kind: 'package', name: 'use', path: 'src/use', files: 1, row: 1, order: 0, cycle: false, zone: 'useless' },
+      ],
+      edges: [],
+    };
+    const fetcher = (async () => ({ ok: true, json: async () => body }) as Response) as typeof fetch;
+    expect(await fetchGraph('tok', '', fetcher)).toEqual({ ...body, crapMax: 4, coverage: 'off', mutation: 'off' });
+  });
+
   it('maps failures and bad bodies to error text', async () => {
     const down = (async () => {
       throw new Error('down');

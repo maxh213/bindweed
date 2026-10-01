@@ -81,8 +81,38 @@ describe('readHealth', () => {
     expect(health.coverageEntries.get('src/b.ts')?.statements).toHaveLength(2);
     expect(health.coverageEntries.get('src/b.ts')?.statements[1].hits).toBe(0);
     expect(health.coverageEntries.has('outside/c.ts')).toBe(false);
+    expect([...health.coverageEntries.keys()]).toEqual(['src/a.ts', 'src/b.ts']);
+    expect([...health.mutantCounts.keys()]).toEqual(['src/a.ts', 'src/b.ts']);
     expect(health.mutantCounts.get('src/a.ts')).toBe(2);
     expect(health.mutantCounts.get('src/b.ts')).toBe(1);
+  });
+
+  it('keeps a dotted relative key and reads a two-digit decimal limit', () => {
+    write('src/a.ts', 'export const a = 1;\n');
+    write('marestail.toml', 'crap_max=12.25\n');
+    write('.marestail/ts-coverage/coverage-final.json', JSON.stringify({
+      'src/./a.ts': { statementMap: { 0: { start: { line: 1 } } }, s: { 0: 1 } },
+      './src/a.ts': { statementMap: { 0: { start: { line: 2 } } }, s: { 0: 0 } },
+    }));
+    const health = readHealth(root, ['src/a.ts']);
+    expect(health.crapMax).toBe(12.25);
+    expect(health.coverageEntries.has('src/./a.ts')).toBe(true);
+    expect(health.coverageEntries.get('src/a.ts')?.statements[0].line).toBe(2);
+  });
+
+  it('stays stale when a missing path follows a newer source and the later source is older', () => {
+    const older = write('src/a.ts', 'export const a = 1;\n');
+    const newer = write('src/b.ts', 'export const b = 2;\n');
+    setMtime(older, 1000);
+    setMtime(newer, 3000);
+    const cov = write('.marestail/ts-coverage/coverage-final.json', JSON.stringify({}));
+    const mut = write('reports/mutation/mutation.json', JSON.stringify({ files: {} }));
+    setMtime(cov, 2000);
+    setMtime(mut, 2000);
+    const health = readHealth(root, ['src/b.ts', 'src/a.ts', 'gone.ts']);
+    expect(health.coverage).toBe('stale');
+    expect(health.mutation).toBe('stale');
+    expect(health.crapMax).toBe(4);
   });
 
   it('handles missing or corrupt reports and missing crap max in config', () => {

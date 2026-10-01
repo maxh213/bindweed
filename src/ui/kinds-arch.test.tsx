@@ -1054,6 +1054,20 @@ describe('Architecture kinds, pins and toggles', () => {
     });
     await pointAt('infra', true);
     expect(nodeById(idNamed('app')).dataset.measured).toBe('');
+    Object.defineProperty(window.HTMLElement.prototype, 'offsetWidth', {
+      configurable: true,
+      get() {
+        return 0;
+      },
+    });
+    Object.defineProperty(window.HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.classList.contains('box') ? 40 : 0;
+      },
+    });
+    await pointAt('infra', false);
+    expect(nodeById(idNamed('app')).dataset.measured).toBe('');
   });
 
   it('Clicking infra opens the panel, and domain in the panel selects that box', async () => {

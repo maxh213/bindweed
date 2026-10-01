@@ -299,20 +299,33 @@ function parentName(parent: ts.Node): string {
   return '<anonymous>';
 }
 
-function declarationName(fn: ts.Node): ts.Node | undefined {
-  if (ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn) || ts.isMethodDeclaration(fn)) return fn.name;
-  return undefined;
+type NamedFn = ts.FunctionDeclaration | ts.FunctionExpression | ts.MethodDeclaration | ts.GetAccessorDeclaration | ts.SetAccessorDeclaration;
+
+function isNamedFunction(fn: ts.Node): fn is ts.FunctionDeclaration | ts.FunctionExpression | ts.MethodDeclaration {
+  if (ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn)) return true;
+  return ts.isMethodDeclaration(fn);
 }
 
-function accessorName(fn: ts.Node): ts.Node | undefined {
-  if (ts.isGetAccessor(fn) || ts.isSetAccessor(fn)) return fn.name;
-  return undefined;
+function isAccessor(fn: ts.Node): fn is ts.GetAccessorDeclaration | ts.SetAccessorDeclaration {
+  if (ts.isGetAccessor(fn)) return true;
+  return ts.isSetAccessor(fn);
+}
+
+function hasOwnName(fn: ts.Node): fn is NamedFn {
+  if (isNamedFunction(fn)) return true;
+  return isAccessor(fn);
+}
+
+function ownText(fn: ts.Node): string | undefined {
+  if (!hasOwnName(fn)) return undefined;
+  if (fn.name === undefined) return '<anonymous>';
+  return fn.name.getText();
 }
 
 function functionName(fn: ts.Node): string {
-  const name = declarationName(fn) ?? accessorName(fn);
-  if (name === undefined) return parentName(fn.parent);
-  return name.getText();
+  const own = ownText(fn);
+  if (own !== undefined) return own;
+  return parentName(fn.parent);
 }
 
 function lineNumber(source: ts.SourceFile, pos: number): number {

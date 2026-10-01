@@ -61,7 +61,7 @@ function knownKeys(rec: Record<string, unknown>): boolean {
 
 function overlayField(value: unknown): Overlay | undefined {
   if (typeof value !== 'string') return undefined;
-  return OVERLAYS[value];
+  return OVERLAYS[value.charAt(0) + value.slice(1)];
 }
 
 function withOverlay(rec: Record<string, unknown>, settings: LayoutSettings): LayoutSettings | undefined {

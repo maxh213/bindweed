@@ -52,7 +52,7 @@ describe('health domain calculations', () => {
     const health = sampleHealth({}, { 'src/plain.ts': 3 });
     const file: FileLike = { path: 'src/plain.ts', functions: [] };
     const stats = fileStats(health, file);
-    expect(stats).toEqual({ kind: 'no-entry', hot: [], mutants: 3 });
+    expect(stats).toStrictEqual({ kind: 'no-entry', hot: [], mutants: 3 });
     expect(fileFields(health, file)).toEqual({ crap: '–', mutants: 3 });
 
     const offHealth = sampleHealth({}, { 'src/plain.ts': 3 }, { coverage: 'off', mutation: 'off' });
@@ -78,10 +78,13 @@ describe('health domain calculations', () => {
     };
     const health = sampleHealth({ 'src/amber.ts': entry }, {});
     const stats = fileStats(health, file);
-    expect(stats.kind).toBe('entry');
-    expect(asEntry(stats).coverage).toBe('0.50');
-    expect(asEntry(stats).crap).toBe(6);
-    expect(stats.hot).toEqual([{ name: 'mid', line: 1, cc: 4, coverage: '0.50', crap: 6 }]);
+    expect(stats).toEqual({
+      kind: 'entry',
+      coverage: '0.50',
+      crap: 6,
+      hot: [{ name: 'mid', line: 1, cc: 4, coverage: '0.50', crap: 6 }],
+      mutants: 0,
+    });
     expect(fileFields(health, file)).toEqual({ crap: 6, coverage: '0.50', mutants: 0 });
 
     const noFnFile: FileLike = { path: 'src/amber.ts', functions: [] };
@@ -134,5 +137,33 @@ describe('health domain calculations', () => {
       coverage: '1.00',
       mutants: 0,
     });
+  });
+
+  it('counts a hit on the first line and the last line and ignores the lines outside', () => {
+    const entry = sampleEntry([
+      { line: 1, hits: 0 },
+      { line: 2, hits: 1 },
+      { line: 4, hits: 0 },
+      { line: 5, hits: 0 },
+    ]);
+    const file: FileLike = { path: 'src/span.ts', functions: [{ name: 'span', line: 2, endLine: 4, cc: 2 }] };
+    const health = sampleHealth({ 'src/span.ts': entry }, {}, { crapMax: 2 });
+    expect(asEntry(fileStats(health, file)).hot).toEqual([{ name: 'span', line: 2, cc: 2, coverage: '0.50', crap: 2.5 }]);
+  });
+
+  it('leaves a function whose CRAP equals the limit off the hot list', () => {
+    const entry = sampleEntry([
+      { line: 1, hits: 1 },
+      { line: 3, hits: 1 },
+    ]);
+    const file: FileLike = {
+      path: 'src/at.ts',
+      functions: [
+        { name: 'edge', line: 1, endLine: 1, cc: 4 },
+        { name: 'over', line: 3, endLine: 3, cc: 5 },
+      ],
+    };
+    const health = sampleHealth({ 'src/at.ts': entry }, {});
+    expect(fileStats(health, file).hot).toEqual([{ name: 'over', line: 3, cc: 5, coverage: '1.00', crap: 5 }]);
   });
 });

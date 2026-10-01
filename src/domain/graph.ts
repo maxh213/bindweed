@@ -1,7 +1,6 @@
 import { martinFields, martinIndex, type MartinFields, type MartinIndex } from './coupling.ts';
 import {
   emptyHealth,
-  fileFields,
   fileStats,
   packageFields,
   type Health,
@@ -278,15 +277,21 @@ function nextRow(nodes: { row: number }[]): number {
   return nodes.reduce((max, node) => Math.max(max, node.row), -1) + 1;
 }
 
-function isMember(node: ViewNode, file: ScannedFile): boolean {
-  if (node.kind === 'file') return file.path === node.path;
-  return contains(node.path, file.path);
+function filesUnder(scan: ScanResult, dir: string): ScannedFile[] {
+  return scan.files.filter(file => contains(dir, file.path));
+}
+
+function fileNamed(scan: ScanResult, path: string): ScannedFile[] {
+  return scan.files.filter(file => file.path === path);
+}
+
+function membersOf(scan: ScanResult, node: ViewNode): ScannedFile[] {
+  if (node.kind === 'file') return fileNamed(scan, node.path);
+  return filesUnder(scan, node.path);
 }
 
 function healthExtras(scan: ScanResult, node: ViewNode, health: Health): HealthFields {
-  const members = scan.files.filter(file => isMember(node, file));
-  if (node.kind === 'package') return packageFields(health, members);
-  return fileFields(health, members[0]);
+  return packageFields(health, membersOf(scan, node));
 }
 
 function nodeExtras(scan: ScanResult, node: ViewNode, health: Health, index: MartinIndex): HealthFields & MartinFields {

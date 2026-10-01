@@ -108,4 +108,35 @@ describe('Martin coupling', () => {
       d: '–',
     });
   });
+
+  it('does not count a self-import or a path that only shares a file prefix', () => {
+    const scan: ScanResult = {
+      files: [
+        { path: 'src/a.ts', test: false },
+        { path: 'src/a.ts/nested.ts', test: false, abstract: true },
+        { path: 'src/b.ts', test: false },
+      ],
+      edges: [
+        { from: 'src/a.ts', to: 'src/a.ts', kind: 'runtime' },
+        { from: 'src/a.ts', to: 'src/b.ts', kind: 'runtime' },
+      ],
+      externals: [],
+      workspaces: [],
+    };
+    const index = martinIndex(scan);
+    expect(martinFields(index, 'src/a.ts', 'file')).toEqual({ ca: 0, ce: 1, i: '1.00', a: '0.00', d: '0.00' });
+  });
+
+  it('ignores an import whose source is not an internal file', () => {
+    const scan: ScanResult = {
+      files: [
+        { path: 'src/a.ts', test: false },
+        { path: 'src/a.test.ts', test: true },
+      ],
+      edges: [{ from: 'src/a.test.ts', to: 'src/a.ts', kind: 'runtime' }],
+      externals: [],
+      workspaces: [],
+    };
+    expect(martinFields(martinIndex(scan), 'src/a.ts', 'file').ca).toBe(0);
+  });
 });

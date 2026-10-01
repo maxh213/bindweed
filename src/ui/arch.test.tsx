@@ -13,6 +13,7 @@ vi.mock('@xyflow/react', async () => {
     position: { x: number; y: number };
     data: Record<string, unknown>;
     draggable?: boolean;
+    measured?: { width: number; height: number };
   };
   type FakeEdge = { id: string; source: string; target: string; type: string; data?: Record<string, unknown>; markerEnd?: unknown };
   type FakeFlowProps = {
@@ -56,6 +57,7 @@ vi.mock('@xyflow/react', async () => {
         'data-x': node.position.x,
         'data-y': node.position.y,
         'data-draggable': String(node.draggable),
+        'data-measured-width': node.measured === undefined ? '' : String(node.measured.width),
         onClick: () => props.onNodeClick?.({}, node),
         onDoubleClick: (event: unknown) => props.onNodeDoubleClick?.(event, node),
         onMouseUp: (event: { altKey: boolean }) => onDrop(props, node, event),
@@ -671,6 +673,14 @@ describe('ArchView with a fake flow', () => {
     });
     expect(document.querySelector('nav[aria-label="breadcrumb"]')?.textContent).toBe('');
     expect(document.querySelectorAll('nav[aria-label="breadcrumb"] button')).toHaveLength(0);
+    expect(optionOf('crap').disabled).toBe(true);
+    expect(optionOf('mutants').disabled).toBe(true);
+    const { act: clickAct } = await import('react');
+    await clickAct(async () => {
+      click(metricsButton());
+    });
+    expect(drawerRows()).toHaveLength(0);
+    expect(document.querySelector('aside[aria-label="metrics"]')?.getAttribute('data-boxes')).toBe('0');
   });
 
 const HEALTH_GRAPHS = {
@@ -858,6 +868,13 @@ function overlaySelect(): HTMLSelectElement {
     expect(badgeText('src/green.ts')).toBe('0');
     expect(badgeHealth('src/green.ts')).toBe('green');
     expect(document.querySelector('span[aria-label="stale"]')).toBeNull();
+    expect(overlaySelect().value).toBe('mutants');
+    expect(layoutRef.current.settings.overlay).toBe('mutants');
+    expect(optionOf('none').textContent).toBe('None');
+    expect(optionOf('crap').textContent).toBe('CRAP');
+    expect(optionOf('coverage').textContent).toBe('Coverage');
+    expect(optionOf('mutants').textContent).toBe('Surviving mutants');
+    expect(document.querySelector('.overlay-box label')?.textContent).toContain('Overlay ');
   });
 
   it('A missing report disables its option and names the command to run', async () => {
@@ -877,6 +894,26 @@ function overlaySelect(): HTMLSelectElement {
     });
     expect(overlaySelect().value).toBe('none');
     expect(document.querySelector('[aria-label="health"]')).toBeNull();
+  });
+
+  it('colours a CRAP of 6 green when the reported limit is 8', async () => {
+    const graphs = {
+      src: {
+        at: 'src',
+        crumbs: [{ name: 'repo', at: '' }, { name: 'src', at: 'src' }],
+        nodes: [
+          { id: 'src/edge.ts', kind: 'file', name: 'edge.ts', path: 'src/edge.ts', row: 0, order: 0, cycle: false, crap: 6, coverage: '0.80', mutants: 1 },
+        ],
+        edges: [],
+        crapMax: 8,
+        coverage: 'on',
+        mutation: 'on',
+      },
+    };
+    const layoutRef = { current: { version: 1 as const, views: {}, settings: { tests: false, external: false, overlay: 'crap' as const } } };
+    await showArchView('src', graphs, noopDir, noopPath, archFetcher([], graphs, layoutRef));
+    expect(badgeHealth('src/edge.ts')).toBe('green');
+    expect(badgeText('src/edge.ts')).toBe('6');
   });
 
   it('A reload re-reads the reports and choosing an overlay does not', async () => {
@@ -976,6 +1013,7 @@ function overlaySelect(): HTMLSelectElement {
     expect(panelText()).toContain('Coverage 0.00');
     expect(panelText()).toContain('Mutants 0');
     expect(hotLines()).toEqual(['bad · line 1 · cc 6 · coverage 0.00']);
+    expect(document.querySelector('[data-hot]')?.getAttribute('data-hot')).toBe('bad@1');
     await act(async () => {
       click(nodeById('src/green.ts'));
     });

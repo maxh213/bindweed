@@ -151,12 +151,15 @@ export function overlayChoice(value: string, current: OverlayName, flags: Report
   return current;
 }
 
+function measuredOf(facts: HealthFacts, name: string): Measured {
+  return { ...facts, name };
+}
+
 export function detailLines(facts: HealthFacts): MetricLine[] {
   const lines: MetricLine[] = [];
-  const measured: Measured = { ...facts, name: '' };
   for (const column of COLUMN_LIST) {
     if (!column.detail) continue;
-    lines.push({ label: column.label, value: column.text(measured) });
+    lines.push({ label: column.label, value: column.text(measuredOf(facts, column.label)) });
   }
   return lines;
 }
@@ -256,23 +259,31 @@ export function metricRows(boxes: MetricBox[], keys?: readonly SortKey[]): Metri
 }
 
 function compareText(a: string, b: string): number {
-  if (a === b) return 0;
-  return a < b ? -1 : 1;
+  const order = a.localeCompare(b);
+  if (order < 0) return -1;
+  if (order > 0) return 1;
+  return 0;
 }
 
 function nullRank(value: CellValue): number {
   return value === null ? 1 : 0;
 }
 
-function comparePresent(a: number | string, b: number | string): number {
-  if (typeof a === 'string' || typeof b === 'string') return compareText(String(a), String(b));
-  return a - b;
+function asText(value: CellValue): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  return value;
+}
+
+function comparePresent(a: CellValue, b: CellValue): number {
+  const left = asText(a);
+  const right = asText(b);
+  if (left !== undefined && right !== undefined) return compareText(left, right);
+  return Number(a) - Number(b);
 }
 
 function compareValues(a: CellValue, b: CellValue, direction: Direction): number {
-  const rank = nullRank(a) - nullRank(b);
-  if (rank !== 0) return rank;
-  if (a === null || b === null) return 0;
+  const gap = nullRank(a) - nullRank(b);
+  if (gap !== 0) return gap;
   return aimed(comparePresent(a, b), direction);
 }
 

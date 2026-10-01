@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { isAbsolute, join, normalize, sep } from 'node:path';
 import { z } from 'zod';
 import type { CoverageEntry, CoverageStatement, Health, ReportFlag } from './domain/health.ts';
@@ -68,64 +68,55 @@ function mutantCounts(root: string, data: MutationReport | undefined): Map<strin
   return indexReport(root, data?.files, survivorsOf);
 }
 
-function mtimeOf(full: string): number | undefined {
+function readMtime(full: string): number {
   try {
     return statSync(full).mtimeMs;
   } catch {
-    return undefined;
+    return Number.NaN;
   }
 }
 
-function later(current: number | undefined, candidate: number | undefined): number | undefined {
-  if (candidate === undefined) return current;
+function later(current: number | undefined, candidate: number): number | undefined {
+  if (Number.isNaN(candidate)) return current;
   if (current === undefined) return candidate;
   return Math.max(current, candidate);
 }
 
 function newestMtime(root: string, paths: string[]): number | undefined {
   let newest: number | undefined;
-  for (const path of paths) newest = later(newest, mtimeOf(join(root, path)));
+  for (const path of paths) newest = later(newest, readMtime(join(root, path)));
   return newest;
 }
 
 function reportFlag(full: string, newest: number | undefined): ReportFlag {
-  if (newest !== undefined && statSync(full).mtimeMs < newest) return 'stale';
+  if (statSync(full).mtimeMs < Number(newest)) return 'stale';
   return 'on';
 }
 
-function parseReport<T>(full: string, schema: z.ZodType<T>): T | undefined {
-  try {
-    const parsed = schema.safeParse(JSON.parse(readFileSync(full, 'utf8')));
-    return parsed.success ? parsed.data : undefined;
-  } catch {
-    return undefined;
-  }
+function parseReport<T>(full: string, schema: z.ZodType<T>): T {
+  const parsed = schema.safeParse(JSON.parse(readFileSync(full).toString('utf8')));
+  if (!parsed.success) throw parsed.error;
+  return parsed.data;
 }
 
 function readReport<T>(full: string, newest: number | undefined, schema: z.ZodType<T>): { flag: ReportFlag; data: T | undefined } {
-  const data = parseReport(full, schema);
-  if (data === undefined) return { flag: 'off', data: undefined };
-  return { flag: reportFlag(full, newest), data };
-}
-
-function readText(full: string): string | undefined {
   try {
-    return readFileSync(full, 'utf8');
+    return { flag: reportFlag(full, newest), data: parseReport(full, schema) };
   } catch {
-    return undefined;
+    return { flag: 'off', data: undefined };
   }
 }
 
 function crapMaxIn(text: string): number {
-  const match = CRAP_MAX_KEY.exec(text);
+  const match = text.match(CRAP_MAX_KEY);
   if (match === null) return DEFAULT_CRAP_MAX;
   return Number(match[1]);
 }
 
 function readCrapMax(root: string): number {
-  const text = readText(join(root, 'marestail.toml'));
-  if (text === undefined) return DEFAULT_CRAP_MAX;
-  return crapMaxIn(text);
+  const full = join(root, 'marestail.toml');
+  if (!existsSync(full)) return DEFAULT_CRAP_MAX;
+  return crapMaxIn(readFileSync(full).toString('utf8'));
 }
 
 export function readHealth(root: string, paths: string[]): Health {

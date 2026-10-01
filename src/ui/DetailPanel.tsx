@@ -49,6 +49,10 @@ function MetricLines(props: Readonly<{ detail: NodeDetail }>) {
   );
 }
 
+function hotKey(fn: { name: string; line: number }): string {
+  return `${fn.name}@${fn.line}`;
+}
+
 function HotList(props: Readonly<{ hot: NodeDetail['hot'] }>) {
   if (props.hot === undefined) return null;
   return (
@@ -56,7 +60,9 @@ function HotList(props: Readonly<{ hot: NodeDetail['hot'] }>) {
       <h3>Hot functions</h3>
       <ul>
         {props.hot.map(fn => (
-          <li key={`${fn.name}@${fn.line}`}>{hotRow(fn)}</li>
+          <li key={hotKey(fn)} data-hot={hotKey(fn)}>
+            {hotRow(fn)}
+          </li>
         ))}
       </ul>
     </section>

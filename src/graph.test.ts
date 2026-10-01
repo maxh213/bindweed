@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { graphView, nodeDetail, type GraphFlags, type GraphView, type NodeDetail } from './domain/graph.ts';
+import { emptyHealth, type Health } from './domain/health.ts';
 import { isTestPath, type ScanResult, type WorkspacePackage } from './domain/scan.ts';
 
 type RawSpec = [from: string, to: string, kind?: 'runtime' | 'type'];
@@ -620,5 +621,56 @@ describe('graphView workspaces', () => {
       WORKSPACES,
     );
     expect(view(scan, '').edges).toEqual([{ from: 'packages/web', to: 'packages/core', runtime: 1, type: 0, cycle: false }]);
+  });
+});
+
+describe('health membership', () => {
+  it('scores a file on its own path and not on a longer path that starts with it', () => {
+    const scan: ScanResult = {
+      files: [
+        { path: 'src/a.ts', test: false },
+        { path: 'src/a.ts/extra.ts', test: false },
+      ],
+      edges: [],
+      externals: [],
+      workspaces: [],
+    };
+    const health: Health = { ...emptyHealth(), mutation: 'on', mutantCounts: new Map([['src/a.ts', 1], ['src/a.ts/extra.ts', 5]]) };
+    const found = graphView(scan, 'src', 'repo', { tests: false, external: false }, health);
+    const node = found?.nodes.find(item => item.id === 'src/a.ts');
+    expect(node?.kind).toBe('file');
+    expect(node?.mutants).toBe(1);
+  });
+
+  it('rolls a file up to the package that contains it', () => {
+    const packaged: ScanResult = {
+      files: [{ path: 'src/app/a.ts', test: false }],
+      edges: [],
+      externals: [],
+      workspaces: [],
+    };
+    const rolled = graphView(packaged, '', 'repo', { tests: false, external: false }, {
+      ...emptyHealth(),
+      mutation: 'on',
+      mutantCounts: new Map([['src/app/a.ts', 4]]),
+    });
+    const folder = rolled?.nodes.find(item => item.id === 'src');
+    expect(folder?.kind).toBe('package');
+    expect(folder?.mutants).toBe(4);
+  });
+
+  it('does not list hot functions on a package whose path is also a file', () => {
+    const scan: ScanResult = {
+      files: [
+        { path: 'pkg/child.ts', test: false },
+        { path: 'pkg', test: false, functions: [{ name: 'hot', line: 1, endLine: 2, cc: 9 }] },
+      ],
+      edges: [],
+      externals: [],
+      workspaces: [],
+    };
+    const detail = nodeDetail(scan, 'pkg', '', 'repo');
+    expect(detail?.kind).toBe('package');
+    expect(detail?.hot).toBeUndefined();
   });
 });
