@@ -50,8 +50,8 @@ Paste the `export` line into the second terminal. `app` imports `domain` once, t
    | `curl -si -H "Authorization: Bearer $TOKEN" $U/api/tree` | 200 | top-level entries `notes`, `src`, `tsconfig.json` |
    | `curl -si -H "Authorization: Bearer $TOKEN" "$U/api/file?path=src/app/save.ts"` | 200 | `{"path":"src/app/save.ts","text":"export const save = 1;\n"}` |
 
-   Then `test ! -e $QA/layered/.bindweed && echo 'no .bindweed'`.
-   **Expect:** `no .bindweed`.
+   Then `git -C $QA/layered status --porcelain; find $QA/layered/.bindweed/plans -type f 2>/dev/null | wc -l`.
+   **Expect:** git status prints nothing, and the count is `0`. `.bindweed` itself may exist.
 
 4. Open `http://127.0.0.1:5000/?token=$TOKEN#at=src` in the browser, with the token written out.
    **Expect:** the address bar reads `http://127.0.0.1:5000/#at=src`. The Plan combobox shows `No plan` and `Delete plan` is disabled. There is no `Now` / `Planned` switch and no change list. No box lists file names. `app` reads `3 files`, `infra` reads `2 files`, `domain` reads `2 files` and is green. Nothing is red.
@@ -92,8 +92,8 @@ Paste the `export` line into the second terminal. `app` imports `domain` once, t
 16. In the first terminal press Ctrl-C. Run `node $BW/src/cli.ts --port 5000` again, set `TOKEN` from the new first line, and open the new printed link with `#at=src&plan=split-app`.
     **Expect:** the token differs from step 1. The same four entries, the red row, the ghost, the ✂ and the note are all there. Double-click the `save.ts` row in `infra`. The Files tab shows the header `src/app/save.ts` and line 1 `export const save = 1;`. Click `Architecture`. The address bar reads `http://127.0.0.1:5000/#at=src&plan=split-app` and the plan is back.
 
-17. Choose `Now`. Click `Metrics`. Choose `Planned` and click `Metrics` again. Click the `domain` box.
-    **Expect:** on Now, `app` is above `infra` and `infra` is above `domain`, nothing is red, `app` reads `3 files` and lists `save.ts`, and `infra` shows a ghost row `save.ts`. The ordinary dashed arrow from `app` to `domain` is back, with the ✂ as well. A dashed blue arrow runs from `infra` up to `app` and is not red. The Metrics rows are `infra`, `app`, `domain`. `app` reads Files 3 and `domain` reads Ca 3. On Planned, `app` reads Files 2, `infra` reads Files 3, and `domain` reads Ca 2. The details panel is headed `domain` and under Imported by the only button is `infra`.
+17. Choose `Now`. Click `Metrics` once. Choose `Planned`. Click the `domain` box.
+    **Expect:** on Now, `app` is above `infra` and `infra` is above `domain`, nothing is red, `app` reads `3 files` and lists `save.ts`, and `infra` shows a ghost row `save.ts`. The ordinary dashed arrow from `app` to `domain` is back, with the ✂ as well. A dashed blue arrow runs from `infra` up to `app` and is not red. The Metrics table is open and its rows are `infra`, `app`, `domain`. `app` reads Files 3 and `domain` reads Ca 3. After choosing Planned the table stays open: `app` reads Files 2, `infra` reads Files 3, and `domain` reads Ca 2. The details panel is headed `domain` and under Imported by the only button is `infra`.
 
 18. In the second terminal run `rm $QA/layered/src/app/save.ts`. In the browser click `Rescan`. Then restore the file and rescan again:
 

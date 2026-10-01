@@ -10,8 +10,8 @@ Feature: plan a refactor on the canvas by moving files, cutting and drawing arro
   moving a.ts or b.ts would. With no plan open the canvas matches 004 on this tree:
   no file rows, no draw handles, no box or arrow menu, no change list, no Now /
   Planned switch, and dragging a box still pins it. The toolbar does gain the plan
-  controls. A response that carries no plan query has no "planned" field and is the
-  004 body for this tree, so the older suites keep passing.
+  controls. A response that carries no plan query has no "planned" field, no
+  "stale" key, and is the 004 body for this tree, so the older suites keep passing.
 
   While a plan is open, each package box lists the files whose parent in that graph
   is the package, as rows in name order. A row's data-path is the file's path in
@@ -23,7 +23,11 @@ Feature: plan a refactor on the canvas by moving files, cutting and drawing arro
   root. A ghost is drawn where that graph does not contain the file: a dashed row
   in the other package, and a dashed box in the drilled view at the other graph's
   data-x and data-y. Ghosts are faint (opacity 0.35), carry data-ghost "true", and
-  are not drag sources. Stale edits draw nothing.
+  are not drag sources. Stale edits draw nothing. A response with no plan query
+  has no "stale" key. With plan=<slug> the graph body adds "stale", one entry per
+  edit, so it is not the 004 body even when every edit is a note or is skipped.
+  The plan file never stores a reason. Reasons come from the scan: a hidden test
+  file is still a file, and a directory with no scanned file is "no such directory".
 
   Conventions: "bindweed" is "node <bindweed dir>/src/cli.ts"; /tmp/qa is a fresh
   temporary directory; bindweed serves /tmp/qa/layered on port 5000 unless a
@@ -80,8 +84,9 @@ Feature: plan a refactor on the canvas by moving files, cutting and drawing arro
     ^[a-z0-9]+(?:-[a-z0-9]+)*$ answers the same 404 and never reads outside
     .bindweed/plans/. createdAt is an ISO-8601 UTC string with milliseconds,
     matching \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z. baseCommit is {head}.
-    When rev-parse fails, POST answers 400 {"error":"no commit"} and writes
-    nothing. An edit is exactly one of:
+    When rev-parse HEAD fails, POST answers 400 {"error":"no commit"} and writes
+    no file under .bindweed/plans. The directory is still a git repository, so
+    the server starts. An edit is exactly one of:
       | kind      | fields                                                                 |
       | move-file | kind, file, to                                                         |
       | cut-edge  | kind, from, to, files; files is one or more pairs of two strings       |
@@ -124,7 +129,8 @@ Feature: plan a refactor on the canvas by moving files, cutting and drawing arro
     Scenario Outline: A name that does not slug is refused and writes nothing
       When I send "POST /api/plans" with the token and the body "<body>"
       Then the status is 400 and the body is {"error":"bad name"}
-      And "/tmp/qa/layered/.bindweed" does not exist
+      And no file exists under "/tmp/qa/layered/.bindweed/plans"
+      And "git status --porcelain" in "/tmp/qa/layered" is empty
       Examples:
         | body                          |
         | not json                      |
@@ -136,11 +142,11 @@ Feature: plan a refactor on the canvas by moving files, cutting and drawing arro
         | {"name":"Split app","slug":"x"} |
 
     Scenario: A repository with no commit refuses to create a plan
-      Given "/tmp/qa/plain" is a directory containing "src/only.ts" with "export const n = 1;\n" and is not a git repository
+      Given "/tmp/qa/plain" contains "src/only.ts" with "export const n = 1;\n", "git init" has been run there, and no commit exists
       And bindweed is serving "/tmp/qa/plain" on port 5000
       When I send "POST /api/plans" with the token and the body {"name":"Split app"}
       Then the status is 400 and the body is {"error":"no commit"}
-      And "/tmp/qa/plain/.bindweed" does not exist
+      And no file exists under "/tmp/qa/plain/.bindweed/plans"
 
     Scenario: A bad PUT leaves the file, and a corrupt file is skipped
       Given "POST /api/plans" has saved a plan named "Split app"
@@ -231,13 +237,20 @@ Feature: plan a refactor on the canvas by moving files, cutting and drawing arro
     A cut removes exactly the listed file pairs. An added edge is a planned edge
     between those two nodes and has no file. A note changes nothing in the scan.
     A planned edge does not change Ca, Ce, I, A, D, zone, CRAP, coverage or
-    mutants. GET /api/graph and GET /api/detail with plan=<slug> return the 004
-    view of that scan, plus "planned":true on an added edge. Without the query,
-    or with plan empty, the plan is not applied. An unknown slug is 404
-    {"error":"no such plan"}. staleReasons(scan, edits) in src/domain returns
-    one entry per edit, null when it applies, otherwise the first reason below.
-    The plan file is not rewritten with that reason.
-    A move is stale when its file is gone ("no such file <file>"), when "to" is
+    mutants. GET /api/graph with plan=<slug> returns the 004 view of that scan,
+    plus "planned":true on an added edge, plus "stale": one entry per edit, in
+    order, null where it applies and otherwise the reason. Redo is not in the
+    array. The array is the same at every "at". The page reads reasons from
+    that field. The plan document has no stale field. GET /api/detail with
+    plan=<slug> is the 004 detail of that scan and has no "stale" key. Without
+    the query, or with plan empty, the plan is not applied and there is no
+    "stale" key. An unknown slug is 404 {"error":"no such plan"}.
+    staleReasons(scan, edits) in src/domain returns that array. It uses the
+    scan, not the filtered view and not the disk. A test file the scan holds is
+    not "no such file" when tests are hidden. A directory that is not the root
+    and not an ancestor of a scanned file is "no such directory <to>" even when
+    the tree lists it; "notes" is one.
+    A move is stale when its file is not in the scan ("no such file <file>"), when "to" is
     not the root and not an ancestor of a scanned file ("no such directory <to>"),
     or when the destination path is already a scanned file ("<dest> already exists").
     A move onto the file's own directory is not stale and changes nothing.
@@ -270,7 +283,7 @@ Feature: plan a refactor on the canvas by moving files, cutting and drawing arro
       When I send "GET /api/graph?at=src&plan=split-app" with the token
       Then the status is 200 and the body is this JSON:
         """
-        {"at":"src","crumbs":[{"name":"layered","at":""},{"name":"src","at":"src"}],"crapMax":4,"coverage":"off","mutation":"off","nodes":[{"id":"src/app","kind":"package","name":"app","path":"src/app","files":2,"row":0,"order":0,"cycle":true,"ca":0,"ce":2,"i":"1.00","a":"0.00","d":"0.00","zone":"healthy"},{"id":"src/infra","kind":"package","name":"infra","path":"src/infra","files":3,"row":0,"order":1,"cycle":true,"ca":2,"ce":2,"i":"0.50","a":"0.00","d":"0.50","zone":"healthy"},{"id":"src/domain","kind":"package","name":"domain","path":"src/domain","files":2,"row":1,"order":0,"cycle":false,"abstract":true,"ca":2,"ce":0,"i":"0.00","a":"1.00","d":"0.00","zone":"healthy"}],"edges":[{"from":"src/app","to":"src/infra","runtime":2,"type":1,"cycle":true,"cycleText":"app → infra → app"},{"from":"src/infra","to":"src/app","runtime":0,"type":0,"planned":true,"cycle":true,"cycleText":"infra → app → infra"},{"from":"src/infra","to":"src/domain","runtime":2,"type":0,"heritage":1,"cycle":false}]}
+        {"at":"src","crumbs":[{"name":"layered","at":""},{"name":"src","at":"src"}],"crapMax":4,"coverage":"off","mutation":"off","nodes":[{"id":"src/app","kind":"package","name":"app","path":"src/app","files":2,"row":0,"order":0,"cycle":true,"ca":0,"ce":2,"i":"1.00","a":"0.00","d":"0.00","zone":"healthy"},{"id":"src/infra","kind":"package","name":"infra","path":"src/infra","files":3,"row":0,"order":1,"cycle":true,"ca":2,"ce":2,"i":"0.50","a":"0.00","d":"0.50","zone":"healthy"},{"id":"src/domain","kind":"package","name":"domain","path":"src/domain","files":2,"row":1,"order":0,"cycle":false,"abstract":true,"ca":2,"ce":0,"i":"0.00","a":"1.00","d":"0.00","zone":"healthy"}],"edges":[{"from":"src/app","to":"src/infra","runtime":2,"type":1,"cycle":true,"cycleText":"app → infra → app"},{"from":"src/infra","to":"src/app","runtime":0,"type":0,"planned":true,"cycle":true,"cycleText":"infra → app → infra"},{"from":"src/infra","to":"src/domain","runtime":2,"type":0,"heritage":1,"cycle":false}],"stale":[null,null,null]}
         """
       And no edge runs from "src/app" to "src/domain"
       When I send "GET /api/detail?id=src/domain&at=src&plan=split-app" with the token
@@ -282,6 +295,7 @@ Feature: plan a refactor on the canvas by moving files, cutting and drawing arro
       When I send "GET /api/graph?at=src/infra&plan=split-app" with the token
       Then the only nodes are "db.ts" at order 0, "repo.ts" at order 1 and "save.ts" at order 2, all at row 0, and there is no edge
       And "save.ts" has ca 0, ce 0, i "–", a "0.00", d "–" and no zone field
+      And "stale" is [null, null, null]
       When I send "GET /api/file?path=src/infra/save.ts" with the token
       Then the status is 404 and the body is {"error":"no such file"}
       And the file "src/app/save.ts" still holds "export const save = 1;\n"
@@ -306,13 +320,28 @@ Feature: plan a refactor on the canvas by moving files, cutting and drawing arro
     Scenario: A note does not change the graph, and a stale move is skipped and kept
       Given the plan "Split app" has the only edit {"kind":"note","target":{"node":"src/domain"},"text":"pull an interface out here"}
       When I send "GET /api/graph?at=src&plan=split-app" with the token
-      Then the body equals "GET /api/graph?at=src"
+      Then "stale" is [null]
+      And every other key equals "GET /api/graph?at=src"
       Given the plan "Split app" has the only edit {"kind":"move-file","file":"src/app/missing.ts","to":"src/infra"}
       When I send "GET /api/graph?at=src&plan=split-app" with the token
-      Then the body equals "GET /api/graph?at=src"
+      Then "stale" is ["no such file src/app/missing.ts"]
+      And every other key equals "GET /api/graph?at=src"
       And "GET /api/plans/split-app" still has that edit and no stale field
       When I send "POST /api/rescan" with the token
       Then "GET /api/plans/split-app" is unchanged
+
+    Scenario: A hidden test file is not missing, and a directory with no scanned file is
+      Given the plan "Split app" has the only edit {"kind":"move-file","file":"src/app/a.test.ts","to":"src/infra"}
+      When I send "GET /api/graph?at=src&plan=split-app" with the token
+      Then "stale" is [null]
+      When I send "GET /api/graph?at=src&tests=1&plan=split-app" with the token
+      Then "stale" is [null]
+      And "src/app" has files 3 and "src/infra" has files 3
+      Given the plan "Split app" has the only edit {"kind":"move-file","file":"src/app/save.ts","to":"notes"}
+      When I send "GET /api/graph?at=src&plan=split-app" with the token
+      Then "stale" is ["no such directory notes"]
+      And "src/app" has files 3 and "src/infra" has files 2
+      And "GET /api/plans/split-app" has that edit and no stale field
 
   Rule: The page opens a plan, draws it, and saves every change at once
     The Plan combobox lists "No plan" and each plan. Two plans with the same
@@ -329,8 +358,11 @@ Feature: plan a refactor on the canvas by moving files, cutting and drawing arro
     sentences are "Move <file> to <to>" (a root target is "."), "<from> must not
     import <to> (<n> import)" or "imports" when n is not 1, "<from> should use
     <to>", and "Note on <node>: \"<text>\"" or "Note on <from> → <to>: \"<text>\"".
-    n is the number of pairs. A stale entry keeps its sentence, adds the reason,
-    carries data-stale "true", and its background is rgb(254, 249, 195).
+    n is the number of pairs. A stale entry keeps its sentence, adds the reason
+    from the matching entry of "stale" on the open plan's graph response, carries
+    data-stale "true", and its background is rgb(254, 249, 195). The page does
+    not decide a reason itself. The Metrics button toggles the table, as in 004.
+    Switching Now / Planned updates the rows of the open table and does not close it.
     Clicking the sentence selects and centres the target, drilling to the parent
     view when the target is not a box here. A move's target is the file's path
     after the non-stale moves up to and including itself. A stale sentence whose
@@ -476,11 +508,13 @@ Feature: plan a refactor on the canvas by moving files, cutting and drawing arro
       And the arrow from "infra" to "app" is #2563eb, carries data-planned "true", data-cycle "false" and data-up "false", and its tooltip is "0 runtime · 0 type-only · 0 extends/implements"
       And the "domain" note marker is shown
       When I click "Metrics"
-      Then the rows are "infra", "app", "domain"
+      Then the "metrics" region is shown
+      And the rows are "infra", "app", "domain"
       And the "app" row reads Files 3, Ca 0, Ce 2, I 1.00, A 0.00, D 0.00, Zone healthy, CRAP "–", Coverage "–", Mutants "–"
       And the "domain" row reads Files 2, Ca 3, Ce 0, I 0.00, A 1.00, D 0.00, Zone healthy, CRAP "–", Coverage "–", Mutants "–"
-      When I choose "Planned" and click "Metrics"
-      Then the "app" row reads Files 2 and the "domain" row reads Ca 2
+      When I choose "Planned"
+      Then the "metrics" region stays shown
+      And the "app" row reads Files 2 and the "domain" row reads Ca 2
       And the "infra" row reads Files 3, Ca 2, Ce 2, I 0.50, A 0.00, D 0.50
       When I click the "domain" box
       Then under "Imported by" the only button is "infra"
@@ -494,7 +528,8 @@ Feature: plan a refactor on the canvas by moving files, cutting and drawing arro
       And the entry "Note on src/infra/save.ts: \"keep the writer here\"" carries data-stale "true", its background is rgb(254, 249, 195), and it shows "no such box src/infra/save.ts"
       And the entries for the cut, the added edge and the domain note do not carry data-stale
       And the "app" box and the "infra" box are still red
-      And "GET /api/plans/split-app" has those four remaining edits and does not contain "move-file"
+      And "GET /api/graph?at=src&plan=split-app" has "stale" [null, null, null, "no such box src/infra/save.ts"]
+      And "GET /api/plans/split-app" has those four remaining edits, does not contain "move-file", and has no stale field
 
     Scenario: A rescan marks an edit whose file is gone, and restoring the file clears it
       Given the plan "Split app" is open with the move of save.ts saved
@@ -502,9 +537,13 @@ Feature: plan a refactor on the canvas by moving files, cutting and drawing arro
       When I click "Rescan"
       Then the move entry carries data-stale "true" and shows "no such file src/app/save.ts"
       And "GET /api/plans/split-app" still has the move edit and no stale field
+      And "GET /api/graph?at=src&plan=split-app" has "stale" ["no such file src/app/save.ts"]
+      And in that body "src/app" has files 2 and "src/infra" has files 2
+      And "GET /api/graph?at=src" has "src/app" files 2 and no "stale" key
       Given "src/app/save.ts" is restored to "export const save = 1;\n"
       When I click "Rescan"
       Then the move entry does not carry data-stale
+      And "GET /api/graph?at=src&plan=split-app" has "stale" [null], "src/app" files 2 and "src/infra" files 3
       And "git status --porcelain" in "/tmp/qa/layered" is empty
 
     Scenario: The plan survives a reload and a restart, and a file hash does not open it
