@@ -80,9 +80,16 @@ Feature: plan a refactor on the canvas by moving files, cutting and drawing arro
     answers 400 {"error":"bad plan"} and leaves the file's bytes. GET of a file
     that is not a document answers 404 {"error":"no such plan"} and does not
     rewrite it, and the list skips it. DELETE answers 200 {"ok":true}. A missing
-    plan answers 404 {"error":"no such plan"}. A slug segment that is not
-    ^[a-z0-9]+(?:-[a-z0-9]+)*$ answers the same 404 and never reads outside
-    .bindweed/plans/. createdAt is an ISO-8601 UTC string with milliseconds,
+    plan answers 404 {"error":"no such plan"}. /api/plans/<slug> is one path
+    segment. That segment, and a non-empty plan query, must match
+    ^[a-z0-9][a-z0-9-]*$. A trailing "-" and a "--" match, so every slug a POST
+    returns is readable on /api/plans/<slug> and as ?plan=<slug>. Uppercase,
+    "." and "/" do not: "GET /api/plans/Split-App", "GET /api/plans/split.app"
+    and "GET /api/graph?at=src&plan=src/app" answer 404 {"error":"no such plan"}.
+    A path with a further slash, such as "GET /api/plans/src/app", is not that
+    route and answers 404 {"error":"not found"}. None of these read outside
+    .bindweed/plans/. The only plan file read is .bindweed/plans/<slug>.json.
+    An empty plan query is not this check. createdAt is an ISO-8601 UTC string with milliseconds,
     matching \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z. baseCommit is {head}.
     When rev-parse HEAD fails, POST answers 400 {"error":"no commit"} and writes
     no file under .bindweed/plans. The directory is still a git repository, so
@@ -118,9 +125,13 @@ Feature: plan a refactor on the canvas by moving files, cutting and drawing arro
       When I send "POST /api/plans" with the token and the body {"name":"Split app"}
       Then the new slug is "split-app"
       When I send "POST /api/plans" with the token and the body {"name":"aaaaaaaaaa aaaaaaaaaa aaaaaaaaaa aaaaaa x"}
-      Then the slug is "aaaaaaaaaa-aaaaaaaaaa-aaaaaaaaaa-aaaaaa-"
+      Then the status is 201 and the slug is "aaaaaaaaaa-aaaaaaaaaa-aaaaaaaaaa-aaaaaa-"
+      And "GET /api/plans/aaaaaaaaaa-aaaaaaaaaa-aaaaaaaaaa-aaaaaa-" with the token returns that same document
+      And "GET /api/graph?at=src&plan=aaaaaaaaaa-aaaaaaaaaa-aaaaaaaaaa-aaaaaa-" with the token has status 200, "stale" [] and every other key equal to "GET /api/graph?at=src"
       When I send "POST /api/plans" with the token and the body {"name":"aaaaaaaaaa aaaaaaaaaa aaaaaaaaaa aaaaaa x"}
-      Then the slug is "aaaaaaaaaa-aaaaaaaaaa-aaaaaaaaaa-aaaaaa--2"
+      Then the status is 201 and the slug is "aaaaaaaaaa-aaaaaaaaaa-aaaaaaaaaa-aaaaaa--2"
+      And "GET /api/plans/aaaaaaaaaa-aaaaaaaaaa-aaaaaaaaaa-aaaaaa--2" with the token returns that same document
+      And "GET /api/graph?at=src&plan=aaaaaaaaaa-aaaaaaaaaa-aaaaaaaaaa-aaaaaa--2" with the token has status 200, "stale" [] and every other key equal to "GET /api/graph?at=src"
       When I send "POST /api/plans" with the token and the body {"name":"Łódź plan"}
       Then the slug is "d-plan" and the name is "Łódź plan"
       When I send "POST /api/plans" with the token and the body {"name":"Hello!!!"}
@@ -186,6 +197,12 @@ Feature: plan a refactor on the canvas by moving files, cutting and drawing arro
     Scenario: The new routes keep the host and token checks, and the old routes still answer
       When I send "GET /api/plans/Split-App" with the token
       Then the status is 404 and the body is {"error":"no such plan"}
+      When I send "GET /api/plans/split.app" with the token
+      Then the status is 404 and the body is {"error":"no such plan"}
+      When I send "GET /api/graph?at=src&plan=src/app" with the token
+      Then the status is 404 and the body is {"error":"no such plan"}
+      When I send "GET /api/plans/src/app" with the token
+      Then the status is 404 and the body is {"error":"not found"}
       When I send "GET /api/tree" with the token
       Then the status is 200 and the entries at the top level are "notes", "src" and "tsconfig.json"
       When I send "GET /api/file?path=src/domain/model.ts" with the token
@@ -244,7 +261,8 @@ Feature: plan a refactor on the canvas by moving files, cutting and drawing arro
     that field. The plan document has no stale field. GET /api/detail with
     plan=<slug> is the 004 detail of that scan and has no "stale" key. Without
     the query, or with plan empty, the plan is not applied and there is no
-    "stale" key. An unknown slug is 404 {"error":"no such plan"}.
+    "stale" key. A plan query that fails the slug pattern, or names no document,
+    is 404 {"error":"no such plan"}. Detail uses that same pattern.
     staleReasons(scan, edits) in src/domain returns that array. It uses the
     scan, not the filtered view and not the disk. A test file the scan holds is
     not "no such file" when tests are hidden. A directory that is not the root
