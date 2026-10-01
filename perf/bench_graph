@@ -2,14 +2,16 @@
 import { VALUES, WARMUP, absent, emit, loadExport, sample } from './harness.mjs';
 
 const TARGETS = ['graphView root 4100 files', 'graphView deep 100 files'];
+const DETAIL_TARGETS = ['nodeDetail root 4100 files', 'nodeDetail deep 100 files'];
 const PACKAGES = 20;
 const PER_PACKAGE = 200;
 const WORKSPACES = 8;
 const DEEP_FILES = 100;
 
 const graphView = await loadExport('src/domain/graph.ts', 'graphView');
+const nodeDetail = await loadExport('src/domain/graph.ts', 'nodeDetail');
 if (graphView === undefined) {
-  absent(...TARGETS);
+  absent(...TARGETS, ...DETAIL_TARGETS);
   process.exit(0);
 }
 
@@ -62,3 +64,21 @@ emit(
     graphView(scan, 'deep', 'perf-repo');
   }, VALUES, WARMUP),
 );
+
+if (nodeDetail === undefined) {
+  absent(...DETAIL_TARGETS);
+} else {
+  emit(
+    DETAIL_TARGETS[0],
+    await sample(() => {
+      nodeDetail(scan, 'pkg0', '', 'perf-repo');
+    }, VALUES, WARMUP),
+  );
+
+  emit(
+    DETAIL_TARGETS[1],
+    await sample(() => {
+      nodeDetail(scan, 'deep/f0.ts', 'deep', 'perf-repo');
+    }, VALUES, WARMUP),
+  );
+}

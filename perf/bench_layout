@@ -1,0 +1,49 @@
+#!/usr/bin/env node
+import { VALUES, WARMUP, absent, emit, loadExport, sample } from './harness.mjs';
+
+const TARGETS = ['arrange 500 nodes', 'parseLayout'];
+
+const arrange = await loadExport('src/domain/layout.ts', 'arrange');
+const parseLayout = await loadExport('src/domain/layout.ts', 'parseLayout');
+
+if (arrange === undefined || parseLayout === undefined) {
+  absent(...TARGETS);
+  process.exit(0);
+}
+
+const nodes = [];
+for (let r = 0; r < 20; r += 1) {
+  for (let o = 0; o < 25; o += 1) {
+    nodes.push({ id: `pkg_${r}/mod_${o}`, row: r, order: o });
+  }
+}
+
+const pins = {};
+for (let i = 0; i < 50; i += 1) {
+  pins[`pkg_${i % 20}/mod_${(i * 3) % 25}`] = { x: (i % 10) * 260, y: Math.floor(i / 10) * 140 };
+}
+
+emit(
+  TARGETS[0],
+  await sample(() => {
+    arrange(nodes, pins);
+  }, VALUES, WARMUP),
+);
+
+const views = {};
+for (let v = 0; v < 10; v += 1) {
+  views[`view${v}`] = pins;
+}
+const doc = {
+  version: 1,
+  views,
+  settings: { tests: true, external: false },
+};
+const docJson = JSON.parse(JSON.stringify(doc));
+
+emit(
+  TARGETS[1],
+  await sample(() => {
+    parseLayout(docJson);
+  }, VALUES, WARMUP),
+);

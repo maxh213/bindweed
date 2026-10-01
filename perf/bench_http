@@ -19,10 +19,11 @@ import {
 const TARGETS = ['GET /', 'GET /assets/app.js', 'GET /api/tree', 'GET /api/file'];
 const GRAPH_TARGETS = ['GET /api/graph', 'GET /api/graph?at=src', 'POST /api/rescan'];
 const FIRST_GRAPH = 'GET /api/graph (first request)';
+const NEW_TARGETS = ['GET /api/layout', 'PUT /api/layout', 'GET /api/detail'];
 
 const serve = await loadModule('src/serve.ts');
 if (serve === undefined || typeof serve.bindApp !== 'function') {
-  absent(...TARGETS, ...GRAPH_TARGETS, FIRST_GRAPH);
+  absent(...TARGETS, ...GRAPH_TARGETS, FIRST_GRAPH, ...NEW_TARGETS);
   process.exit(0);
 }
 
@@ -78,6 +79,27 @@ try {
     if (res.status !== 200) throw new Error(`POST /api/rescan -> ${res.status}`);
   }
 
+  const layoutBody = JSON.stringify({
+    version: 1,
+    views: { src: { 'src/a.ts': { x: 100, y: 200 } } },
+    settings: { tests: false, external: false },
+  });
+
+  async function getLayout() {
+    const res = await hit(agent, port, 'GET', '/api/layout', auth);
+    if (res.status !== 200) throw new Error(`GET /api/layout -> ${res.status}`);
+  }
+
+  async function putLayout() {
+    const res = await hit(agent, port, 'PUT', '/api/layout', auth, layoutBody);
+    if (res.status !== 200) throw new Error(`PUT /api/layout -> ${res.status}`);
+  }
+
+  async function getDetail() {
+    const res = await hit(agent, port, 'GET', '/api/detail?id=src/a.ts&at=src', auth);
+    if (res.status !== 200) throw new Error(`GET /api/detail -> ${res.status}`);
+  }
+
   emit('GET /', await sample(getIndex, VALUES, WARMUP));
   emit('GET /assets/app.js', await sample(getAsset, VALUES, WARMUP));
   emit('GET /api/tree', await sample(getTree, VALUES, WARMUP));
@@ -95,6 +117,9 @@ try {
     [GRAPH_TARGETS[0], await hit(agent, port, 'GET', '/api/graph', auth), getGraph],
     [GRAPH_TARGETS[1], await hit(agent, port, 'GET', '/api/graph?at=src', auth), getGraphDeep],
     [GRAPH_TARGETS[2], await hit(agent, port, 'POST', '/api/rescan', auth), postRescan],
+    [NEW_TARGETS[0], await hit(agent, port, 'GET', '/api/layout', auth), getLayout],
+    [NEW_TARGETS[1], await hit(agent, port, 'PUT', '/api/layout', auth, layoutBody), putLayout],
+    [NEW_TARGETS[2], await hit(agent, port, 'GET', '/api/detail?id=src/a.ts&at=src', auth), getDetail],
   ];
   for (const [target, probe, run] of probes) {
     if (probe.status === 404) {

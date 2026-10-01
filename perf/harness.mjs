@@ -116,7 +116,7 @@ export async function listen(server, port) {
   });
 }
 
-export function hit(agent, port, method, path, headers = {}) {
+export function hit(agent, port, method, path, headers = {}, body = null) {
   return new Promise((resolve, reject) => {
     const req = httpRequest(
       {
@@ -139,6 +139,7 @@ export function hit(agent, port, method, path, headers = {}) {
       },
     );
     req.on('error', reject);
+    if (body !== null && body !== undefined) req.write(body);
     req.end();
   });
 }
