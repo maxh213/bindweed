@@ -72,17 +72,20 @@ Paste the `export` line into the second terminal. `keep` spans lines 1–5 and a
 8. Choose `Coverage` in the Overlay combobox, then click the `red.ts` box.
    **Expect:** `green.ts` shows `1.00` on pale green, `amber.ts` shows `0.50` on pale red, `red.ts` shows `0.00` on pale red. The details panel is headed `red.ts` and shows CRAP `42`, Coverage `0.00` and Mutants `0`. Under `Hot functions` one row reads `bad`, line `1`, cc `6`, coverage `0.00`.
 
-9. In the second terminal touch a source file, which makes it the newest scanned source, then reload the page and choose `CRAP`:
+9. Open `http://127.0.0.1:4900/?token=$TOKEN#at=` in the browser and click `Metrics`.
+   **Expect:** the drawer holds one row, `src`, because the root view has one package node and no file node. It reads Files 5, Ca 0, Ce 0, I `–`, A `0.00`, D `–`, Zone `–`, CRAP `42`, Coverage `0.54`, Mutants `3`. These are real values, not the `–` fallback: 42 is the worst file CRAP, coverage is 7/13 = 0.54, and the mutants sum to 3. Zone reads `–` because `src` has no zone field when I is `–`.
 
-   ```sh
-   touch $QA/healthy/src/green.ts
-   ```
+10. In the second terminal touch a source file, which makes it the newest scanned source, then open `http://127.0.0.1:4900/?token=$TOKEN#at=src` in the browser and choose `CRAP`:
 
-   **Expect:** a `stale` badge sits next to the Overlay combobox, because `green.ts` is now newer than the coverage report. The `red.ts` badge still reads `42` on pale red. Choosing `Surviving mutants` shows the badge too, because `green.ts` is newer than the mutation report as well.
-   Then run `touch $QA/healthy/reports/mutation/mutation.json` and choose `Surviving mutants` again.
-   **Expect:** the stale badge is gone. Choosing `None` hides the badge too.
+    ```sh
+    touch $QA/healthy/src/green.ts
+    ```
 
-10. In the first terminal press Ctrl-C. Build the layered repository by hand, exactly as the feature's Background has it, and serve it with no reports:
+    **Expect:** a `stale` badge sits next to the Overlay combobox, because `green.ts` is now newer than the coverage report. The `red.ts` badge still reads `42` on pale red. Choosing `Surviving mutants` shows the badge too, because `green.ts` is newer than the mutation report as well.
+    Then run `touch $QA/healthy/reports/mutation/mutation.json`, reload the page and choose `Surviving mutants` again.
+    **Expect:** the stale badge is gone, because the mutation report is now newer than every source. Choosing `Coverage` shows the badge again, because the coverage report is still older than `green.ts`; choosing `None` hides it. The page reads the reports on load, on a reload and after `Rescan`; choosing an overlay does not re-read them.
+
+11. In the first terminal press Ctrl-C. Build the layered repository by hand, exactly as the feature's Background has it, and serve it with no reports:
 
     ```sh
     mkdir -p $QA/layered/src/app $QA/layered/src/domain $QA/layered/src/infra $QA/layered/notes
@@ -103,7 +106,7 @@ Paste the `export` line into the second terminal. `keep` spans lines 1–5 and a
     This is the 004 Background tree, not the checked-in `qa/fixtures/layered`, which 002 and 003 pin with four files. Set `TOKEN` from the new first line. Open the printed link with `#at=src`.
     **Expect:** the `CRAP` option and the `Coverage` option are disabled, and hovering either shows `no coverage data: run marestail gate`. The `Surviving mutants` option is disabled, and hovering it shows `no mutation report: run marestail gate --tier full`. Choosing `CRAP` leaves the combobox on `None` and adds no badge.
 
-11. Click `Metrics`.
+12. Click `Metrics`.
     **Expect:** a drawer opens listing three rows and no file row. The D header is the sorted one, descending, so the rows are `infra` (D 0.50), then `app` and `domain` (both D 0.00, tie broken by name). The hand count above, with tests and `node:fs` and `react` excluded, gives:
 
     | row | files | Ca | Ce | I | A | D | zone | CRAP | coverage | mutants |
@@ -114,10 +117,10 @@ Paste the `export` line into the second terminal. `keep` spans lines 1–5 and a
 
     This fixture has no reports, so the body carries no crap, coverage or mutants field on any node, and the drawer prints `–` in each of those three cells.
 
-12. Click the I header, then click the `domain` row, then click `Metrics` again.
+13. Click the I header, then click the `domain` row, then click `Metrics` again.
     **Expect:** the rows become `app` (I 1.00), `infra` (I 0.50), `domain` (I 0.00). Clicking the row selects the `domain` box and the details panel is headed `domain`, showing I `0.00`, A `1.00`, D `0.00` and Zone `healthy`. Clicking `Metrics` again closes the drawer. The address bar still reads `#at=src`.
 
-13. In the first terminal press Ctrl-C, build the zones repository, and serve it:
+14. In the first terminal press Ctrl-C, build the zones repository, and serve it:
 
     ```sh
     mkdir -p $QA/zones/src/pain $QA/zones/src/use $QA/zones/src/mid
@@ -141,5 +144,5 @@ Paste the `export` line into the second terminal. `keep` spans lines 1–5 and a
 
     This fixture has no reports either, so the CRAP, Coverage and Mutants cells read `–`. Clicking the `pain` row selects the `pain` box and the details panel is headed `pain`, showing D `1.00` and Zone `pain`.
 
-14. In the first terminal press Ctrl-C, then run `sed -n '/## Routes/,/## Environment/p' $BW/README.md` and `rm -rf $QA`.
+15. In the first terminal press Ctrl-C, then run `sed -n '/## Routes/,/## Environment/p' $BW/README.md` and `rm -rf $QA`.
     **Expect:** the Routes table has live rows for `/`, `/assets/`, `/api/tree`, `/api/file`, `/api/graph`, `/api/rescan`, `/api/layout` and `/api/detail`. The playground is gone.

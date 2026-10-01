@@ -341,15 +341,18 @@ Feature: the Architecture canvas colours boxes by health and lists Martin's pack
     and Surviving mutants. A disabled option has the tooltip named in the scenario, and
     choosing a disabled option does nothing. The choice is saved as settings.overlay.
     The stale badge is shown next to the combobox when the selected overlay's report is
-    stale; None has no report, so it shows no badge. The Metrics button toggles the
-    drawer. The drawer lists every package node in the current view and no file node, one
-    row each, columns Name, Files, Ca, Ce, I, A, D, Zone, CRAP, Coverage and Mutants. A
-    Metrics cell or a details-panel number for a field the body does not carry reads "–".
-    It opens sorted by D descending, "–" sorting last and ties broken by name ascending.
-    A click on a header sorts by that column, descending on the first click on a new
-    column and toggling direction after that; ties still break by name ascending. A click
-    on a row selects that box. The details panel shows the same numbers for the selected
-    box, and for a file adds a Hot functions list of the functions over the limit.
+    stale; None has no report, so it shows no badge. The page reads the reports with the
+    graph when the view loads, on a reload and after Rescan; choosing an overlay does not
+    re-read them, it only re-colours the boxes from the body it already holds. The Metrics
+    button toggles the drawer. The drawer lists every package node in the current view and
+    no file node, one row each, columns Name, Files, Ca, Ce, I, A, D, Zone, CRAP, Coverage
+    and Mutants. A Metrics cell or a details-panel number for a field the body does not
+    carry reads "–". It opens sorted by D descending, "–" sorting last and ties broken by
+    name ascending. A click on a header sorts by that column, descending on the first
+    click on a new column and toggling direction after that; ties still break by name
+    ascending. A click on a row selects that box. The details panel shows the same numbers
+    for the selected box, and for a file adds a Hot functions list of the functions over
+    the limit.
 
     Scenario: CRAP colours the three functions green, amber and red
       When I open "http://127.0.0.1:4900/?token={token}#at=src" in a browser
@@ -392,6 +395,24 @@ Feature: the Architecture canvas colours boxes by health and lists Martin's pack
       And the "red.ts" badge reads "42" and its data-health is "red"
       When I choose "Surviving mutants" in the Overlay combobox
       Then the stale badge is not shown
+
+    Scenario: A reload re-reads the reports and choosing an overlay does not
+      Given the coverage report is older than "src/green.ts" and the mutation report is newer than every scanned source
+      When I open "http://127.0.0.1:4900/?token={token}#at=src" in a browser
+      And I choose "CRAP" in the Overlay combobox
+      Then the stale badge is shown next to the Overlay combobox
+      Given the coverage report is newer than every scanned source and the mutation report is older than "src/green.ts"
+      When I choose "Coverage" in the Overlay combobox
+      Then the stale badge is still shown
+      When I reload the page
+      Then the Overlay combobox shows "Coverage" and the stale badge is not shown
+
+    Scenario: The Metrics table shows the real CRAP, coverage and mutant numbers
+      When I open "http://127.0.0.1:4900/?token={token}#at=" in a browser
+      And I click "Metrics"
+      Then the Metrics drawer is shown
+      And its rows are "src"
+      And the "src" row reads Files 5, Ca 0, Ce 0, I "–", A 0.00, D "–", Zone "–", CRAP 42, Coverage 0.54, Mutants 3
 
     Scenario: The Metrics table sorts by D and selecting a row selects the box
       Given bindweed is serving "/tmp/qa/layered" on port 4900
