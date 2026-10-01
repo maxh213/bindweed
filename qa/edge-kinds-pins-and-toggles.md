@@ -68,7 +68,7 @@ Paste the `export` line it prints into the second terminal. `app` imports `infra
    **Expect:** the panel is beside the canvas, headed `infra`, and shows the path `src/infra`, the word `package` and `2 files`, not the word `abstract`. Under `Imports` a button shows `domain` and `2 runtime · 0 type-only · 1 extends/implements`. Under `Imported by` a button shows `app` and `2 runtime · 1 type-only · 0 extends/implements`. After the click the `domain` box is the selected one and sits nearest the middle of the canvas. The panel is now headed `domain`, shows `abstract` and `2 files`, and `Imports` has no button. Under `Imported by` one button shows `app` and `0 runtime · 1 type-only · 0 extends/implements`, and one shows `infra` and `2 runtime · 0 type-only · 1 extends/implements`. The address bar still reads `http://127.0.0.1:4800/#at=src`.
 
 9. Double-click `app`, click `a.ts`, then click `db.ts` in the panel.
-   **Expect:** the app view shows the red boxes `a.ts` and `b.ts` and no `a.test.ts`. The panel for `a.ts` lists `db.ts` under `Imports`. After clicking it the address bar reads `http://127.0.0.1:4800/#at=src/infra`, the `db.ts` box is selected, and the panel is headed `db.ts`.
+   **Expect:** after double-clicking `app` the panel is gone, the address bar reads `http://127.0.0.1:4800/#at=src/app`, and the app view shows the red boxes `a.ts` and `b.ts` and no `a.test.ts`. After clicking `a.ts` the panel lists `db.ts` under `Imports`. After clicking `db.ts` the address bar reads `http://127.0.0.1:4800/#at=src/infra`, the `db.ts` box is selected, and the panel is headed `db.ts`, shows the path `src/infra/db.ts`, and under `Imported by` lists `a.ts` and `b.ts` (each `1 runtime · 0 type-only · 0 extends/implements`).
 
 10. Click `src` in the breadcrumb. Drag `domain` until the whole box sits above `app` — the top of `domain` is at least `domain`'s own height above the top of `app` — and drop it.
     **Expect:** `domain` stays where it was dropped. The dashed arrow from `app` to `domain` turns red, stays dashed with a filled head, and its tooltip is `points up: app is drawn below domain`. The arrow from `infra` to `domain` turns red, stays solid with a hollow head and the label `2`, and its tooltip is `points up: infra is drawn below domain`. The arrow from `app` to `infra` stays grey. In the second terminal, `curl -s -H "Authorization: Bearer $TOKEN" $U/api/layout` shows `views` with only the key `src`, and under it only the node id `src/domain`, with numeric `x` and `y`. `settings` is still `"tests":false,"external":false`.
@@ -92,14 +92,14 @@ Paste the `export` line it prints into the second terminal. `app` imports `infra
 
     ```sh
     curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X PUT $U/api/layout \
-      --data '{"version":1,"views":{"src":{"src/app":{"x":0,"y":0}}},"settings":{"tests":false,"external":false}}'
+      --data '{"version":1,"views":{"src":{"src/app":{"x":200,"y":100},"src/domain":{"x":260,"y":0}}},"settings":{"tests":false,"external":false}}'
     printf "import { a } from './app/a';\n" > $QA/layered/src/main.ts
     curl -s -X POST -H "Authorization: Bearer $TOKEN" $U/api/rescan; echo
     curl -s -H "Authorization: Bearer $TOKEN" "$U/api/graph?at=src"; echo
     ```
 
     Reload the src view with the printed link.
-    **Expect:** the rescan body holds `"files":8` and `"ms"` a number, and it has no `row`. The graph body has `main.ts` at row 0 and `app` at row 1. On the canvas `app` and `main.ts` share the top row, with `main.ts` to the right of `app`, not on top of it. `infra` is below that row and `domain` below `infra`. The pin does not change `row`.
+    **Expect:** the rescan body holds `"files":8` and `"ms"` a number, and it has no `row`. The graph body has `main.ts` at row 0 and `app` at row 1. On the canvas `main.ts` has stepped right past the cell of `app` and the pinned `domain` box to column 2 (data-x 520, data-y 0), while `app` stays at x 200, y 100 and `domain` at x 260, y 0; `infra` is at data-x 0, data-y 280. The pin does not change `row`.
 
 17. Replace the layout with a pin for a file that is not there, and open the domain view:
 
@@ -112,7 +112,7 @@ Paste the `export` line it prints into the second terminal. `app` imports `infra
     **Expect:** the only boxes are `model.ts` and `shape.ts`, both green, with `model.ts` the leftmost and one column between them — the same spacing `a.ts` and `b.ts` had before any pin, not a vacant column to the left of `model.ts`. There is no box named `gone.ts`. `curl -s -H "Authorization: Bearer $TOKEN" $U/api/layout` still contains `src/domain/gone.ts`.
 
 18. Click `shape.ts`, then double-click it. In the second terminal run `curl -s -H "Authorization: Bearer $TOKEN" "$U/api/file?path=src/domain/model.ts"`.
-    **Expect:** after the click the panel is headed `shape.ts`. After the double-click the panel is gone, the page is on the Files tab, the right side shows the header `src/domain/shape.ts` and line 1 `export interface Shape { draw(): void }`, and the address bar reads `http://127.0.0.1:4800/#file=src/domain/shape.ts`. The curl body is `{"path":"src/domain/model.ts","text":"export interface Model { id: number }\n"}`.
+    **Expect:** after the click the panel is headed `shape.ts`, shows the path `src/domain/shape.ts`, the word `file`, the word `abstract`, no file count, and under `Imported by` shows `repo.ts` with `1 runtime · 0 type-only · 1 extends/implements`. After the double-click the panel is gone, the page is on the Files tab, the right side shows the header `src/domain/shape.ts` and line 1 `export interface Shape { draw(): void }`, and the address bar reads `http://127.0.0.1:4800/#file=src/domain/shape.ts`. The curl body is `{"path":"src/domain/model.ts","text":"export interface Model { id: number }\n"}`.
 
 19. Overwrite the layout with bytes that are not JSON, then reject a later write. In the second terminal:
 
@@ -141,5 +141,5 @@ Paste the `export` line it prints into the second terminal. `app` imports `infra
     Open the printed link with `#at=src/app`.
     **Expect:** `a.ts` sits more than half a box above `b.ts`. Both boxes stay red. The arrow from `b.ts` to `a.ts` is solid with a filled head and no number, and its tooltip is `points up: b.ts is drawn below a.ts`, not the cycle sentence. The arrow from `a.ts` to `b.ts` has the tooltip `a.ts → b.ts → a.ts`.
 
-21. In the first terminal press Ctrl-C, then run `grep -n 'api/layout\|api/detail\|api/graph\|api/rescan' $BW/README.md` and `rm -rf $QA`.
+21. In the first terminal press Ctrl-C, then run `sed -n '/## Routes/,/## Environment/p' $BW/README.md` and `rm -rf $QA`.
     **Expect:** the Routes table has live rows for `/api/graph`, `/api/rescan`, `/api/layout` and `/api/detail`, and the earlier live rows for `/`, `/assets/`, `/api/tree` and `/api/file` are still there. The playground is gone.

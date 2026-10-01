@@ -98,11 +98,14 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       | other/both.ts         | export interface I { n: number }\nexport const n = 1;\n                                                          |
       | other/valuereexp.ts   | export { n } from './both';\n                                                                                    |
       | other/valueimport.ts  | import { n } from './both';\n                                                                                    |
+      | deep/shape.ts         | export class Shape { draw(): void { return; } }\n                                                                |
+      | deep/repo.ts          | import * as ns from './shape';\nexport class Repo implements ns.Shape.Extra { draw(): void { return; } }\n        |
       | cyc/a.ts              | import type { B } from './b';\nexport interface A { b: B }\n                                                      |
       | cyc/b.ts              | import type { A } from './a';\nexport interface B { a: A }\n                                                      |
       | half/iface.ts         | export interface I { n: number }\n                                                                               |
       | half/value.test.ts    | export const n = 1;\n                                                                                            |
       | half/value.spec.ts    | export const n = 1;\n                                                                                            |
+      | half/__tests__/n.ts   | export const n = 1;\n                                                                                            |
 
   Rule: The graph keeps the 002 layers and adds a field only when there is something to say
     Tests and externals stay out unless the query asks, and tests=1 and external=1 apply
@@ -227,6 +230,12 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       When I send "GET /api/graph?at=pair" with the token
       Then the only edges are {"from":"pair/repo.ts","to":"pair/a.ts","runtime":1,"type":0,"heritage":1,"cycle":false} and {"from":"pair/repo.ts","to":"pair/b.ts","runtime":1,"type":0,"heritage":1,"cycle":false}
 
+    Scenario: A deeper dotted name such as ns.Shape.Extra makes no heritage edge
+      Given bindweed is serving "/tmp/qa/kinds" on port 4800
+      When I send "GET /api/graph?at=deep" with the token
+      Then the view has 1 edges
+      And the only edge runs from "deep/repo.ts" to "deep/shape.ts" with runtime 1, type 0, cycle false and no heritage field
+
   Rule: A box is abstract only when every one of its statements is a type
     A scanned file is abstract when it has at least one top-level statement and every
     top-level statement is an interface, a type alias, an abstract class, a declare
@@ -267,11 +276,14 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       When I send "GET /api/graph?at=half" with the token
       Then the only node is "iface.ts", it has abstract true, and there is no node named "value.test.ts" or "value.spec.ts"
       When I send "GET /api/graph?tests=1" with the token
-      Then the node "half" has "files" 3 and no abstract field
+      Then the node "half" has "files" 4 and no abstract field
       When I send "GET /api/graph?at=half&tests=1" with the token
       Then the node "iface.ts" has abstract true
       And the node "value.test.ts" has "test" true and no abstract field
       And the node "value.spec.ts" has "test" true and no abstract field
+      And the package "half/__tests__" has "files" 1
+      When I send "GET /api/graph?at=half/__tests__&tests=1" with the token
+      Then the only node is "n.ts", and it has "test" true and no abstract field
 
     Scenario: A cycle of abstract files is drawn red, and the cycle tooltip stays the cycle text
       Given bindweed is serving "/tmp/qa/kinds" on port 4800
@@ -428,6 +440,18 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       When I send "GET /api/detail?id=react&at=src" with the token
       Then the status is 404 and the body is {"error":"no such node"}
 
+    Scenario: shape.ts and db.ts list files outside their own views
+      When I send "GET /api/detail?id=src/domain/shape.ts&at=src/domain" with the token
+      Then the status is 200 and the body is this JSON:
+        """
+        {"id":"src/domain/shape.ts","name":"shape.ts","path":"src/domain/shape.ts","kind":"file","abstract":true,"imports":[],"importedBy":[{"id":"src/infra/repo.ts","name":"repo.ts","kind":"file","runtime":1,"type":0,"heritage":1}]}
+        """
+      When I send "GET /api/detail?id=src/infra/db.ts&at=src/infra" with the token
+      Then the status is 200 and the body is this JSON:
+        """
+        {"id":"src/infra/db.ts","name":"db.ts","path":"src/infra/db.ts","kind":"file","imports":[{"id":"src/domain/model.ts","name":"model.ts","kind":"file","runtime":1,"type":0,"heritage":0}],"importedBy":[{"id":"src/app/a.ts","name":"a.ts","kind":"file","runtime":1,"type":0,"heritage":0},{"id":"src/app/b.ts","name":"b.ts","kind":"file","runtime":1,"type":0,"heritage":0}]}
+        """
+
     Scenario: external=1 lists node:fs and react, and tests=1 lists a.test.ts
       When I send "GET /api/detail?id=src/infra&at=src&external=1" with the token
       Then the status is 200 and "files" is 2 and there is no "abstract" field
@@ -506,17 +530,26 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       And the panel's heading is "domain", it shows "abstract" and "2 files", and under "Imports" there is no button
       And under "Imported by" one button shows "app" and "0 runtime · 1 type-only · 0 extends/implements"
       And under "Imported by" one button shows "infra" and "2 runtime · 0 type-only · 1 extends/implements"
+      When I double-click the "app" box
+      Then the details panel is not shown
+      And the address bar shows "http://127.0.0.1:4800/#at=src/app"
 
     Scenario: Clicking db.ts in a.ts's panel drills to the infra view
       Given the Architecture tab shows the "src/app" view
       When I click the "a.ts" box and then click "db.ts" in the panel
       Then the address bar shows "http://127.0.0.1:4800/#at=src/infra"
       And the "db.ts" box carries data-selected "true" and the panel's heading is "db.ts"
+      And the panel shows the path "src/infra/db.ts", the word "file", no file count, and not the word "abstract"
+      And under "Imported by" the buttons are "a.ts" and "b.ts", each showing "1 runtime · 0 type-only · 0 extends/implements"
+      And under "Imports" one button shows "model.ts" and "1 runtime · 0 type-only · 0 extends/implements"
 
     Scenario: Double-clicking a file still opens it in the Files tab
       Given the Architecture tab shows the "src/domain" view
       When I click the "shape.ts" box
       Then the details panel's heading is "shape.ts"
+      And the panel shows the path "src/domain/shape.ts", the word "file", the word "abstract", and no file count
+      And under "Imported by" one button shows "repo.ts" and "1 runtime · 0 type-only · 1 extends/implements"
+      And under "Imports" there is no button
       When I double-click the "shape.ts" box
       Then "Files" carries aria-selected "true" and the details panel is not shown
       And the right side shows the header "src/domain/shape.ts" and the numbered line 1 "export interface Shape { draw(): void }"
@@ -573,15 +606,21 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       Then the "a.ts" box is still where it was pinned
 
     Scenario: A new box that would land on a pinned box steps right
-      Given "PUT /api/layout" has saved {"version":1,"views":{"src":{"src/app":{"x":0,"y":0}}},"settings":{"tests":false,"external":false}}
+      Given "PUT /api/layout" has saved {"version":1,"views":{"src":{"src/app":{"x":200,"y":100},"src/domain":{"x":260,"y":0}}},"settings":{"tests":false,"external":false}}
       And the working tree gains "src/main.ts" holding "import { a } from './app/a';\n"
       When I send "POST /api/rescan" with the token
       Then the status is 200 and the body holds "files" 8
       And "GET /api/graph?at=src" has "main.ts" at row 0, "app" at row 1, "infra" at row 2 and "domain" at row 3
       When I open "http://127.0.0.1:4800/?token={token}#at=src" in a browser
-      Then the "app" box has data-x 0 and data-y 0
-      And the "main.ts" box has data-x 260 and data-y 0
-      And "infra" is below that row and "domain" is below "infra"
+      Then the "main.ts" box has data-x 520 and data-y 0
+      And the "app" box has data-x 200 and data-y 100
+      And the "domain" box has data-x 260 and data-y 0
+      And the "infra" box has data-x 0 and data-y 280
+      And "GET /api/layout" returns "views" with exactly the key "src" holding exactly "src/app" and "src/domain"
+      When "PUT /api/layout" saves {"version":1,"views":{"src":{"src/app":{"x":0,"y":-8}}},"settings":{"tests":false,"external":false}}
+      And I open "http://127.0.0.1:4800/?token={token}#at=src" in a browser
+      Then the "main.ts" box has data-x 0 and data-y 0
+      And the "app" box has data-x 0 and data-y -8
 
     Scenario: A pin for a deleted file is ignored and left in the file
       Given "PUT /api/layout" has saved {"version":1,"views":{"src/domain":{"src/domain/gone.ts":{"x":0,"y":0}}},"settings":{"tests":false,"external":false}}
