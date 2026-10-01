@@ -125,7 +125,7 @@ function requestHttp(
 test('qa: serve the file tree', async ({ page, context }) => {
   test.setTimeout(120_000);
 
-  execSync('npm run build', { cwd: BW, stdio: 'ignore' });
+  execSync('flock -w 180 /tmp/bindweed-qa-build.lock npm run build', { cwd: BW, stdio: 'ignore' });
 
   const QA = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'bw-qa-')));
   const demoRepo = path.join(QA, 'demo-repo');
