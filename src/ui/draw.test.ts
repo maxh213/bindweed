@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { arrowColor, boxCenter, chosenId, countLine, edgeLabel, edgeTitle, filesLabel, headOf, lineOf, parentDir } from './draw.ts';
+import { arrowColor, boxCenter, chosenId, countLine, detailId, detailOn, edgeLabel, edgeTitle, filesLabel, headOf, lineOf, parentDir } from './draw.ts';
 
 describe('edge drawing', () => {
   it('picks the line, the head, the label and the colour from the counts', () => {
@@ -39,5 +39,12 @@ describe('boxes and selection', () => {
     expect(chosenId(null, 'src/infra/db.ts', ids)).toBe('src/infra/db.ts');
     expect(chosenId(null, 'react', ids)).toBeNull();
     expect(chosenId(null, null, ids)).toBeNull();
+  });
+
+  it('enables a detail request only for a chosen id', () => {
+    expect(detailId(null)).toBe('');
+    expect(detailId('src/infra')).toBe('src/infra');
+    expect(detailOn(null)).toBe(false);
+    expect(detailOn('src/infra')).toBe(true);
   });
 });

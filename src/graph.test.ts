@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { graphView, type GraphView } from './domain/graph.ts';
+import { graphView, nodeDetail, type GraphFlags, type GraphView, type NodeDetail } from './domain/graph.ts';
 import { isTestPath, type ScanResult, type WorkspacePackage } from './domain/scan.ts';
 
 type RawSpec = [from: string, to: string, kind?: 'runtime' | 'type'];
@@ -31,6 +31,18 @@ function view(scan: ScanResult, at: string, rootName = 'repo'): GraphView {
   return found;
 }
 
+function viewWith(scan: ScanResult, at: string, flags: GraphFlags): GraphView {
+  const found = graphView(scan, at, 'repo', flags);
+  if (found === null) throw new Error(`no view at ${at}`);
+  return found;
+}
+
+function detailOf(scan: ScanResult, id: string, at: string): NodeDetail {
+  const found = nodeDetail(scan, id, at, 'repo');
+  if (found === null) throw new Error(`no detail for ${id}`);
+  return found;
+}
+
 describe('isTestPath', () => {
   it('spots test names and test directories', () => {
     expect(isTestPath('src/app/a.test.ts')).toBe(true);
@@ -47,6 +59,78 @@ describe('isTestPath', () => {
   });
 });
 
+describe('graph flags, order and detail', () => {
+  it('hides tests and externals until the flags say otherwise', () => {
+    const scan: ScanResult = {
+      files: [
+        { path: 'a.ts', test: false },
+        { path: 'a.test.ts', test: true },
+        { path: 'pkg/a.ts', test: false },
+        { path: 'pkg/a.test.ts', test: true },
+      ],
+      edges: [],
+      externals: [
+        { from: 'a.ts', name: 'react', kind: 'runtime' },
+        { from: 'pkg/a.test.ts', name: 'vitest', kind: 'runtime' },
+      ],
+      workspaces: [],
+    };
+    expect(view(scan, '').nodes.map(node => node.id)).toEqual(['a.ts', 'pkg']);
+    expect(view(scan, '').edges).toEqual([]);
+    const open = viewWith(scan, '', { tests: false, external: true });
+    expect(open.nodes.map(node => node.id)).toEqual(['a.ts', 'pkg', 'react']);
+    expect(open.edges.map(edge => edge.to)).toEqual(['react']);
+  });
+
+  it('orders external nodes by name', () => {
+    const src: ScanResult = {
+      files: [{ path: 'src/repo.ts', test: false }],
+      edges: [],
+      externals: [
+        { from: 'src/repo.ts', name: 'react', kind: 'runtime' },
+        { from: 'src/repo.ts', name: 'node:fs', kind: 'runtime' },
+      ],
+      workspaces: [],
+    };
+    const shown = viewWith(src, 'src', { tests: false, external: true });
+    expect(shown.nodes.map(node => node.id).slice(-2)).toEqual(['node:fs', 'react']);
+    expect(shown.edges.map(edge => edge.to)).toEqual(['node:fs', 'react']);
+  });
+
+  it('orders detail importedBy entries without files property', () => {
+    const detail = detailOf(
+      scanOf(
+        ['p/b.ts', 'p/a.ts', 'q/c.ts'],
+        [
+          ['p/b.ts', 'q/c.ts'],
+          ['p/a.ts', 'q/c.ts'],
+        ],
+      ),
+      'q/c.ts',
+      'q',
+    );
+    expect(detail.importedBy.map(entry => entry.id)).toEqual(['p/a.ts', 'p/b.ts']);
+    expect(detail).not.toHaveProperty('files');
+  });
+
+  it('returns missing detail for null id without files property', () => {
+    const detail = nodeDetail(LAYERED, null, '', 'repo');
+    expect(detail).toEqual({
+      id: 'missing',
+      name: 'missing',
+      path: 'missing',
+      kind: 'file',
+      imports: [],
+      importedBy: [],
+    });
+    expect(detail).not.toHaveProperty('files');
+  });
+
+  it('reads a trailing slash as the directory itself', () => {
+    expect(view(LAYERED, 'src/').nodes.map(node => node.id)).toEqual(view(LAYERED, 'src').nodes.map(node => node.id));
+  });
+});
+
 describe('graphView heritage', () => {
   it('drops a zero heritage count and keeps a positive one', () => {
     const files = [
@@ -59,6 +143,7 @@ describe('graphView heritage', () => {
       'repo',
     );
     expect(zero?.edges).toEqual([{ from: 'a.ts', to: 'b.ts', runtime: 1, type: 0, cycle: false }]);
+    expect(zero?.edges[0]).not.toHaveProperty('heritage');
     const kept = graphView(
       { files, edges: [{ from: 'a.ts', to: 'b.ts', kind: 'type', heritage: 1 }], externals: [], workspaces: [] },
       '',
@@ -406,6 +491,13 @@ describe('graphView workspaces', () => {
     [['packages/web/src/index.ts', 'packages/core/src/index.ts']],
     WORKSPACES,
   );
+
+  it('keeps the workspace package name on a detail row', () => {
+    const detail = nodeDetail(WORKSPACE_SCAN, 'packages/core', '', 'workspace');
+    expect(detail?.name).toBe('@acme/core');
+    expect(detail?.kind).toBe('package');
+    expect(detail).not.toHaveProperty('test');
+  });
 
   it('replaces workspace directories with named boxes at the root', () => {
     expect(graphView(WORKSPACE_SCAN, '', 'workspace')).toEqual({

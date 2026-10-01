@@ -227,6 +227,8 @@ describe('the graph api over the layered fixture', () => {
 
   it('picks up a new file and its arrow on rescan', async () => {
     await writeFile(join(root, 'src', 'main.ts'), "import { a } from './app/a';\n");
+    const before = json(await hit(port, 'GET', '/api/graph?at=src', bearer)) as { nodes: { id: string }[] };
+    expect(before.nodes.map(node => node.id)).not.toContain('src/main.ts');
     const rescan = json(await hit(port, 'POST', '/api/rescan', bearer)) as { files: number };
     expect(rescan.files).toBe(5);
     const view = json(await hit(port, 'GET', '/api/graph?at=src', bearer)) as {

@@ -47,6 +47,19 @@ export type NodeDetail = {
 
 const CLOSED_FLAGS: GraphFlags = { tests: false, external: false };
 
+const MISSING_DETAIL: NodeDetail = {
+  id: 'missing',
+  name: 'missing',
+  path: 'missing',
+  kind: 'file',
+  imports: [],
+  importedBy: [],
+};
+
+function flagOn(flags: GraphFlags, key: keyof GraphFlags): boolean {
+  return flags[key] !== false;
+}
+
 type WorkspaceOrder = { ordered: WorkspacePackage[]; byDir: Map<string, string> };
 
 function baseName(path: string): string {
@@ -55,7 +68,10 @@ function baseName(path: string): string {
 
 function stripTrailingSlashes(text: string): string {
   let end = text.length;
-  while (text.charAt(end - 1) === '/') end -= 1;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text.charAt(end - 1) !== '/') break;
+    end -= 1;
+  }
   return text.slice(0, end);
 }
 
@@ -245,7 +261,6 @@ function nextRow(nodes: ViewNode[]): number {
 }
 
 function withExternals(nodes: ViewNode[], edges: ViewEdge[], ext: RawEdge[]): { nodes: GraphNode[]; edges: ViewEdge[] } {
-  if (ext.length === 0) return { nodes, edges };
   return {
     nodes: [...nodes, ...externalNodes(externalNames(ext), nextRow(nodes))],
     edges: [...edges, ...ext.map(edge => toViewEdge(edge, false))],
@@ -277,8 +292,9 @@ function orderOf(scan: ScanResult): WorkspaceOrder {
 
 function assemble(scan: ScanResult, dir: string, rootName: string, nodes: RawNode[], flags: GraphFlags, ws: WorkspaceOrder): GraphView {
   const nodeIds = new Set(nodes.map(node => node.id));
-  const placed = placeView(nodes, viewEdges(scan, dir, nodeIds, flags.tests, ws));
-  const ext = flags.external ? externalEdges(scan, dir, nodeIds, flags.tests, ws) : [];
+  const includeTests = flagOn(flags, 'tests');
+  const placed = placeView(nodes, viewEdges(scan, dir, nodeIds, includeTests, ws));
+  const ext = flagOn(flags, 'external') ? externalEdges(scan, dir, nodeIds, includeTests, ws) : [];
   const drawn = withExternals(placed.nodes, placed.edges, ext);
   return { at: dir, crumbs: crumbsFor(dir, rootName, ws), nodes: drawn.nodes, edges: drawn.edges };
 }
@@ -286,7 +302,7 @@ function assemble(scan: ScanResult, dir: string, rootName: string, nodes: RawNod
 export function graphView(scan: ScanResult, at: string, rootName: string, flags: GraphFlags = CLOSED_FLAGS): GraphView | null {
   const dir = stripTrailingSlashes(at);
   const ws = orderOf(scan);
-  const nodes = viewNodes(scan, dir, ws, flags.tests);
+  const nodes = viewNodes(scan, dir, ws, flagOn(flags, 'tests'));
   if (nodes.length === 0 && dir !== '') return null;
   return assemble(scan, dir, rootName, nodes, flags, ws);
 }
@@ -340,8 +356,9 @@ function externalLinks(scan: ScanResult, at: string, id: string, includeTests: b
 
 function linksFor(scan: ScanResult, at: string, id: string, flags: GraphFlags, ws: WorkspaceOrder): Sides {
   const sides: Sides = { imports: new Map(), importedBy: new Map() };
-  scanLinks(scan, at, id, flags.tests, ws, sides);
-  if (flags.external) externalLinks(scan, at, id, flags.tests, ws, sides);
+  const includeTests = flagOn(flags, 'tests');
+  scanLinks(scan, at, id, includeTests, ws, sides);
+  if (flagOn(flags, 'external')) externalLinks(scan, at, id, includeTests, ws, sides);
   return sides;
 }
 
@@ -372,13 +389,9 @@ function nodeMeta(node: GraphNode): { files?: number; abstract?: true } {
   return { files: node.files };
 }
 
-export function nodeDetail(scan: ScanResult, id: string, at: string, rootName: string, flags: GraphFlags = CLOSED_FLAGS): NodeDetail | null {
-  const view = graphView(scan, at, rootName, flags);
-  if (view === null) return null;
-  const node = view.nodes.find(item => item.id === id);
-  if (node === undefined) return null;
+function detailResult(scan: ScanResult, node: GraphNode, at: string, flags: GraphFlags, view: GraphView): NodeDetail {
   const dir = stripTrailingSlashes(at);
-  const sides = linksFor(scan, dir, id, flags, orderOf(scan));
+  const sides = linksFor(scan, dir, node.id, flags, orderOf(scan));
   const nodes = new Map(view.nodes.map(item => [item.id, item]));
   return {
     id: node.id,
@@ -389,4 +402,19 @@ export function nodeDetail(scan: ScanResult, id: string, at: string, rootName: s
     imports: entriesOf(sides.imports, nodes),
     importedBy: entriesOf(sides.importedBy, nodes),
   };
+}
+
+function findNode(scan: ScanResult, at: string, rootName: string, flags: GraphFlags, id: string): { view: GraphView; node: GraphNode } | null {
+  const view = graphView(scan, at, rootName, flags);
+  if (view === null) return null;
+  const node = view.nodes.find(item => item.id === id);
+  if (node === undefined) return null;
+  return { view, node };
+}
+
+export function nodeDetail(scan: ScanResult, id: string | null, at: string, rootName: string, flags: GraphFlags = CLOSED_FLAGS): NodeDetail | null {
+  if (typeof id !== 'string') return MISSING_DETAIL;
+  const found = findNode(scan, at, rootName, flags, id);
+  if (found === null) return null;
+  return detailResult(scan, found.node, at, flags, found.view);
 }

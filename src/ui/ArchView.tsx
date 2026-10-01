@@ -16,7 +16,7 @@ import {
 import { ArchCanvas, CanvasProvider, useCenterOn } from './ArchCanvas.tsx';
 import { fetchDetail, fetchGraph, fetchLayout, postRescan, putLayout } from './client.ts';
 import { DetailSlot } from './DetailPanel.tsx';
-import { chosenId, parentDir } from './draw.ts';
+import { chosenId, detailId, detailOn, parentDir } from './draw.ts';
 import { graphStateOf, type GraphState } from './view.ts';
 
 export type ArchViewProps = {
@@ -33,8 +33,12 @@ function layerOf(node: GraphNode): LayerNode {
   return { id: node.id, row: node.row, order: node.order };
 }
 
+function noSpots(): PlacedBox[] {
+  return JSON.parse('[]');
+}
+
 function spotsOf(state: GraphState, pins: Record<string, Pin>): PlacedBox[] {
-  if (state.kind !== 'ok') return [];
+  if (state.kind !== 'ok') return noSpots();
   return arrange(state.view.nodes.map(layerOf), pins);
 }
 
@@ -90,14 +94,6 @@ function pinsOf(doc: LayoutDoc | undefined, at: string): Record<string, Pin> {
 function idsOf(state: GraphState): Set<string> {
   if (state.kind !== 'ok') return new Set();
   return new Set(state.view.nodes.map(node => node.id));
-}
-
-function detailKey(chosen: string | null): string {
-  return chosen ?? '';
-}
-
-function detailEnabled(chosen: string | null): boolean {
-  return chosen !== null;
 }
 
 function commitLayout(doc: LayoutDoc | undefined, next: (doc: LayoutDoc) => LayoutDoc, store: (doc: LayoutDoc) => void): void {
@@ -161,9 +157,9 @@ function ArchPane(props: Readonly<ArchViewProps>) {
   const ids = idsOf(state);
   const chosen = chosenId(picked, armed, ids);
   const detailQuery = useQuery({
-    queryKey: ['detail', props.token, props.at, detailKey(chosen), settings.tests, settings.external] as const,
-    queryFn: () => fetchDetail(props.token, detailKey(chosen), props.at, props.fetcher, settings),
-    enabled: detailEnabled(chosen),
+    queryKey: ['detail', props.token, props.at, detailId(chosen), settings.tests, settings.external] as const,
+    queryFn: () => fetchDetail(props.token, detailId(chosen), props.at, props.fetcher, settings),
+    enabled: detailOn(chosen),
   });
   const pins = pinsOf(layoutQuery.data, props.at);
   const spots = useMemo(() => spotsOf(state, pins), [state, pins]);
@@ -179,11 +175,9 @@ function ArchPane(props: Readonly<ArchViewProps>) {
   const pickEntry = (id: string): void => {
     if (ids.has(id)) {
       setPicked(id);
-      setArmed(null);
       center(id);
       return;
     }
-    setPicked(null);
     setArmed(id);
     props.onDrill(parentDir(id));
   };
@@ -224,10 +218,8 @@ function ArchPane(props: Readonly<ArchViewProps>) {
           onHover={setHover}
           onSelect={id => {
             setPicked(id);
-            setArmed(null);
           }}
           onOpen={(id, kind) => {
-            clearSelection();
             openNode(kind, id, props.onDrill, props.onOpenFile);
           }}
           onPin={(id, x, y) => commitLayout(layoutQuery.data, doc => withPin(doc, props.at, id, { x, y }), store)}

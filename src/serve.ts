@@ -207,7 +207,8 @@ function layoutFile(root: string): string {
 
 async function readLayout(root: string): Promise<LayoutDoc> {
   try {
-    return parseLayout(JSON.parse(await readFile(layoutFile(root), 'utf8'))) ?? emptyLayout();
+    const bytes = await readFile(layoutFile(root));
+    return parseLayout(JSON.parse(bytes.toString('utf8'))) ?? emptyLayout();
   } catch {
     return emptyLayout();
   }
@@ -223,32 +224,28 @@ async function readBody(req: IncomingMessage): Promise<string> {
   return Buffer.concat(chunks).toString();
 }
 
-async function layoutFrom(req: IncomingMessage): Promise<LayoutDoc | undefined> {
-  try {
-    return parseLayout(JSON.parse(await readBody(req)));
-  } catch {
-    return undefined;
-  }
-}
-
 async function writeLayout(root: string, doc: LayoutDoc): Promise<void> {
   await mkdir(dirname(layoutFile(root)), { recursive: true });
   await writeFile(layoutFile(root), JSON.stringify(doc));
 }
 
 async function putLayout(app: App, req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const doc = await layoutFrom(req);
-  if (doc === undefined) {
+  try {
+    const doc = parseLayout(JSON.parse(await readBody(req)));
+    if (doc === undefined) {
+      sendJson(res, 400, { error: 'bad layout' });
+      return;
+    }
+    await writeLayout(app.repoRoot, doc);
+    sendJson(res, 200, doc);
+  } catch {
     sendJson(res, 400, { error: 'bad layout' });
-    return;
   }
-  await writeLayout(app.repoRoot, doc);
-  sendJson(res, 200, doc);
 }
 
 function detailFor(scan: ScanResult, url: URL, rootName: string): ReturnType<typeof nodeDetail> {
   const id = url.searchParams.get('id');
-  if (id === null) return null;
+  if (typeof id !== 'string') return null;
   return nodeDetail(scan, id, url.searchParams.get('at') ?? '', rootName, graphFlags(url));
 }
 

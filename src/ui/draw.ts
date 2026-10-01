@@ -43,8 +43,18 @@ export function parentDir(id: string): string {
 }
 
 function keptId(id: string | null, ids: ReadonlySet<string>): string | null {
-  if (id !== null && ids.has(id)) return id;
+  if (ids.has(id as string)) return id;
   return null;
+}
+
+export function detailId(chosen: string | null): string {
+  if (chosen === null) return '';
+  return chosen;
+}
+
+export function detailOn(chosen: string | null): boolean {
+  if (chosen === null) return false;
+  return true;
 }
 
 export function chosenId(picked: string | null, armed: string | null, ids: ReadonlySet<string>): string | null {

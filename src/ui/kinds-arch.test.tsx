@@ -188,7 +188,7 @@ vi.mock('@xyflow/react', async () => {
 
 type Pin = { x: number; y: number };
 type LayoutDoc = { version: 1; views: Record<string, Record<string, Pin>>; settings: { tests: boolean; external: boolean } };
-type World = { layout: LayoutDoc; main: boolean; armMain: boolean; puts: number; gate: Promise<void> | null };
+type World = { layout: LayoutDoc; main: boolean; armMain: boolean; puts: number; gate: Promise<void> | null; details: string[] };
 type GNode = {
   id: string;
   kind: string;
@@ -487,7 +487,7 @@ const DETAILS: Record<string, unknown> = {
 };
 
 function freshWorld(): World {
-  return { layout: { version: 1, views: {}, settings: { tests: false, external: false } }, main: false, armMain: false, puts: 0, gate: null };
+  return { layout: { version: 1, views: {}, settings: { tests: false, external: false } }, main: false, armMain: false, puts: 0, gate: null, details: [] };
 }
 
 let world = freshWorld();
@@ -659,6 +659,7 @@ async function releaseLayout(current: World, path: string, method: string): Prom
 function pageFetcher(): typeof fetch {
   return (async (url: string, init?: RequestInit) => {
     const text = String(url);
+    if (pathOfUrl(text) === '/api/detail') world.details.push(text);
     await releaseLayout(world, pathOfUrl(text), methodOf(init));
     return answer(world, text, init);
   }) as typeof fetch;
@@ -679,7 +680,9 @@ function installDom(url: string): JSDOM {
   Object.defineProperty(w.HTMLElement.prototype, 'offsetWidth', {
     configurable: true,
     get(this: HTMLElement) {
-      return this.classList.contains('box') ? 120 : 0;
+      if (!this.classList.contains('box')) return 0;
+      if (this.dataset.id === 'src/domain') return 80;
+      return 120;
     },
   });
   Object.defineProperty(globalThis, 'window', { value: w, configurable: true });
@@ -766,6 +769,13 @@ function fileCount(): string | undefined {
 
 function hasWord(text: string): boolean {
   return [...panel().querySelectorAll('p')].some(el => el.textContent === text);
+}
+
+function crumbNamed(name: string): HTMLButtonElement {
+  const nav = document.querySelector('nav[aria-label="breadcrumb"]');
+  const button = [...(nav?.querySelectorAll('button') ?? [])].find(el => el.textContent === name);
+  if (!(button instanceof HTMLButtonElement)) throw new Error(name);
+  return button;
 }
 
 function labelled(text: string): HTMLInputElement {
@@ -885,9 +895,13 @@ describe('Architecture kinds, pins and toggles', () => {
   });
 
   async function remount(url: string): Promise<void> {
+    const wasMounted = document.querySelector('.arch-canvas') !== null;
+    const disconnect = vi.spyOn(MutationObserver.prototype, 'disconnect');
     await act(async () => {
       root.unmount();
     });
+    if (wasMounted) expect(disconnect).toHaveBeenCalled();
+    disconnect.mockRestore();
     dom.window.close();
     dom = installDom(url);
     const el = document.getElementById('root');
@@ -943,6 +957,8 @@ describe('Architecture kinds, pins and toggles', () => {
     expect(hollow.dataset.head).toBe('hollow');
     expect(childText(hollow, '.arrow-label')).toBe('2');
     expect(childText(hollow, 'title')).toBe('2 runtime · 0 type-only · 1 extends/implements');
+    expect(pathOf(idNamed('infra'), idNamed('domain')).dataset.dash).toBe('');
+    expect(pathOf(idNamed('app'), idNamed('domain')).dataset.dash).toBe('6 4');
     expect(pathOf(idNamed('infra'), idNamed('domain')).dataset.marker).toBe('"url(#hollow-64748b)"');
     expect(docAttr('#hollow-64748b path', 'fill')).toBe('none');
     expect(edgeEls().every(edge => edge.dataset.up === 'false')).toBe(true);
@@ -1017,6 +1033,8 @@ describe('Architecture kinds, pins and toggles', () => {
     expect(entryButton('Imported by', 'a.ts').textContent).toBe('a.ts 1 runtime · 0 type-only · 0 extends/implements');
     expect(entryButton('Imported by', 'b.ts').textContent).toBe('b.ts 1 runtime · 0 type-only · 0 extends/implements');
     expect(entryButton('Imports', 'model.ts').textContent).toBe('model.ts 1 runtime · 0 type-only · 0 extends/implements');
+    await press(crumbNamed('infra'));
+    expect(document.querySelector('aside[aria-label="details"]')).toBeNull();
   });
 
   it('Double-clicking a file still opens it in the Files tab', async () => {
@@ -1027,6 +1045,7 @@ describe('Architecture kinds, pins and toggles', () => {
     expect(hasWord('file')).toBe(true);
     expect(hasWord('abstract')).toBe(true);
     expect(fileCount()).toBeUndefined();
+    expect([...panel().querySelectorAll('p')].map(el => el.textContent)).toEqual(['src/domain/shape.ts', 'file', 'abstract']);
     expect(sectionOf('Imports').querySelectorAll('button')).toHaveLength(0);
     expect(entryButton('Imported by', 'repo.ts').textContent).toBe('repo.ts 1 runtime · 0 type-only · 1 extends/implements');
     await act(async () => {
@@ -1069,6 +1088,10 @@ describe('Architecture kinds, pins and toggles', () => {
     expect(upInfra.dataset.head).toBe('hollow');
     expect(childText(upInfra, '.arrow-label')).toBe('2');
     expect(childText(upInfra, 'title')).toBe('points up: infra is drawn below domain');
+    expect(upInfra.classList.contains('up')).toBe(true);
+    expect(window.getComputedStyle(upInfra.querySelector('.arrow-label') as Element).fill).toBe('rgb(220, 38, 38)');
+    expect(pathOf(idNamed('infra'), idNamed('domain')).dataset.marker).toBe('"url(#hollow-dc2626)"');
+    expect(docAttr('#hollow-dc2626 path', 'stroke')).toBe('#dc2626');
     expect(arrowNamed('app', 'infra').dataset.up).toBe('false');
     await waitFor(() => {
       expect(world.layout).toEqual({
@@ -1172,6 +1195,7 @@ describe('Architecture kinds, pins and toggles', () => {
     const reset = [...document.querySelectorAll('button')].find(el => el.textContent === 'Reset layout');
     if (!(reset instanceof HTMLElement)) throw new Error('reset');
     await press(reset);
+    expect(document.querySelector('.fake-flow')).toBeNull();
     expect(world.puts).toBe(0);
     release();
     await waitFor(() => {
@@ -1183,9 +1207,13 @@ describe('Architecture kinds, pins and toggles', () => {
     await openHash('#at=src');
     await press(nodeById(idNamed('infra')));
     await seeHeading('infra');
-    namedBox('domain').removeAttribute('data-id');
+    const box = namedBox('domain');
+    const spot = { x: Number(box.dataset.x), y: Number(box.dataset.y) };
+    box.removeAttribute('data-id');
+    centers().length = 0;
     await press(entryButton('Imports', 'domain'));
     await seeHeading('domain');
+    expect(centers().at(-1)).toEqual(spot);
   });
 
   it("Reset layout clears this view's pins and leaves settings and every other view", async () => {

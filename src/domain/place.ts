@@ -304,7 +304,7 @@ function cycleTextFor(edge: RawEdge, edges: RawEdge[], comp: Record<string, numb
 
 export function toViewEdge(edge: RawEdge, cycle: boolean): ViewEdge {
   const base = { from: edge.from, to: edge.to, runtime: edge.runtime, type: edge.type, cycle };
-  if (edge.heritage === undefined || edge.heritage === 0) return base;
+  if (edge.heritage === undefined) return base;
   return { ...base, heritage: edge.heritage };
 }
 

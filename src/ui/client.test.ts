@@ -333,7 +333,7 @@ describe('fetchLayout', () => {
   });
 
   it('uses the empty document when the body is refused or the network fails', async () => {
-    const denied = (async () => jsonResponse(false, { error: 'missing or wrong token' })) as typeof fetch;
+    const denied = (async () => jsonResponse(false, EMPTY_LAYOUT)) as typeof fetch;
     expect(await fetchLayout('tok', denied)).toEqual(EMPTY_LAYOUT);
     const odd = (async () => jsonResponse(true, { version: 2 })) as typeof fetch;
     expect(await fetchLayout('tok', odd)).toEqual(EMPTY_LAYOUT);
@@ -346,13 +346,20 @@ describe('fetchLayout', () => {
 
 describe('putLayout', () => {
   it('puts the document and reads the saved copy', async () => {
-    const calls: { url: string; method: string | undefined; body: BodyInit | null | undefined }[] = [];
+    const calls: { url: string; method: string | undefined; body: BodyInit | null | undefined; headers: HeadersInit | undefined }[] = [];
     const fetcher = (async (url: string, init?: RequestInit) => {
-      calls.push({ url, method: init?.method, body: init?.body });
+      calls.push({ url, method: init?.method, body: init?.body, headers: init?.headers });
       return jsonResponse(true, EMPTY_LAYOUT);
     }) as typeof fetch;
     expect(await putLayout('tok', EMPTY_LAYOUT, fetcher)).toEqual(EMPTY_LAYOUT);
-    expect(calls[0]).toMatchObject({ url: '/api/layout', method: 'PUT', body: JSON.stringify(EMPTY_LAYOUT) });
+    expect(await putLayout('', EMPTY_LAYOUT, fetcher)).toEqual(EMPTY_LAYOUT);
+    expect(calls[0]).toEqual({
+      url: '/api/layout',
+      method: 'PUT',
+      body: JSON.stringify(EMPTY_LAYOUT),
+      headers: { Authorization: 'Bearer tok', 'Content-Type': 'application/json' },
+    });
+    expect(calls[1]?.headers).toEqual({ Authorization: 'Bearer ', 'Content-Type': 'application/json' });
   });
 
   it('maps a refusal, a bad copy and a network failure', async () => {
@@ -371,15 +378,20 @@ describe('putLayout', () => {
 
 describe('fetchDetail', () => {
   it('requests the node with the flags that are on', async () => {
-    const calls: string[] = [];
-    const fetcher = (async (url: string) => {
-      calls.push(url);
+    const calls: { url: string; headers: HeadersInit | undefined }[] = [];
+    const fetcher = (async (url: string, init?: RequestInit) => {
+      calls.push({ url, headers: init?.headers });
       return jsonResponse(true, url.startsWith('/api/graph') ? RICH_GRAPH : RICH_DETAIL);
     }) as typeof fetch;
     expect(await fetchDetail('tok', 'src/infra', 'src', fetcher, { tests: true, external: true })).toEqual(RICH_DETAIL);
-    expect(calls).toEqual(['/api/detail?id=src%2Finfra&at=src&tests=1&external=1']);
+    expect(await fetchDetail('', 'src/infra', 'src', fetcher)).toEqual(RICH_DETAIL);
+    expect(calls[0]).toEqual({
+      url: '/api/detail?id=src%2Finfra&at=src&tests=1&external=1',
+      headers: { Authorization: 'Bearer tok' },
+    });
+    expect(calls[1]?.headers).toEqual({ Authorization: 'Bearer ' });
     expect(await fetchGraph('tok', 'src', fetcher, { tests: true, external: true })).toEqual(RICH_GRAPH);
-    expect(calls[1]).toBe('/api/graph?at=src&tests=1&external=1');
+    expect(calls[2]?.url).toBe('/api/graph?at=src&tests=1&external=1');
   });
 
   it('maps a missing node, a bad body and a network failure', async () => {

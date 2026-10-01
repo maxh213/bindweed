@@ -33,6 +33,42 @@ const GAPS: Record<string, string> = {
   'ext/repo.ts': "import type { Shape } from 'node:fs';\nexport class Repo implements Shape { n = 1 }\n",
 };
 
+const BINDS: Record<string, string> = {
+  'eqh/shape.ts': 'export class Shape { n = 1 }\n',
+  'eqh/repo.ts': 'import Shape = require("./shape");\nexport class Repo implements Shape { n = 1 }\n',
+  'shadow/shape.ts': 'export class Shape { n = 1 }\n',
+  'shadow/class.ts': 'import { Shape } from "./shape";\nexport class Shape { n = 1 }\nexport class Repo implements Shape { n = 2 }\n',
+  'shadow/fn.ts': 'import { Shape } from "./shape";\nexport function Shape() { return 1 }\nexport class Repo implements Shape { n = 2 }\n',
+  'shadow/iface.ts': 'import { Shape } from "./shape";\nexport interface Shape { n: number }\nexport class Repo implements Shape { n = 2 }\n',
+  'shadow/alias.ts': 'import { Shape } from "./shape";\ntype Shape = { n: number };\nexport class Repo implements Shape { n = 2 }\n',
+  'shadow/enum.ts': 'import { Shape } from "./shape";\nexport enum Shape { A }\nexport class Repo implements Shape { n = 2 }\n',
+  'shadow/mod.ts': 'import { Shape } from "./shape";\nexport namespace Shape { export const n = 1 }\nexport class Repo implements Shape { n = 2 }\n',
+  'shadow/var.ts': 'import { Shape } from "./shape";\nexport const Shape = 1;\nexport class Repo implements Shape { n = 2 }\n',
+  'order/left.ts': 'export class Shape { n = 1 }\n',
+  'order/mid.ts': 'export class Mid { n = 1 }\n',
+  'order/shape.ts': 'export class Shape { n = 1 }\n',
+  'order/repo.ts': 'import { Shape as ns } from "./left";\nimport * as other from "./mid";\nimport * as ns from "./shape";\nexport class Repo implements ns.Shape { n = 1 }\n',
+  'deep/shape.ts': 'export class Shape { n = 1 }\n',
+  'deep/repo.ts': 'import * as ns from "./shape";\nexport class Repo implements ns.Shape.Extra { n = 1 }\n',
+  'miss/repo.ts': 'export class Repo implements Missing.Thing { n = 1 }\n',
+  'alias/repo.ts': 'import Foo = Bar.Baz;\nexport const n = 1;\n',
+  'door/door.ts': 'export abstract class Door { n = 1 }\n',
+  'pure/id.ts': 'export type Id = string;\n',
+  'pure/iface.ts': 'export interface Box { n: number }\n',
+  'pure/alias.ts': 'export type Id = string;\n',
+  'pure/in.ts': 'import type { Id } from "./alias";\n',
+  'pure/out.ts': 'export type { Id } from "./alias";\n',
+  'value/both.ts': 'export const n = 1;\n',
+  'value/re.ts': "export { n } from './both';\n",
+  'value/bare.ts': "import { n } from './both';\n",
+};
+
+function edgeOf(scan: ScanResult, from: string, to: string): ScanResult['edges'][number] {
+  const edge = scan.edges.find(item => item.from === from && item.to === to);
+  if (edge === undefined) throw new Error(`${from}->${to}`);
+  return edge;
+}
+
 async function makeRepo(files: Record<string, string>): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'bw-kinds-'));
   made.push(root);
@@ -95,6 +131,9 @@ describe('scan gaps', () => {
     const scan = scanRepo(root, Object.keys(GAPS));
     const again = scanRepo(root, Object.keys(GAPS));
     expect(again).toEqual(scan);
+    const parenEdge = scan.edges.find(edge => edge.from === 'paren/repo.ts');
+    expect(parenEdge).toMatchObject({ to: 'paren/shape.ts', kind: 'runtime' });
+    expect(parenEdge).not.toHaveProperty('heritage');
     const paren = viewAt(scan, 'paren');
     expect(paren.edges).toEqual([{ from: 'paren/repo.ts', to: 'paren/shape.ts', runtime: 1, type: 0, cycle: false }]);
     const shade = viewAt(scan, 'shade');
@@ -145,5 +184,43 @@ describe('scan gaps', () => {
     expect(nodeDetail(self, 'nope', '', 'kinds')).toBeNull();
     expect(nodeDetail(self, 'self.ts', 'missing', 'kinds')).toBeNull();
     expect(graphView(self, 'missing', 'kinds')).toBeNull();
+  });
+
+  it('records heritage only on the binding import', async () => {
+    const root = await makeRepo(BINDS);
+    const scan = scanRepo(root, Object.keys(BINDS));
+    expect(edgeOf(scan, 'eqh/repo.ts', 'eqh/shape.ts')).toMatchObject({ kind: 'runtime', heritage: 1 });
+    expect(edgeOf(scan, 'order/repo.ts', 'order/shape.ts')).toMatchObject({ heritage: 1 });
+    expect(edgeOf(scan, 'order/repo.ts', 'order/left.ts')).not.toHaveProperty('heritage');
+    expect(edgeOf(scan, 'order/repo.ts', 'order/mid.ts')).not.toHaveProperty('heritage');
+    expect(edgeOf(scan, 'deep/repo.ts', 'deep/shape.ts')).not.toHaveProperty('heritage');
+    expect(scan.edges.find(edge => edge.from === 'miss/repo.ts')).toBeUndefined();
+    expect(scan.edges.find(edge => edge.from === 'alias/repo.ts')).toBeUndefined();
+  });
+
+  it('drops heritage on shadowed declarations', async () => {
+    const root = await makeRepo(BINDS);
+    const scan = scanRepo(root, Object.keys(BINDS));
+    expect(edgeOf(scan, 'shadow/class.ts', 'shadow/shape.ts')).not.toHaveProperty('heritage');
+    expect(edgeOf(scan, 'shadow/fn.ts', 'shadow/shape.ts')).not.toHaveProperty('heritage');
+    expect(edgeOf(scan, 'shadow/iface.ts', 'shadow/shape.ts')).not.toHaveProperty('heritage');
+    expect(edgeOf(scan, 'shadow/alias.ts', 'shadow/shape.ts')).not.toHaveProperty('heritage');
+    expect(edgeOf(scan, 'shadow/enum.ts', 'shadow/shape.ts')).not.toHaveProperty('heritage');
+    expect(edgeOf(scan, 'shadow/mod.ts', 'shadow/shape.ts')).not.toHaveProperty('heritage');
+    expect(edgeOf(scan, 'shadow/var.ts', 'shadow/shape.ts')).not.toHaveProperty('heritage');
+  });
+
+  it('marks type declarations abstract', async () => {
+    const root = await makeRepo(BINDS);
+    const scan = scanRepo(root, Object.keys(BINDS));
+    const byPath = new Map(scan.files.map(file => [file.path, file.abstract]));
+    expect(byPath.get('door/door.ts')).toBe(true);
+    expect(byPath.get('pure/iface.ts')).toBe(true);
+    expect(byPath.get('pure/alias.ts')).toBe(true);
+    expect(byPath.get('pure/in.ts')).toBe(true);
+    expect(byPath.get('pure/out.ts')).toBe(true);
+    expect(byPath.get('value/re.ts')).toBeUndefined();
+    expect(byPath.get('value/bare.ts')).toBeUndefined();
+    expect(viewAt(scan, 'door').nodes.find(node => node.name === 'door.ts')).toMatchObject({ abstract: true });
   });
 });
