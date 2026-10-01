@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
+import { ensureUiBuilt } from './ensure-ui.ts';
 
 const BW = process.cwd();
 const PORT = 4700;
@@ -335,7 +336,7 @@ function expectScaledTogether(before: Record<string, BoxRect>, after: Record<str
 test('qa: layered package view', async ({ page, context }) => {
   test.setTimeout(180_000);
 
-  execSync('flock -w 180 /tmp/bindweed-qa-build.lock npm run build', { cwd: BW, stdio: 'ignore' });
+  ensureUiBuilt(BW);
 
   const QA = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'bw-qa-')));
   const layered = path.join(QA, 'layered');

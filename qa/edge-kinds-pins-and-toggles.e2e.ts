@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
+import { ensureUiBuilt } from './ensure-ui.ts';
 
 const BW = process.cwd();
 const PORT = 4800;
@@ -607,7 +608,7 @@ async function freshTab(context: BrowserContext, token: string, hash: string): P
 
 test('qa: edge kinds, pins and toggles', async ({ page, context }) => {
   test.setTimeout(240_000);
-  execSync('flock -w 180 /tmp/bindweed-qa-build.lock npm run build', { cwd: BW, stdio: 'ignore' });
+  ensureUiBuilt(BW);
 
   const QA = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'bw-qa-')));
   const layered = path.join(QA, 'layered');

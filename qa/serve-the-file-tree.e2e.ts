@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
+import { ensureUiBuilt } from './ensure-ui.ts';
 import net from 'node:net';
 
 const BW = process.cwd();
@@ -125,7 +126,7 @@ function requestHttp(
 test('qa: serve the file tree', async ({ page, context }) => {
   test.setTimeout(120_000);
 
-  execSync('flock -w 180 /tmp/bindweed-qa-build.lock npm run build', { cwd: BW, stdio: 'ignore' });
+  ensureUiBuilt(BW);
 
   const QA = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'bw-qa-')));
   const demoRepo = path.join(QA, 'demo-repo');

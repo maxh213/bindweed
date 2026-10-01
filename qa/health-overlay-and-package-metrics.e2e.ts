@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
+import { ensureUiBuilt } from './ensure-ui.ts';
 
 const BW = process.cwd();
 const PORT = 4900;
@@ -305,7 +306,7 @@ function expectRoutes(): void {
 
 test('qa: health overlay and package metrics', async ({ page }) => {
   test.setTimeout(300_000);
-  execSync('flock -w 180 /tmp/bindweed-qa-build.lock npm run build', { cwd: BW, stdio: 'ignore' });
+  ensureUiBuilt(BW);
 
   const QA = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'bw-qa-')));
   const healthy = path.join(QA, 'healthy');
