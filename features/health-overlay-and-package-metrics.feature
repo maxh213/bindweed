@@ -26,7 +26,7 @@ Feature: the Architecture canvas colours boxes by health and lists Martin's pack
   Conventions: "bindweed" is "node <bindweed dir>/src/cli.ts"; /tmp/qa is a fresh temporary
   directory; bindweed serves /tmp/qa/healthy on port 4900 unless a scenario says otherwise;
   {token} is the token of the bindweed that scenario started; "with the token" means
-  "Authorization: Bearer ***"; requests carry "Host: 127.0.0.1:4900" unless a scenario sets
+  "Authorization: Bearer {token}"; requests carry "Host: 127.0.0.1:4900" unless a scenario sets
   another. JSON is compared as JSON. A key these bodies omit is absent, not present with
   a default. In a table cell \n is a newline. Each scenario starts from the Background again.
   On the page the overlay control is the combobox labelled "Overlay", the stale mark is
@@ -72,7 +72,10 @@ Feature: the Architecture canvas colours boxes by health and lists Martin's pack
     And both of those reports are newer than every source file in "/tmp/qa/healthy"
 
   Rule: Health is read from the reports and never computed by running a gate
-    Cyclomatic complexity is counted as marestail's ts_complexity.mjs counts it: 1, plus
+    A graph body carries "crapMax", and "coverage" and "mutation" as flag values "on",
+    "stale" or "off". A detail body carries no crapMax and no flag; its "crap", "coverage"
+    and "mutants" are the selected box's own numbers. Cyclomatic complexity is counted as
+    marestail's ts_complexity.mjs counts it: 1, plus
     one for each if, conditional expression, for, for-in, for-of, while, do, case clause,
     catch clause, and each &&, || and ?? binary expression. Nested functions are counted
     on their own and do not add to the outer function. The functions counted are function
@@ -83,8 +86,12 @@ Feature: the Architecture canvas colours boxes by health and lists Martin's pack
     highest CRAP of its files. Coverage of a file or package is covered statements over
     statements, summed across the files that have an entry. Surviving mutants are those
     with status Survived or NoCoverage; Killed, Timeout and any other status do not count,
-    and a package sums its files. No coverage entry: CRAP is "–" and the file is left out
-    of the coverage sum. No statements in an entry: coverage is 1. The CRAP limit is the
+    and a package sums its files. One rule decides every missing number: a report that is
+    missing or unparsable puts its flag "off" and every node drops the fields that report
+    feeds, so coverage "off" means no crap and no coverage field, and mutation "off" means
+    no mutants field. With coverage on, a file with no entry has crap "–", no coverage
+    field and no place in the coverage sum; with mutation on, a file with no entry has
+    mutants 0. No statements in an entry: coverage is 1. The CRAP limit is the
     number [ts] crap_max in the repository's marestail.toml, otherwise 4. CRAP is green
     at or under the limit, amber at or under twice the limit, red above. Coverage is green
     at 1, amber from 0.8 inclusive, red below. Mutants are green at 0, amber at 1 or 2,
@@ -98,7 +105,7 @@ Feature: the Architecture canvas colours boxes by health and lists Martin's pack
       And the node "src/red.ts" has crap 42, coverage "0.00" and mutants 0
       And the node "src/plain.ts" has no crap field, coverage "1.00" and mutants 3
       And the node "src/clean.ts" has no crap field, coverage "1.00" and mutants 0
-      And the nodes, edges, crumbs and every other field are the 003 src view of this repository
+      And the nodes, edges and crumbs are the 003 src view of this repository plus the health and Martin fields
 
     Scenario: The root package takes the worst CRAP, the summed coverage and the summed mutants
       When I send "GET /api/graph" with the token
@@ -166,7 +173,7 @@ Feature: the Architecture canvas colours boxes by health and lists Martin's pack
       Then the status is 200
       And no node has a crap, coverage or mutants field
       And the body has "coverage" "off" and "mutation" "off"
-      And the nodes and edges are the 003 src view of this repository
+      And the nodes and edges are the 003 src view of this repository plus the Martin fields
       When I send "GET /api/tree" with the token
       Then the status is 200 and the top-level entries include "src" and "tsconfig.json"
 
@@ -220,7 +227,7 @@ Feature: the Architecture canvas colours boxes by health and lists Martin's pack
     file is neither a file inside nor a file outside. A file node has Ca, Ce, I, A and D
     and no zone: its Ca is the distinct files that import it and its Ce is the distinct
     files it imports, tests and external packages left out of both. The layered
-    repository has no reports, so its CRAP and coverage are blank and its mutants are off.
+    repository has no reports, so its nodes carry no crap, coverage or mutants field.
 
     Scenario: The src view of layered has a stable domain, an unstable app and a middle infra
       Given bindweed is serving "/tmp/qa/layered" on port 4900
@@ -229,11 +236,11 @@ Feature: the Architecture canvas colours boxes by health and lists Martin's pack
       And the node "src/domain" has files 2, ca 3, ce 0, i "0.00", a "1.00", d "0.00" and zone "healthy"
       And the node "src/app" has files 2, ca 0, ce 2, i "1.00", a "0.00", d "0.00" and zone "healthy"
       And the node "src/infra" has files 2, ca 2, ce 2, i "0.50", a "0.00", d "0.50" and zone "healthy"
-      And every node has crap "–" and no coverage field and no mutants field
+      And no node has a crap, coverage or mutants field
       And the body has "coverage" "off" and "mutation" "off"
       And the edges are exactly:
         """
-        [{"from":"src/app","to":"src/infra","runtime":2,"type":1,"cycle":false},{"from":"src/app","to":"src/domain","runtime":0,"type":1,"cycle":false},{"from":"src/infra","to":"src/domain","runtime":2,"type":0,"heritage":1,"cycle":false}]
+        [{"from":"src/app","to":"src/domain","runtime":0,"type":1,"cycle":false},{"from":"src/app","to":"src/infra","runtime":2,"type":1,"cycle":false},{"from":"src/infra","to":"src/domain","runtime":2,"type":0,"heritage":1,"cycle":false}]
         """
 
     Scenario: The root package of layered imports nothing and is imported by nothing
@@ -241,7 +248,7 @@ Feature: the Architecture canvas colours boxes by health and lists Martin's pack
       When I send "GET /api/graph" with the token
       Then the only node is "src"
       And that node has files 6, ca 0, ce 0, i "–", a "0.33", d "–" and no zone field
-      And it has crap "–" and no coverage field and no mutants field
+      And it has no crap, coverage or mutants field
 
     Scenario: A file in the app view counts its own fan-in and fan-out
       Given bindweed is serving "/tmp/qa/layered" on port 4900
@@ -336,7 +343,8 @@ Feature: the Architecture canvas colours boxes by health and lists Martin's pack
     The stale badge is shown next to the combobox when the selected overlay's report is
     stale; None has no report, so it shows no badge. The Metrics button toggles the
     drawer. The drawer lists every package node in the current view and no file node, one
-    row each, columns Name, Files, Ca, Ce, I, A, D, Zone, CRAP, Coverage and Mutants.
+    row each, columns Name, Files, Ca, Ce, I, A, D, Zone, CRAP, Coverage and Mutants. A
+    Metrics cell or a details-panel number for a field the body does not carry reads "–".
     It opens sorted by D descending, "–" sorting last and ties broken by name ascending.
     A click on a header sorts by that column, descending on the first click on a new
     column and toggling direction after that; ties still break by name ascending. A click

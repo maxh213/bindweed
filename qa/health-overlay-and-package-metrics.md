@@ -14,6 +14,10 @@ Coverage of a box is covered statements over statements, summed. `green.ts` is 3
 
 The layered hand count, over internal non-test files only: `domain` holds `model.ts` and `shape.ts`, both interfaces, and `a.ts`, `db.ts` and `repo.ts` each import one of them, so Ca 3, Ce 0, I = 0/3 = 0.00, A = 2/2 = 1.00, D = |1.00+0.00−1| = 0.00, healthy. `app` holds `a.ts` and `b.ts`; nothing outside imports either (the test file `a.test.ts` is inside and does not count), and both import `../infra/db` (a.ts also `../infra/repo` and `@domain/model`), so Ca 0, Ce 2, I = 2/2 = 1.00, A = 0.00, D = |0.00+1.00−1| = 0.00, healthy. `infra` holds `db.ts` and `repo.ts`; `a.ts` and `b.ts` import `db.ts`, so Ca 2, and both files import a file outside (`../domain/model`, `../domain/shape`), so Ce 2, I = 2/4 = 0.50, A = 0.00, D = |0.00+0.50−1| = 0.50, which is not above 0.5, so healthy. File nodes: `a.ts` has Ca 1 (`b.ts` imports it) and Ce 4 (`b.ts`, `db.ts`, `repo.ts`, `model.ts`), I = 4/5 = 0.80, D = 0.20; `b.ts` has Ca 1 (`a.ts`) and Ce 2 (`a.ts`, `db.ts`), I = 2/3 = 0.67, D = 0.33. The `src` root has Ca 0, Ce 0, so I and D are `–` and the box has no zone; A = 2/6 = 0.33.
 
+The zones hand count: `pain` holds `a.ts`, which `mid/d.ts` imports, so Ca 1, and Ce 0 because `a.ts` imports nothing; I = 0.00, A = 0.00 (a value file), D = |0.00+0.00−1| = 1.00 with A+I = 0 < 1, so pain. `use` holds `b.ts` and `c.ts`, both all-type files, so A = 2/2 = 1.00; nothing outside imports either, so Ca 0; `c.ts` imports `../mid/d` (outside), so Ce 1; I = 1.00, D = |1.00+1.00−1| = 1.00 with A+I = 2 > 1, so useless. `mid` holds `d.ts`, which `c.ts` imports, so Ca 1; `d.ts` imports `../pain/a`, so Ce 1; I = 0.50, A = 0.00, D = |0.00+0.50−1| = 0.50, not above 0.5, so healthy.
+
+Compatibility with 001–003: the 004 Rule adds fields to every graph body, so the checked-in suites that compare whole graphs need them before they can pass. QA must add to `ROOT_GRAPH`, `SRC_GRAPH`, `APP_GRAPH` and `WORKSPACE_GRAPH` in `qa/layered-package-view.e2e.ts`, and to `SRC_GRAPH` in `qa/edge-kinds-pins-and-toggles.e2e.ts`: `"crapMax":4`, `"coverage":"off"` and `"mutation":"off"` on the body, and `ca`, `ce`, `i`, `a`, `d` on every package and file node, computed by the Rule. External nodes gain nothing. Neither fixture has reports, so no node gains crap, coverage or mutants.
+
 ## Setup
 
 Port 4900 must be free. In the first terminal set `BW` to bindweed's checkout, then paste:
@@ -47,20 +51,20 @@ Paste the `export` line into the second terminal. `keep` spans lines 1–5 and a
 1. In the first terminal, still in `$QA/healthy`, run `node $BW/src/cli.ts --port 4900`.
    **Expect:** stdout shows exactly two lines: `bindweed: http://127.0.0.1:4900/?token=` followed by 32 characters from `0-9a-f`, then `serving $QA/healthy`. The command keeps running. In the second terminal set `TOKEN` to that token.
 
-2. In the second terminal run `curl -s -H "Authorization: ***" "$U/api/graph?at=src"`.
+2. In the second terminal run `curl -s -H "Authorization: Bearer $TOKEN" "$U/api/graph?at=src"`.
    **Expect:** the body has five file nodes. `green.ts` has `"crap":3`, `"coverage":"1.00"`, `"mutants":0`. `amber.ts` has `"crap":6`, `"coverage":"0.50"`, `"mutants":0`. `red.ts` has `"crap":42`, `"coverage":"0.00"`, `"mutants":0`. `plain.ts` has no `crap` field, `"coverage":"1.00"`, `"mutants":3`. `clean.ts` has no `crap` field, `"coverage":"1.00"`, `"mutants":0`. The body has `"coverage":"on"`, `"mutation":"on"` and `"crapMax":4`. Every file node has `ca` 0, `ce` 0, `"i":"–"`, `"a":"0.00"`, `"d":"–"` and no `zone` field, because nothing imports anything here.
 
-3. Run `curl -s -H "Authorization: ***" $U/api/graph` and `curl -s -H "Authorization: ***" "$U/api/detail?id=src/red.ts&at=src"`.
+3. Run `curl -s -H "Authorization: Bearer $TOKEN" $U/api/graph` and `curl -s -H "Authorization: Bearer $TOKEN" "$U/api/detail?id=src/red.ts&at=src"`.
    **Expect:** the graph's only node is `src`, with `"files":5`, `"crap":42`, `"coverage":"0.54"`, `"mutants":3`, `ca` 0, `ce` 0, `"i":"–"`, `"a":"0.00"`, `"d":"–"` and no `zone`. The detail body has `"crap":42`, `"coverage":"0.00"`, `"mutants":0`, and `hot` holding one entry: name `bad`, line `1`, cc `6`, coverage `"0.00"`, crap `42`. No other hot entry.
 
-4. Run `curl -s -H "Authorization: ***" "$U/api/detail?id=src/green.ts&at=src"` and `curl -s -H "Authorization: ***" "$U/api/detail?id=src&at="`.
+4. Run `curl -s -H "Authorization: Bearer $TOKEN" "$U/api/detail?id=src/green.ts&at=src"` and `curl -s -H "Authorization: Bearer $TOKEN" "$U/api/detail?id=src&at="`.
    **Expect:** `green.ts` has `"crap":3` and `hot` an empty array. The package detail has `"crap":42`, `"coverage":"0.54"`, `"mutants":3`, `"files":5`, and no `hot` field.
 
 5. Open `http://127.0.0.1:4900/?token=$TOKEN#at=src` in the browser, with the token written out.
    **Expect:** the Architecture tab is selected. The toolbar has a combobox labelled `Overlay` showing `None`. No box has a health badge. The boxes are `green.ts`, `amber.ts`, `red.ts`, `plain.ts` and `clean.ts`.
 
 6. Choose `CRAP` in the Overlay combobox.
-   **Expect:** `green.ts` shows a badge `3` on pale green, `amber.ts` a badge `6` on pale amber, `red.ts` a badge `42` on pale red. `plain.ts` and `clean.ts` each show a badge `–` with no health colour. In the second terminal, `curl -s -H "Authorization: ***" $U/api/layout` has `"overlay":"crap"`.
+   **Expect:** `green.ts` shows a badge `3` on pale green, `amber.ts` a badge `6` on pale amber, `red.ts` a badge `42` on pale red. `plain.ts` and `clean.ts` each show a badge `–` with no health colour. In the second terminal, `curl -s -H "Authorization: Bearer $TOKEN" $U/api/layout` has `"overlay":"crap"`.
 
 7. Choose `Surviving mutants` in the Overlay combobox.
    **Expect:** `plain.ts` shows a badge `3` on pale red. `clean.ts` and `green.ts` each show a badge `0` on pale green. `amber.ts` and `red.ts` each show a badge `0` on pale green.
@@ -68,14 +72,15 @@ Paste the `export` line into the second terminal. `keep` spans lines 1–5 and a
 8. Choose `Coverage` in the Overlay combobox, then click the `red.ts` box.
    **Expect:** `green.ts` shows `1.00` on pale green, `amber.ts` shows `0.50` on pale red, `red.ts` shows `0.00` on pale red. The details panel is headed `red.ts` and shows CRAP `42`, Coverage `0.00` and Mutants `0`. Under `Hot functions` one row reads `bad`, line `1`, cc `6`, coverage `0.00`.
 
-9. In the second terminal, age the coverage report and touch a source file, then reload the page and choose `CRAP` again:
+9. In the second terminal touch a source file, which makes it the newest scanned source, then reload the page and choose `CRAP`:
 
    ```sh
-   touch -d '2000-01-01 00:00:00' $QA/healthy/.marestail/ts-coverage/coverage-final.json
    touch $QA/healthy/src/green.ts
    ```
 
-   **Expect:** a `stale` badge sits next to the Overlay combobox. The `red.ts` badge still reads `42` on pale red. Choosing `Surviving mutants` hides the stale badge, because the mutation report was not aged. Choosing `None` also hides it.
+   **Expect:** a `stale` badge sits next to the Overlay combobox, because `green.ts` is now newer than the coverage report. The `red.ts` badge still reads `42` on pale red. Choosing `Surviving mutants` shows the badge too, because `green.ts` is newer than the mutation report as well.
+   Then run `touch $QA/healthy/reports/mutation/mutation.json` and choose `Surviving mutants` again.
+   **Expect:** the stale badge is gone. Choosing `None` hides the badge too.
 
 10. In the first terminal press Ctrl-C. Build the layered repository by hand, exactly as the feature's Background has it, and serve it with no reports:
 
@@ -107,10 +112,34 @@ Paste the `export` line into the second terminal. `keep` spans lines 1–5 and a
     | app | 2 | 0 | 2 | 1.00 | 0.00 | 0.00 | healthy | – | – | – |
     | domain | 2 | 3 | 0 | 0.00 | 1.00 | 0.00 | healthy | – | – | – |
 
-    CRAP, Coverage and Mutants are `–` on every row, because this fixture has no reports.
+    This fixture has no reports, so the body carries no crap, coverage or mutants field on any node, and the drawer prints `–` in each of those three cells.
 
 12. Click the I header, then click the `domain` row, then click `Metrics` again.
     **Expect:** the rows become `app` (I 1.00), `infra` (I 0.50), `domain` (I 0.00). Clicking the row selects the `domain` box and the details panel is headed `domain`, showing I `0.00`, A `1.00`, D `0.00` and Zone `healthy`. Clicking `Metrics` again closes the drawer. The address bar still reads `#at=src`.
 
-13. In the first terminal press Ctrl-C, then run `sed -n '/## Routes/,/## Environment/p' $BW/README.md` and `rm -rf $QA`.
+13. In the first terminal press Ctrl-C, build the zones repository, and serve it:
+
+    ```sh
+    mkdir -p $QA/zones/src/pain $QA/zones/src/use $QA/zones/src/mid
+    cd $QA/zones
+    printf 'export const a = 1;\n' > src/pain/a.ts
+    printf 'export interface B { n: number }\n' > src/use/b.ts
+    printf "import type { B } from './b';\nimport type { D } from '../mid/d';\nexport type C = B | D;\n" > src/use/c.ts
+    printf "import { a } from '../pain/a';\nexport const d = a;\nexport type D = typeof a;\n" > src/mid/d.ts
+    git init -q && git add -A && git -c user.name=qa -c user.email=qa@example.test -c commit.gpgsign=false commit -qm fixture
+    node $BW/src/cli.ts --port 4900
+    ```
+
+    Set `TOKEN` from the new first line, open `http://127.0.0.1:4900/?token=$TOKEN#at=src` in the browser, and click `Metrics`.
+    **Expect:** the default D-descending order, with `pain` and `use` tied at D 1.00 so the name rule puts `pain` first, then `mid`:
+
+    | row | files | Ca | Ce | I | A | D | zone | CRAP | coverage | mutants |
+    |---|---|---|---|---|---|---|---|---|---|---|
+    | pain | 1 | 1 | 0 | 0.00 | 0.00 | 1.00 | pain | – | – | – |
+    | use | 2 | 0 | 1 | 1.00 | 1.00 | 1.00 | useless | – | – | – |
+    | mid | 1 | 1 | 1 | 0.50 | 0.00 | 0.50 | healthy | – | – | – |
+
+    This fixture has no reports either, so the CRAP, Coverage and Mutants cells read `–`. Clicking the `pain` row selects the `pain` box and the details panel is headed `pain`, showing D `1.00` and Zone `pain`.
+
+14. In the first terminal press Ctrl-C, then run `sed -n '/## Routes/,/## Environment/p' $BW/README.md` and `rm -rf $QA`.
     **Expect:** the Routes table has live rows for `/`, `/assets/`, `/api/tree`, `/api/file`, `/api/graph`, `/api/rescan`, `/api/layout` and `/api/detail`. The playground is gone.
