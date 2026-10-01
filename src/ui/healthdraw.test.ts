@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  COLUMN_LABELS,
+  COLUMNS,
   ariaSort,
   badgeLevel,
   badgeText,
@@ -100,6 +102,11 @@ describe('metrics drawer tables and sorting', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].id).toBe('src/app');
     expect(rows[0].cells.d).toBe('0.00');
+    expect(rows[0].values.d).toBe(0);
+    expect(COLUMN_LABELS.d).toBe('D');
+    expect(COLUMN_LABELS.mutants).toBe('Mutants');
+    expect(metricRows(boxes, ['name'])).toBeUndefined();
+    expect(metricRows(boxes, COLUMNS)?.[0].cells.name).toBe('app');
   });
 
   it('cycles sort state and computes aria-sort', () => {

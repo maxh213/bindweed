@@ -128,6 +128,13 @@ describe('graph flags, order and detail', () => {
       importedBy: [],
     });
     expect(detail).not.toHaveProperty('files');
+    expect(detail).not.toHaveProperty('hot');
+  });
+
+  it('lists hot functions only for a scanned file', () => {
+    const file = detailOf(LAYERED, 'src/domain/model.ts', 'src/domain');
+    expect(file.hot).toEqual([]);
+    expect(nodeDetail(LAYERED, null, '', 'repo')).not.toHaveProperty('hot');
   });
 
   it('reads a trailing slash as the directory itself', () => {

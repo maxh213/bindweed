@@ -293,13 +293,18 @@ function nodeExtras(scan: ScanResult, node: ViewNode, health: Health, index: Mar
   return { ...healthExtras(scan, node, health), ...martinFields(index, node.path, node.kind) };
 }
 
-function fileByPath(scan: ScanResult, path: string): ScannedFile {
-  return scan.files.find(file => file.path === path) as ScannedFile;
+function fileByPath(scan: ScanResult, path: string): ScannedFile | undefined {
+  return scan.files.find(file => file.path === path);
+}
+
+function hotList(health: Health, file: ScannedFile | undefined): { hot?: HotFunction[] } {
+  if (file === undefined) return {};
+  return { hot: fileStats(health, file).hot };
 }
 
 function hotFields(scan: ScanResult, node: ViewNode | ExternalNode, health: Health): { hot?: HotFunction[] } {
   if (node.kind !== 'file') return {};
-  return { hot: fileStats(health, fileByPath(scan, node.path)).hot };
+  return hotList(health, fileByPath(scan, node.path));
 }
 
 function withExternals(nodes: GraphNode[], edges: ViewEdge[], ext: RawEdge[]): { nodes: GraphNode[]; edges: ViewEdge[] } {
@@ -490,6 +495,6 @@ export function nodeDetail(
   flags: GraphFlags = CLOSED_FLAGS,
   health: Health = emptyHealth(),
 ): NodeDetail | null {
-  if (typeof id !== 'string') return MISSING_DETAIL;
+  if (typeof id !== 'string') return { ...MISSING_DETAIL, ...hotList(emptyHealth(), undefined) };
   return resolvedDetail(scan, findNode(scan, at, rootName, flags, id, health), at, flags, health);
 }

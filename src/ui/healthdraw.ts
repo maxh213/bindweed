@@ -183,6 +183,8 @@ type Column = {
   value: (box: MetricBox) => CellValue;
 };
 
+const EVERY_COLUMN: unique symbol = Symbol('every');
+
 const COLUMN_LIST: Column[] = [
   { key: 'name', label: 'Name', detail: false, text: box => box.name, value: box => box.name },
   { key: 'files', label: 'Files', detail: false, text: box => countText(box.files), value: box => box.files ?? null },
@@ -197,26 +199,60 @@ const COLUMN_LIST: Column[] = [
   { key: 'mutants', label: 'Mutants', detail: true, text: box => countText(box.mutants), value: box => box.mutants ?? null },
 ];
 
-function recordFrom<T>(pick: (column: Column) => T): Record<SortKey, T> {
-  const record: Partial<Record<SortKey, T>> = {};
-  for (const column of COLUMN_LIST) record[column.key] = pick(column);
-  return record as Record<SortKey, T>;
-}
-
 export const COLUMNS: SortKey[] = COLUMN_LIST.map(column => column.key);
 
-export const COLUMN_LABELS: Record<SortKey, string> = recordFrom(column => column.label);
-
-function cellsOf(box: MetricBox): Record<SortKey, string> {
-  return recordFrom(column => column.text(box));
+function columnsOf(keys: typeof EVERY_COLUMN | readonly SortKey[]): readonly Column[] {
+  if (keys === EVERY_COLUMN) return COLUMN_LIST;
+  return COLUMN_LIST.filter(column => keys.includes(column.key));
 }
 
-function valuesOf(box: MetricBox): Record<SortKey, CellValue> {
-  return recordFrom(column => column.value(box));
+function isFull<T>(record: Partial<Record<SortKey, T>>): record is Record<SortKey, T> {
+  return COLUMNS.every(key => record[key] !== undefined);
 }
 
-export function metricRows(boxes: MetricBox[]): MetricsRow[] {
-  return boxes.filter(box => box.kind === 'package').map(box => ({ id: box.id, name: box.name, cells: cellsOf(box), values: valuesOf(box) }));
+function recordFrom<T>(keys: typeof EVERY_COLUMN, pick: (column: Column) => T): Record<SortKey, T>;
+function recordFrom<T>(keys: readonly SortKey[], pick: (column: Column) => T): Record<SortKey, T> | undefined;
+function recordFrom<T>(keys: typeof EVERY_COLUMN | readonly SortKey[], pick: (column: Column) => T): Record<SortKey, T> | undefined {
+  const record: Partial<Record<SortKey, T>> = {};
+  for (const column of columnsOf(keys)) record[column.key] = pick(column);
+  if (isFull(record)) return record;
+  return undefined;
+}
+
+export const COLUMN_LABELS: Record<SortKey, string> = recordFrom(EVERY_COLUMN, column => column.label);
+
+type Pair = { text: string; value: CellValue };
+
+function pairOf(box: MetricBox, keys: readonly SortKey[]): Record<SortKey, Pair> | undefined {
+  return recordFrom(keys, column => ({ text: column.text(box), value: column.value(box) }));
+}
+
+function project<T>(pair: Record<SortKey, Pair>, pick: (item: Pair) => T): Record<SortKey, T> {
+  return recordFrom(EVERY_COLUMN, column => pick(pair[column.key]));
+}
+
+function rowFrom(box: MetricBox, keys: readonly SortKey[]): MetricsRow | undefined {
+  const pair = pairOf(box, keys);
+  if (pair === undefined) return undefined;
+  return { id: box.id, name: box.name, cells: project(pair, item => item.text), values: project(pair, item => item.value) };
+}
+
+function packageRows(boxes: MetricBox[], keys: readonly SortKey[]): MetricsRow[] | undefined {
+  const rows: MetricsRow[] = [];
+  for (const box of boxes) {
+    if (box.kind !== 'package') continue;
+    const row = rowFrom(box, keys);
+    if (row === undefined) return undefined;
+    rows.push(row);
+  }
+  return rows;
+}
+
+export function metricRows(boxes: MetricBox[]): MetricsRow[];
+export function metricRows(boxes: MetricBox[], keys: readonly SortKey[]): MetricsRow[] | undefined;
+export function metricRows(boxes: MetricBox[], keys?: readonly SortKey[]): MetricsRow[] | undefined {
+  if (keys === undefined) return packageRows(boxes, COLUMNS);
+  return packageRows(boxes, keys);
 }
 
 function compareText(a: string, b: string): number {
