@@ -9,38 +9,39 @@ import {
   fixtureUi,
   hit,
   keepAliveAgent,
-  listen,
+  loadExport,
   loadModule,
   sample,
 } from './harness.mjs';
 
 const TARGETS = ['GET /', 'GET /assets/app.js', 'GET /api/tree', 'GET /api/file'];
+const GRAPH_TARGETS = ['GET /api/graph', 'GET /api/graph?at=src', 'POST /api/rescan'];
 
 const serve = await loadModule('src/serve.ts');
-if (serve === undefined || typeof serve.createAppServer !== 'function') {
-  absent(...TARGETS);
+if (serve === undefined || typeof serve.bindApp !== 'function') {
+  absent(...TARGETS, ...GRAPH_TARGETS);
   process.exit(0);
 }
 
-const token = 'a'.repeat(32);
+const prepareBindweed = await loadExport('src/repo.ts', 'prepareBindweed');
+
 const repo = await fixtureRepo(60);
 const ui = await fixtureUi();
 const agent = keepAliveAgent();
 let server;
 
 try {
-  const deps = { repoRoot: repo, uiDir: ui, token, port: 0 };
-  server = serve.createAppServer(deps);
-  await listen(server, 0);
+  if (prepareBindweed !== undefined) await prepareBindweed(repo);
+  const bound = await serve.bindApp({ repoRoot: repo, uiDir: ui }, { mode: 'fixed', port: 0 });
+  if ('error' in bound) throw new Error(`bindApp failed: ${JSON.stringify(bound.error)}`);
+  server = bound.server;
   const addr = server.address();
   if (addr === null || typeof addr === 'string') throw new Error('no port');
   const port = addr.port;
-  deps.port = port;
-
-  const auth = { Authorization: `Bearer ${token}` };
+  const auth = { Authorization: `Bearer ${bound.token}` };
 
   async function getIndex() {
-    const res = await hit(agent, port, 'GET', `/?token=${token}`);
+    const res = await hit(agent, port, 'GET', `/?token=${bound.token}`);
     if (res.status !== 200) throw new Error(`GET / -> ${res.status}`);
   }
 
@@ -59,10 +60,39 @@ try {
     if (res.status !== 200) throw new Error(`GET /api/file -> ${res.status}`);
   }
 
+  async function getGraph() {
+    const res = await hit(agent, port, 'GET', '/api/graph', auth);
+    if (res.status !== 200) throw new Error(`GET /api/graph -> ${res.status}`);
+  }
+
+  async function getGraphDeep() {
+    const res = await hit(agent, port, 'GET', '/api/graph?at=src', auth);
+    if (res.status !== 200) throw new Error(`GET /api/graph?at=src -> ${res.status}`);
+  }
+
+  async function postRescan() {
+    const res = await hit(agent, port, 'POST', '/api/rescan', auth);
+    if (res.status !== 200) throw new Error(`POST /api/rescan -> ${res.status}`);
+  }
+
   emit('GET /', await sample(getIndex, VALUES, WARMUP));
   emit('GET /assets/app.js', await sample(getAsset, VALUES, WARMUP));
   emit('GET /api/tree', await sample(getTree, VALUES, WARMUP));
   emit('GET /api/file', await sample(getFile, VALUES, WARMUP));
+
+  const probes = [
+    [GRAPH_TARGETS[0], await hit(agent, port, 'GET', '/api/graph', auth), getGraph],
+    [GRAPH_TARGETS[1], await hit(agent, port, 'GET', '/api/graph?at=src', auth), getGraphDeep],
+    [GRAPH_TARGETS[2], await hit(agent, port, 'POST', '/api/rescan', auth), postRescan],
+  ];
+  for (const [target, probe, run] of probes) {
+    if (probe.status === 404) {
+      absent(target);
+      continue;
+    }
+    if (probe.status !== 200) throw new Error(`${target} -> ${probe.status}`);
+    emit(target, await sample(run, VALUES, WARMUP));
+  }
 } finally {
   agent.destroy();
   if (server) await new Promise(resolve => server.close(() => resolve()));

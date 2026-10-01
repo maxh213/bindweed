@@ -1,0 +1,50 @@
+#!/usr/bin/env node
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { absent, cleanup, emitOnce, gitFixture, loadExport, timeMs } from './harness.mjs';
+
+const TARGETS = ['scanRepo cold 5000 files', 'scanRepo warm 5000 files', 'scanRepo one change 5000 files'];
+const PACKAGES = 50;
+const PER_PACKAGE = 100;
+
+const scanRepo = await loadExport('src/scan.ts', 'scanRepo');
+const listedRegularFiles = await loadExport('src/repo.ts', 'listedRegularFiles');
+
+if (scanRepo === undefined || listedRegularFiles === undefined) {
+  absent(...TARGETS);
+  process.exit(0);
+}
+
+function fileText(p, f) {
+  const imports = [];
+  for (let k = 1; k <= 5; k += 1) {
+    imports.push(`import { v${(f + k) % PER_PACKAGE} } from '../p${(p + k) % PACKAGES}/f${(f + k) % PER_PACKAGE}';`);
+  }
+  return `${imports.join('\n')}\nexport const v${f} = ${f};\n`;
+}
+
+async function generate(root) {
+  for (let p = 0; p < PACKAGES; p += 1) {
+    const dir = join(root, 'packages', `p${p}`);
+    await mkdir(dir, { recursive: true });
+    const writes = [];
+    for (let f = 0; f < PER_PACKAGE; f += 1) writes.push(writeFile(join(dir, `f${f}.ts`), fileText(p, f)));
+    await Promise.all(writes);
+  }
+}
+
+const root = await mkdtemp(join(tmpdir(), 'bw-perf-scan-'));
+try {
+  await generate(root);
+  await gitFixture(root);
+  const paths = await listedRegularFiles(root);
+  if (paths.length !== PACKAGES * PER_PACKAGE) throw new Error(`expected ${PACKAGES * PER_PACKAGE} files, got ${paths.length}`);
+
+  emitOnce(TARGETS[0], await timeMs(async () => scanRepo(root, paths)));
+  emitOnce(TARGETS[1], await timeMs(async () => scanRepo(root, paths)));
+  await writeFile(join(root, 'packages', 'p0', 'f0.ts'), `${fileText(0, 0)}// touched\n`);
+  emitOnce(TARGETS[2], await timeMs(async () => scanRepo(root, paths)));
+} finally {
+  await cleanup(root);
+}

@@ -1,0 +1,64 @@
+#!/usr/bin/env node
+import { VALUES, WARMUP, absent, emit, loadExport, sample } from './harness.mjs';
+
+const TARGETS = ['graphView root 4100 files', 'graphView deep 100 files'];
+const PACKAGES = 20;
+const PER_PACKAGE = 200;
+const WORKSPACES = 8;
+const DEEP_FILES = 100;
+
+const graphView = await loadExport('src/domain/graph.ts', 'graphView');
+if (graphView === undefined) {
+  absent(...TARGETS);
+  process.exit(0);
+}
+
+function packageFiles(files, edges) {
+  for (let i = 0; i < PACKAGES; i += 1) {
+    for (let j = 0; j < PER_PACKAGE; j += 1) {
+      const from = `pkg${i}/f${j}.ts`;
+      files.push({ path: from, test: j % 50 === 0 });
+      for (let k = 1; k <= 5; k += 1) {
+        const to =
+          k <= 3
+            ? `pkg${i}/f${(j + k * 7) % PER_PACKAGE}.ts`
+            : `pkg${(i + k) % PACKAGES}/f${(j + k * 3) % PER_PACKAGE}.ts`;
+        edges.push({ from, to, kind: k === 5 ? 'type' : 'runtime' });
+      }
+    }
+  }
+}
+
+function deepFiles(files, edges) {
+  for (let j = 0; j < DEEP_FILES; j += 1) {
+    const from = `deep/f${j}.ts`;
+    files.push({ path: from, test: false });
+    for (let k = 1; k <= 5; k += 1) edges.push({ from, to: `deep/f${(j + k * 7) % DEEP_FILES}.ts`, kind: k === 5 ? 'type' : 'runtime' });
+  }
+}
+
+function buildScan() {
+  const files = [];
+  const edges = [];
+  packageFiles(files, edges);
+  deepFiles(files, edges);
+  const workspaces = [];
+  for (let i = 0; i < WORKSPACES; i += 1) workspaces.push({ dir: `pkg${i}`, name: `@acme/pkg${i}` });
+  return { files, edges, externals: [], workspaces };
+}
+
+const scan = buildScan();
+
+emit(
+  TARGETS[0],
+  await sample(() => {
+    graphView(scan, '', 'perf-repo');
+  }, VALUES, WARMUP),
+);
+
+emit(
+  TARGETS[1],
+  await sample(() => {
+    graphView(scan, 'deep', 'perf-repo');
+  }, VALUES, WARMUP),
+);

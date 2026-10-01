@@ -61,6 +61,22 @@ function runGit(args, cwd) {
   });
 }
 
+export async function gitFixture(root) {
+  const commands = [
+    ['init', '--template='],
+    ['config', 'user.name', 'perf'],
+    ['config', 'user.email', 'perf@t'],
+    ['config', 'commit.gpgsign', 'false'],
+    ['config', 'gc.auto', '0'],
+    ['add', '-A'],
+    ['commit', '-m', 'fixture'],
+  ];
+  for (const args of commands) {
+    const result = await runGit(args, root);
+    if (result.code !== 0) throw new Error(`git ${args[0]} failed in ${root}: ${result.stderr.trim()}`);
+  }
+}
+
 export async function fixtureRepo(fileCount = 40) {
   const root = await mkdtemp(join(tmpdir(), 'bw-perf-repo-'));
   await mkdir(join(root, 'src', 'lib'), { recursive: true });
@@ -80,12 +96,7 @@ export async function fixtureRepo(fileCount = 40) {
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, `f${i}.txt`), `file ${i}\n`.repeat(20));
   }
-  await runGit(['init', '--template='], root);
-  await runGit(['config', 'user.name', 'perf'], root);
-  await runGit(['config', 'user.email', 'perf@t'], root);
-  await runGit(['config', 'commit.gpgsign', 'false'], root);
-  await runGit(['add', '-A'], root);
-  await runGit(['commit', '-m', 'fixture'], root);
+  await gitFixture(root);
   return root;
 }
 
