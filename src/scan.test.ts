@@ -1,6 +1,7 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { statSync, symlinkSync, utimesSync } from 'node:fs';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { scanRepo, } from './scan.ts';
 
@@ -74,6 +75,39 @@ describe('scanRepo over the layered fixture', () => {
     expect(edgeList(root, third)).toContain('src/infra/db.ts>src/app/b.ts:runtime');
   });
 
+  it('reuses cached imports while the stamp holds and stores fresh stamps', async () => {
+    const root = await makeRepo(LAYERED_FILES);
+    const paths = Object.keys(LAYERED_FILES);
+    scanRepo(root, paths);
+    const cacheFile = join(root, '.bindweed/cache/scan.json');
+    const cache = JSON.parse(await readFile(cacheFile, 'utf8'));
+    expect(cache.files['src/app/a.ts'].mtimeMs).toBeGreaterThan(0);
+    expect(cache.files['src/app/a.ts'].imports).toHaveLength(3);
+    cache.files['src/app/a.ts'].imports = [{ specifier: './b', typeOnly: false }];
+    await writeFile(cacheFile, JSON.stringify(cache));
+    expect(edgeList(root, scanRepo(root, paths))).toEqual([
+      'src/app/a.ts>src/app/b.ts:runtime',
+      'src/app/b.ts>src/app/a.ts:runtime',
+      'src/app/b.ts>src/infra/db.ts:runtime',
+      'src/infra/db.ts>src/domain/model.ts:runtime',
+    ]);
+  });
+
+  it('re-parses when only the cached size differs', async () => {
+    const root = await makeRepo({ 'src/a.ts': "import { b } from './b';\nexport const a = b;\n", 'src/b.ts': 'export const b = 1;\n' });
+    utimesSync(join(root, 'src/a.ts'), new Date(1000), new Date(1000));
+    const stamp = statSync(join(root, 'src/a.ts'));
+    await mkdir(join(root, '.bindweed/cache'), { recursive: true });
+    await writeFile(
+      join(root, '.bindweed/cache/scan.json'),
+      JSON.stringify({
+        version: 1,
+        files: { 'src/a.ts': { mtimeMs: stamp.mtimeMs, size: stamp.size + 1, imports: [{ specifier: './gone', typeOnly: false }] } },
+      }),
+    );
+    expect(edgeList(root, scanRepo(root, ['src/a.ts', 'src/b.ts']))).toEqual(['src/a.ts>src/b.ts:runtime']);
+  });
+
   it('starts over when the cache is corrupt or oddly shaped', async () => {
     const root = await makeRepo(LAYERED_FILES);
     const paths = Object.keys(LAYERED_FILES);
@@ -85,22 +119,59 @@ describe('scanRepo over the layered fixture', () => {
   });
 });
 
+describe('scanRepo path filtering', () => {
+  it('skips declaration files and paths under tool directories', async () => {
+    const files = {
+      'src/a.ts': 'export const a = 1;\n',
+      'src/a.d.ts': 'export const d: number;\n',
+      'dist/x.ts': 'export const dx = 1;\n',
+      'build/x.ts': 'export const bx = 1;\n',
+      'out/x.ts': 'export const ox = 1;\n',
+      'coverage/x.ts': 'export const cx = 1;\n',
+      'node_modules/x.ts': 'export const nx = 1;\n',
+      '.bindweed/x.ts': 'export const wx = 1;\n',
+      '.marestail/x.ts': 'export const mx = 1;\n',
+    };
+    const root = await makeRepo(files);
+    expect(scanRepo(root, Object.keys(files)).files).toEqual([{ path: 'src/a.ts', test: false }]);
+  });
+
+  it('treats a resolved sibling directory as external', async () => {
+    const outside = await makeRepo({ 'x.ts': 'export const x = 1;\n' });
+    const root = await makeRepo({ 'src/a.ts': `import { x } from '../../${basename(outside)}/x';\nexport const a = x;\n` });
+    const scan = scanRepo(root, ['src/a.ts']);
+    expect(scan.edges).toEqual([]);
+    expect(externalList(scan)).toEqual([`src/a.ts>../../${basename(outside)}/x:runtime`]);
+    await rm(outside, { recursive: true, force: true });
+  });
+});
+
 const FORMS = [
   "import def from 'def-pkg';",
+  "import sub from 'def-pkg/sub';",
+  "import scoped from '@scope/pkg/sub';",
   "import { type A, b } from './mix';",
   "import * as ns from './ns';",
   "import {} from './empty';",
   "import './side';",
   "import type { T } from './ty';",
+  "import { type A } from './ty2';",
+  "import Def, { type A } from './mix3';",
+  "import type Def from './ty3';",
   "import eq = require('./eq');",
   "const r = require('./req');",
   "const d = import('./dyn');",
   "const skip1 = require(name);",
   "const skip2 = import('./dyn', {});",
   "const skip3 = obj.require('./req');",
+  "const skip4 = import('./two', {});",
+  "const skip5 = import(`./tpl`);",
+  "const skip6 = require();",
+  "helper('./req2');",
   "export { x } from './re';",
   "export type { U } from './rety';",
   "export { type V, w } from './remix';",
+  "export { type W } from './rety2';",
   "export * from './star';",
   "export * as starNs from './starns';",
   "export {} from './none';",
@@ -118,6 +189,13 @@ const FORMS_FILES: Record<string, string> = {
   'empty.ts': 'export const e = 1;\n',
   'side.ts': 'export const s = 1;\n',
   'ty.ts': 'export type T = number;\n',
+  'ty2.ts': 'export type A = number;\n',
+  'ty3.ts': 'export default 1;\n',
+  'mix3.ts': 'export type A = number;\nexport const b = 1;\n',
+  'two.ts': 'export const two = 1;\n',
+  'tpl.ts': 'export const tpl = 1;\n',
+  'req2.ts': 'export const req2 = 1;\n',
+  'rety2.ts': 'export type W = string;\n',
   'eq.ts': 'export = 1;\n',
   'req.ts': 'export const r = 1;\n',
   'dyn.ts': 'export const d = 1;\n',
@@ -147,16 +225,20 @@ describe('scanRepo import forms', () => {
       'empty.ts:runtime',
       'eq.ts:runtime',
       'mix.ts:runtime',
+      'mix3.ts:runtime',
       'none.ts:runtime',
       'ns.ts:runtime',
       're.ts:runtime',
       'remix.ts:runtime',
       'req.ts:runtime',
       'rety.ts:type',
+      'rety2.ts:type',
       'side.ts:runtime',
       'star.ts:runtime',
       'starns.ts:runtime',
       'ty.ts:type',
+      'ty2.ts:type',
+      'ty3.ts:type',
     ]);
     expect(edgeList(root, scan)).toContain('f.js>g.js:runtime');
     expect(edgeList(root, scan)).toContain('mts.mts>ty.ts:type');
@@ -168,13 +250,26 @@ describe('scanRepo import forms', () => {
     const externals = externalList(scan);
     expect(externals).toContain('forms.ts>/abs/nope:runtime');
     expect(externals).toContain('forms.ts>../gone:runtime');
-    expect(externals).toContain('forms.ts>def-pkg:runtime');
+    expect(externals.filter(name => name === 'forms.ts>def-pkg:runtime')).toHaveLength(2);
+    expect(externals).toContain('forms.ts>@scope/pkg:runtime');
     expect(externals).toContain('comp.tsx>react:runtime');
     expect(externals).toContain('piece.jsx>jsx-dep:runtime');
     expect(externals).toContain('mod.mjs>node:fs:runtime');
     expect(externals).toContain('cjs.cjs>node:path:runtime');
     expect(externals).toContain('cts.cts>node:fs:runtime');
-    expect(externals).toHaveLength(8);
+    expect(externals).toHaveLength(10);
+  });
+});
+
+describe('scanRepo script kinds', () => {
+  it('parses jsx and tsx files with their own script kind', async () => {
+    const root = await makeRepo({
+      'jshold.js': "const el = <Foo>require('./hold');\nexport const e = el;\n",
+      'tsxhold.tsx': "const el = <Foo>{require('./hold')}</Foo>;\nexport const e = el;\n",
+      'hold.ts': 'export const hold = 1;\n',
+    });
+    const scan = scanRepo(root, ['jshold.js', 'tsxhold.tsx', 'hold.ts']);
+    expect(edgeList(root, scan)).toEqual(['tsxhold.tsx>hold.ts:runtime']);
   });
 });
 
@@ -204,6 +299,19 @@ describe('scanRepo tsconfig handling', () => {
     });
     const scan = scanRepo(root, ['packages/a/index.ts', 'packages/a/src/z.ts', 'shared/s.ts', 'shared/t.ts', 'src/q.ts', 'src/x.ts']);
     expect(edgeList(root, scan)).toEqual(['packages/a/index.ts>packages/a/src/z.ts:runtime', 'shared/s.ts>shared/t.ts:runtime', 'src/x.ts>src/q.ts:runtime']);
+  });
+
+  it('follows references on to a shared config and back around a cycle', async () => {
+    const root = await makeRepo({
+      'tsconfig.json': '{"references":[{"path":"packages/a"}]}',
+      'packages/a/tsconfig.json': '{"references":[{"path":"../../shared/tsconfig.shared.json"}]}',
+      'shared/tsconfig.shared.json':
+        '{"references":[{"path":"../packages/a/tsconfig.json"}],"compilerOptions":{"baseUrl":".","paths":{"@s/*":["./*"]}}}',
+      'shared/s.ts': "import { t } from '@s/t';\nexport const s = t;\n",
+      'shared/t.ts': 'export const t = 1;\n',
+    });
+    const scan = scanRepo(root, ['shared/s.ts', 'shared/t.ts']);
+    expect(edgeList(root, scan)).toEqual(['shared/s.ts>shared/t.ts:runtime']);
   });
 
   it('treats a broken tsconfig as empty and an outside alias as external', async () => {
@@ -250,6 +358,16 @@ describe('scanRepo workspaces', () => {
     expect(edgeList(root, scan)).toEqual(['packages/web/src/index.ts>packages/core/src/index.ts:runtime']);
   });
 
+  it('skips symlinked directories when expanding glob patterns', async () => {
+    const root = await makeRepo({
+      'package.json': '{"workspaces":["packages/*"]}',
+      'packages/real/package.json': '{"name":"real","main":"index.ts"}',
+      'packages/real/index.ts': 'export const r = 1;\n',
+    });
+    symlinkSync(join(root, 'packages/real'), join(root, 'packages/shadow'));
+    expect(scanRepo(root, ['packages/real/index.ts']).workspaces).toEqual([{ dir: 'packages/real', name: 'real' }]);
+  });
+
   it('reads the packages-object form, pnpm yaml, exclusions and exact dirs', async () => {
     const objectForm = await makeRepo({
       'package.json': '{"workspaces":{"packages":["pkg/*"]}}',
@@ -259,14 +377,17 @@ describe('scanRepo workspaces', () => {
     expect(scanRepo(objectForm, ['pkg/a/index.ts']).workspaces).toEqual([{ dir: 'pkg/a', name: 'a' }]);
     const pnpm = await makeRepo({
       'package.json': '{"name":"root"}',
-      'pnpm-workspace.yaml': "packages:\n  - 'libs/*'\n  - solo\nother: 1\n",
+      'pnpm-workspace.yaml': "notpackages:\npackages:\n  - solo\n  - 'libs/*'\n  - \"quoted\"\n",
       'libs/a/package.json': '{"name":"lib-a","main":"index.ts"}',
       'libs/a/index.ts': 'export const la = 1;\n',
       'solo/package.json': '{"name":"solo","main":"index.ts"}',
       'solo/index.ts': 'export const so = 1;\n',
+      'quoted/package.json': '{"name":"quoted-pkg","main":"index.ts"}',
+      'quoted/index.ts': 'export const q = 1;\n',
     });
-    expect(scanRepo(pnpm, ['libs/a/index.ts', 'solo/index.ts']).workspaces).toEqual([
+    expect(scanRepo(pnpm, ['libs/a/index.ts', 'solo/index.ts', 'quoted/index.ts']).workspaces).toEqual([
       { dir: 'libs/a', name: 'lib-a' },
+      { dir: 'quoted', name: 'quoted-pkg' },
       { dir: 'solo', name: 'solo' },
     ]);
     const excluding = await makeRepo({
@@ -286,6 +407,8 @@ describe('scanRepo workspaces', () => {
       'packages/noname/package.json': '{"version":"1.0.0"}',
       'packages/badname/package.json': '{"name":5}',
       'packages/badjson/package.json': '{nope',
+      'packages/emptyname/package.json': '{"name":""}',
+      'packages/nullpkg/package.json': 'null',
       'packages/good/package.json': '{"name":"good","main":"index.ts"}',
       'packages/good/index.ts': 'export const g = 1;\n',
       'packages/nopkg/index.ts': 'export const n = 1;\n',
@@ -300,7 +423,11 @@ describe('scanRepo workspaces', () => {
     expect(scanRepo(numberForm, []).workspaces).toEqual([]);
     const packagesNotArray = await makeRepo({ 'package.json': '{"workspaces":{"packages":"x/*"}}' });
     expect(scanRepo(packagesNotArray, []).workspaces).toEqual([]);
-    const pnpmNoPackages = await makeRepo({ 'package.json': '{"name":"r"}', 'pnpm-workspace.yaml': 'other:\n  - x\n' });
+    const pnpmNoPackages = await makeRepo({
+      'package.json': '{"name":"r"}',
+      'pnpm-workspace.yaml': '- solo\nother:\n  - solo\n',
+      'solo/package.json': '{"name":"solo","main":"index.ts"}',
+    });
     expect(scanRepo(pnpmNoPackages, []).workspaces).toEqual([]);
     const noManifest = await makeRepo({ 'src/x.ts': 'export const x = 1;\n' });
     expect(scanRepo(noManifest, ['src/x.ts']).workspaces).toEqual([]);
@@ -333,6 +460,14 @@ describe('scanRepo workspaces', () => {
       'pkgs/expnum/src/v.ts': 'export const e11 = 1;\n',
       'pkgs/goneentry/package.json': '{"name":"goneentry","main":"gone.js"}',
       'pkgs/goneentry/src/y.ts': 'export const e9 = 1;\n',
+      'pkgs/emptyentry/package.json': '{"name":"emptyentry","main":""}',
+      'pkgs/emptyentry/index.ts': 'export const e12 = 1;\n',
+      'pkgs/emptyexports/package.json': '{"name":"emptyexports","exports":{}}',
+      'pkgs/emptyexports/src/z.ts': 'export const e13 = 1;\n',
+      'pkgs/reqcond/package.json': '{"name":"reqcond","exports":{".":{"require":"./req.ts"}}}',
+      'pkgs/reqcond/req.ts': 'export const e14 = 1;\n',
+      'pkgs/typescond/package.json': '{"name":"typescond","exports":{".":{"types":"./typed.d.ts"}}}',
+      'pkgs/typescond/typed.d.ts': 'export type T15 = number;\n',
       'app.ts': [
         "import { e1 } from 'expstr';",
         "import { e2 } from 'expobj';",
@@ -345,7 +480,11 @@ describe('scanRepo workspaces', () => {
         "import { e9 } from 'goneentry';",
         "import { e10 } from 'allexp';",
         "import { e11 } from 'expnum';",
-        'export const all = [e1, e2, e3, e4, e5, e6, e8, e9, e10, e11];',
+        "import { e12 } from 'emptyentry';",
+        "import { e13 } from 'emptyexports';",
+        "import { e14 } from 'reqcond';",
+        "import { T15 } from 'typescond';",
+        'export const all = [e1, e2, e3, e4, e5, e6, e8, e9, e10, e11, e12, e13, e14];',
       ].join('\n'),
     });
     const scan = scanRepo(root, [
@@ -363,6 +502,8 @@ describe('scanRepo workspaces', () => {
     ]);
     expect(edgeList(root, scan)).toEqual([
       'app.ts>pkgs/allexp:runtime',
+      'app.ts>pkgs/emptyentry:runtime',
+      'app.ts>pkgs/emptyexports:runtime',
       'app.ts>pkgs/expdot/dot.ts:runtime',
       'app.ts>pkgs/expnonstr/d.ts-entry.ts:runtime',
       'app.ts>pkgs/expnum:runtime',
@@ -372,7 +513,39 @@ describe('scanRepo workspaces', () => {
       'app.ts>pkgs/mainidx/lib/index.ts:runtime',
       'app.ts>pkgs/mod/esm/main.ts:runtime',
       'app.ts>pkgs/noentry:runtime',
+      'app.ts>pkgs/reqcond/req.ts:runtime',
+      'app.ts>pkgs/typescond/typed.d.ts:runtime',
       'app.ts>pkgs/typesonly/types.d.ts:runtime',
+    ]);
+  });
+
+  it('resolves extensionless entries through every supported extension', async () => {
+    const cases = [
+      ['xtsx', '.tsx'],
+      ['xjs', '.js'],
+      ['xjsx', '.jsx'],
+      ['xmts', '.mts'],
+      ['xcts', '.cts'],
+      ['xmjs', '.mjs'],
+      ['xcjs', '.cjs'],
+    ] as const;
+    const files: Record<string, string> = {
+      'package.json': '{"workspaces":["pkgs/*"]}',
+      'app.ts': [...cases.map(([name], i) => `import { v${i} } from '${name}';`), 'export const all = 1;'].join('\n'),
+    };
+    for (const [name, ext] of cases) {
+      files[`pkgs/${name}/package.json`] = JSON.stringify({ name, main: 'entry' });
+      files[`pkgs/${name}/entry${ext}`] = 'export const v = 1;\n';
+    }
+    const root = await makeRepo(files);
+    expect(edgeList(root, scanRepo(root, ['app.ts']))).toEqual([
+      'app.ts>pkgs/xcjs/entry.cjs:runtime',
+      'app.ts>pkgs/xcts/entry.cts:runtime',
+      'app.ts>pkgs/xjs/entry.js:runtime',
+      'app.ts>pkgs/xjsx/entry.jsx:runtime',
+      'app.ts>pkgs/xmjs/entry.mjs:runtime',
+      'app.ts>pkgs/xmts/entry.mts:runtime',
+      'app.ts>pkgs/xtsx/entry.tsx:runtime',
     ]);
   });
 });

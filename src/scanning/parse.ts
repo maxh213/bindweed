@@ -1,28 +1,15 @@
-import { extname } from 'node:path';
 import * as ts from 'typescript';
 
 export type RawImport = { specifier: string; typeOnly: boolean };
 
-const SCRIPT_KINDS: Record<string, ts.ScriptKind> = {
-  '.tsx': ts.ScriptKind.TSX,
-  '.jsx': ts.ScriptKind.JSX,
-  '.js': ts.ScriptKind.JS,
-  '.mjs': ts.ScriptKind.JS,
-  '.cjs': ts.ScriptKind.JS,
-};
-
-function scriptKindFor(path: string): ts.ScriptKind {
-  return SCRIPT_KINDS[extname(path)] ?? ts.ScriptKind.TS;
-}
-
-function namedImportsTypeOnly(bindings: ts.NamedImportBindings): boolean {
-  if (ts.isNamespaceImport(bindings)) return false;
-  return bindings.elements.length > 0 && bindings.elements.every(element => element.isTypeOnly);
-}
-
 function bindingsTypeOnly(clause: ts.ImportClause): boolean {
-  if (clause.name !== undefined || clause.namedBindings === undefined) return false;
-  return namedImportsTypeOnly(clause.namedBindings);
+  const bindings = clause.namedBindings as ts.NamedImportBindings;
+  return (
+    clause.name === undefined &&
+    ts.isNamedImports(bindings) &&
+    bindings.elements.length > 0 &&
+    bindings.elements.every(element => element.isTypeOnly)
+  );
 }
 
 function isTypeOnlyImport(node: ts.ImportDeclaration): boolean {
@@ -32,8 +19,7 @@ function isTypeOnlyImport(node: ts.ImportDeclaration): boolean {
 }
 
 function namedExportsTypeOnly(clause: ts.NamedExportBindings | undefined): boolean {
-  if (clause === undefined || !ts.isNamedExports(clause)) return false;
-  return clause.elements.length > 0 && clause.elements.every(element => element.isTypeOnly);
+  return clause?.kind === ts.SyntaxKind.NamedExports && clause.elements.length > 0 && clause.elements.every(element => element.isTypeOnly);
 }
 
 function isTypeOnlyExport(node: ts.ExportDeclaration): boolean {
@@ -41,8 +27,10 @@ function isTypeOnlyExport(node: ts.ExportDeclaration): boolean {
 }
 
 function stringArgOf(node: ts.CallExpression): string | undefined {
-  const arg = node.arguments[0];
-  if (node.arguments.length !== 1 || arg === undefined || !ts.isStringLiteral(arg)) return undefined;
+  const args = node.arguments;
+  if (args.length !== 1) return undefined;
+  const arg = args[0];
+  if (!ts.isStringLiteral(arg)) return undefined;
   return arg.text;
 }
 
@@ -92,7 +80,7 @@ function collectFrom(node: ts.Node, found: RawImport[]): void {
 }
 
 export function importsOfText(path: string, text: string): RawImport[] {
-  const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, scriptKindFor(path));
+  const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest);
   const found: RawImport[] = [];
   collectFrom(source, found);
   return found;

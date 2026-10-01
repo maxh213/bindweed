@@ -53,11 +53,7 @@ function entryPointOf(manifest: Record<string, unknown>): string | undefined {
 }
 
 function isFile(path: string): boolean {
-  try {
-    return statSync(path).isFile();
-  } catch {
-    return false;
-  }
+  return existsSync(path) && statSync(path).isFile();
 }
 
 function withExtension(base: string): string | undefined {
@@ -80,55 +76,46 @@ function resolveAsFile(base: string): string | undefined {
   return withExtension(base) ?? indexFile(base);
 }
 
-export function resolvedWorkspace(root: string, ws: WorkspaceInfo): { kind: 'file' | 'dir'; path: string } {
+export function resolvedWorkspace(root: string, ws: WorkspaceInfo): { path: string } {
   const entry = entryPointOf(ws.manifest);
-  if (entry === undefined) return { kind: 'dir', path: ws.dir };
+  if (entry === undefined) return { path: ws.dir };
   const file = resolveAsFile(join(root, ws.dir, entry));
-  return file === undefined ? { kind: 'dir', path: ws.dir } : { kind: 'file', path: repoPath(root, file) };
+  return { path: file === undefined ? ws.dir : repoPath(root, file) };
 }
 
 function packagesField(ws: unknown): string[] {
-  if (!isRecord(ws)) return [];
-  return isStringArray(ws.packages) ? ws.packages : [];
+  if (!isRecord(ws)) return new Array<string>();
+  return isStringArray(ws.packages) ? ws.packages : new Array<string>();
 }
 
-function pkgPatterns(manifest: Record<string, unknown> | undefined): string[] {
-  if (manifest === undefined) return [];
+function pkgPatterns(manifest: Record<string, unknown>): string[] {
   if (isStringArray(manifest.workspaces)) return manifest.workspaces;
   return packagesField(manifest.workspaces);
 }
 
-function readJsonObject(path: string): Record<string, unknown> | undefined {
+function readJsonObject(path: string): Record<string, unknown> {
+  if (!isFile(path)) return {};
+  const text = readFileSync(path).toString();
   try {
-    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
-    return isRecord(parsed) ? parsed : undefined;
+    const parsed: unknown = JSON.parse(text);
+    return isRecord(parsed) ? parsed : {};
   } catch {
-    return undefined;
-  }
-}
-
-function readTextIfExists(path: string): string | undefined {
-  try {
-    return readFileSync(path, 'utf8');
-  } catch {
-    return undefined;
+    return {};
   }
 }
 
 function unquote(value: string): string {
   const first = value.charAt(0);
-  const quoted = (first === "'" || first === '"') && value.endsWith(first);
-  return quoted ? value.slice(1, -1) : value;
+  return first === "'" || first === '"' ? value.slice(1, -1) : value;
 }
 
 function yamlListItem(line: string): string | undefined {
   const trimmed = line.trim();
-  if (line.trimStart() !== line && trimmed.startsWith('-')) return unquote(trimmed.slice(1).trim());
-  return undefined;
+  return trimmed.startsWith('-') ? unquote(trimmed.slice(1).trim()) : undefined;
 }
 
 function takeItems(lines: string[]): string[] {
-  const items: string[] = [];
+  const items = new Array<string>();
   for (const line of lines) {
     const item = yamlListItem(line);
     if (item === undefined) break;
@@ -140,14 +127,14 @@ function takeItems(lines: string[]): string[] {
 function yamlListItems(text: string, key: string): string[] {
   const lines = text.split('\n');
   const start = lines.findIndex(line => line.startsWith(`${key}:`));
-  if (start === -1) return [];
+  if (start === -1) return new Array<string>();
   return takeItems(lines.slice(start + 1));
 }
 
 function pnpmPatterns(root: string): string[] {
-  const text = readTextIfExists(join(root, 'pnpm-workspace.yaml'));
-  if (text === undefined) return [];
-  return yamlListItems(text, 'packages');
+  const path = join(root, 'pnpm-workspace.yaml');
+  if (!existsSync(path)) return new Array<string>();
+  return yamlListItems(readFileSync(path).toString(), 'packages');
 }
 
 function workspacePatterns(root: string): string[] {
@@ -157,43 +144,41 @@ function workspacePatterns(root: string): string[] {
 }
 
 function isDirectory(path: string): boolean {
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
+  return existsSync(path) && statSync(path).isDirectory();
 }
 
-function hasManifest(root: string, dir: string): boolean {
-  return existsSync(join(root, dir, 'package.json'));
-}
-
-function childDirsWithManifest(root: string, parent: string): string[] {
+function childDirs(root: string, parent: string): string[] {
   const full = join(root, parent);
-  if (!isDirectory(full)) return [];
+  if (!isDirectory(full)) return new Array<string>();
   return readdirSync(full, { withFileTypes: true })
     .filter(entry => entry.isDirectory())
-    .map(entry => join(parent, entry.name))
-    .filter(dir => hasManifest(root, dir));
+    .map(entry => join(parent, entry.name));
 }
 
 function expandPattern(root: string, pattern: string): string[] {
-  if (pattern.endsWith('/*')) return childDirsWithManifest(root, pattern.slice(0, -2));
-  return hasManifest(root, pattern) ? [pattern] : [];
+  if (pattern.endsWith('/*')) return childDirs(root, pattern.slice(0, -2));
+  return [pattern];
+}
+
+function splitPattern(root: string, pattern: string): { dirs: string[]; negated: boolean } {
+  const negated = pattern.startsWith('!');
+  const base = negated ? pattern.slice(1) : pattern;
+  return { dirs: expandPattern(root, base), negated };
 }
 
 function patternsToDirs(root: string, patterns: string[]): string[] {
-  const include = patterns.filter(pattern => !pattern.startsWith('!'));
-  const excluded = new Set(
-    patterns.filter(pattern => pattern.startsWith('!')).flatMap(pattern => expandPattern(root, pattern.slice(1))),
-  );
-  const dirs = include.flatMap(pattern => expandPattern(root, pattern)).filter(dir => !excluded.has(dir));
-  return [...new Set(dirs)].sort((a, b) => a.localeCompare(b));
+  const include = new Set<string>();
+  const excluded = new Set<string>();
+  for (const pattern of patterns) {
+    const part = splitPattern(root, pattern);
+    const target = part.negated ? excluded : include;
+    for (const dir of part.dirs) target.add(dir);
+  }
+  return [...include].filter(dir => !excluded.has(dir)).sort((a, b) => a.localeCompare(b));
 }
 
 function workspaceInfo(root: string, dir: string): WorkspaceInfo | undefined {
   const manifest = readJsonObject(join(root, dir, 'package.json'));
-  if (manifest === undefined) return undefined;
   const name = manifest.name;
   return isString(name) && name !== '' ? { dir, name, manifest } : undefined;
 }

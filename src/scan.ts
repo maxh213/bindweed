@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import type { ExternalRef, ScanEdge, ScanResult, ScannedFile, WorkspacePackage } from './domain/scan.ts';
@@ -26,7 +26,7 @@ function cachePath(root: string): string {
 
 function readCache(root: string): Cache {
   try {
-    const parsed = cacheSchema.safeParse(JSON.parse(readFileSync(cachePath(root), 'utf8')));
+    const parsed = cacheSchema.safeParse(JSON.parse(readFileSync(cachePath(root)).toString()));
     return parsed.success ? parsed.data.files : {};
   } catch {
     return {};
@@ -39,12 +39,10 @@ function writeCache(root: string, files: Cache): void {
 }
 
 function stampOf(root: string, path: string): { mtimeMs: number; size: number } | undefined {
-  try {
-    const stat = statSync(join(root, path));
-    return { mtimeMs: stat.mtimeMs, size: stat.size };
-  } catch {
-    return undefined;
-  }
+  const full = join(root, path);
+  if (!existsSync(full)) return undefined;
+  const stat = statSync(full);
+  return { mtimeMs: stat.mtimeMs, size: stat.size };
 }
 
 function importsFor(root: string, path: string, stamp: { mtimeMs: number; size: number }, cache: Cache): RawImport[] {
@@ -56,8 +54,8 @@ function importsFor(root: string, path: string, stamp: { mtimeMs: number; size: 
 function resolveImport(path: string, imp: RawImport, resolve: (specifier: string, file: string) => Target, root: string, out: ScanOut): void {
   const target = resolve(imp.specifier, join(root, path));
   const kind = imp.typeOnly ? 'type' : 'runtime';
-  if (target.kind === 'external') {
-    out.externals.push({ from: path, name: target.name, kind });
+  if ('external' in target) {
+    out.externals.push({ from: path, name: target.external, kind });
     return;
   }
   out.edges.push({ from: path, to: target.path, kind });

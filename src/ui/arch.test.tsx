@@ -1,11 +1,11 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { JSDOM } from 'jsdom';
 import { createElement, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@xyflow/react', async () => {
-  const { createElement: ce } = await import('react');
+  const { createElement: ce, useState } = await import('react');
 
   type FakeNode = {
     id: string;
@@ -14,19 +14,23 @@ vi.mock('@xyflow/react', async () => {
     data: Record<string, unknown>;
     draggable?: boolean;
   };
-  type FakeEdge = { id: string; source: string; target: string; type: string; data?: Record<string, unknown> };
+  type FakeEdge = { id: string; source: string; target: string; type: string; data?: Record<string, unknown>; markerEnd?: unknown };
   type FakeFlowProps = {
     nodes: FakeNode[];
     edges: FakeEdge[];
     nodeTypes: Record<string, (props: never) => ReactElement | null>;
     edgeTypes: Record<string, (props: never) => ReactElement | null>;
     nodesDraggable?: boolean;
+    nodesConnectable?: boolean;
+    edgesFocusable?: boolean;
     fitView?: boolean;
     panOnDrag?: boolean;
     zoomOnScroll?: boolean;
     zoomOnDoubleClick?: boolean;
     onNodeDoubleClick?: (event: unknown, node: FakeNode) => void;
   };
+
+  let flowMounts = 0;
 
   function fakeNodeView(props: FakeFlowProps, node: FakeNode) {
     const Box = props.nodeTypes[node.type];
@@ -59,21 +63,25 @@ vi.mock('@xyflow/react', async () => {
       targetY: 140,
       sourcePosition: 'bottom',
       targetPosition: 'top',
-      markerEnd: 'url(#arrow)',
+      markerEnd: edge.markerEnd,
     });
   }
 
   function ReactFlow(props: FakeFlowProps) {
+    const [stamp] = useState(() => ++flowMounts);
     const probe = fakeEdgeView(props, { id: 'probe', source: '', target: '', type: 'arrow' });
     return ce(
       'div',
       {
         className: 'fake-flow',
         'data-draggable-nodes': String(props.nodesDraggable),
+        'data-nodes-connectable': String(props.nodesConnectable),
+        'data-edges-focusable': String(props.edgesFocusable),
         'data-fit-view': String(props.fitView),
         'data-pan-on-drag': String(props.panOnDrag),
         'data-zoom-on-scroll': String(props.zoomOnScroll),
         'data-zoom-on-double-click': String(props.zoomOnDoubleClick),
+        'data-mount-stamp': String(stamp),
       },
       props.nodes.map(node => fakeNodeView(props, node)),
       ce('svg', { className: 'fake-edges' }, ...props.edges.map(edge => fakeEdgeView(props, edge)), probe),
@@ -82,7 +90,15 @@ vi.mock('@xyflow/react', async () => {
 
   return {
     ReactFlow,
-    BaseEdge: (props: { id: string; path: string }) => ce('path', { className: 'fake-edge-path', 'data-edge': props.id, d: props.path }),
+    BaseEdge: (props: { id: string; path: string; style?: { stroke?: string; strokeWidth?: number }; markerEnd?: unknown }) =>
+      ce('path', {
+        className: 'fake-edge-path',
+        'data-edge': props.id,
+        d: props.path,
+        'data-stroke': props.style?.stroke,
+        'data-stroke-width': String(props.style?.strokeWidth),
+        'data-marker': JSON.stringify(props.markerEnd),
+      }),
     Handle: () => null,
     Position: { Top: 'top', Bottom: 'bottom' },
     MarkerType: { ArrowClosed: 'arrowclosed', Arrow: 'arrow' },
@@ -155,7 +171,7 @@ const GRAPHS: Record<string, unknown> = {
     ],
     edges: [
       { from: 'src/app', to: 'src/domain', runtime: 0, type: 1, cycle: false },
-      { from: 'src/app', to: 'src/infra', runtime: 2, type: 0, cycle: false },
+      { from: 'src/app', to: 'src/infra', runtime: 1, type: 1, cycle: false },
       { from: 'src/infra', to: 'src/domain', runtime: 1, type: 0, cycle: false },
     ],
   },
@@ -226,6 +242,16 @@ function newQueryClient(): QueryClient {
   return new QueryClient({ defaultOptions: { queries: { retry: false, networkMode: 'always' } } });
 }
 
+function TreeProbe(props: Readonly<{ token: string; fetcher: typeof fetch }>) {
+  useQuery({ queryKey: ['tree', props.token] as const, queryFn: () => props.fetcher('/api/tree') });
+  return createElement('div', { className: 'tree-probe' });
+}
+
+function FileProbe(props: Readonly<{ token: string; fetcher: typeof fetch }>) {
+  useQuery({ queryKey: ['file', props.token, 'src/app/a.ts'] as const, queryFn: () => props.fetcher('/api/file?path=src%2Fapp%2Fa.ts') });
+  return createElement('div', { className: 'file-probe' });
+}
+
 function nodeEls(): HTMLElement[] {
   return Array.from(document.querySelectorAll('.fake-node'));
 }
@@ -236,6 +262,12 @@ function attrOf(selector: string, attr: string): string | null {
 
 function boxCycleFlag(el: Element): string | null {
   return el.querySelector('.box')?.getAttribute('data-cycle') ?? null;
+}
+
+function boxClasses(id: string): DOMTokenList {
+  const el = nodeById(id).querySelector('.box');
+  if (el === null) throw new Error(`missing box ${id}`);
+  return el.classList;
 }
 
 function titleTextOf(el: Element): string | null {
@@ -260,6 +292,16 @@ function edgeBetween(from: string, to: string): HTMLElement {
   const el = edgeEls().find(edge => edge.dataset.from === from && edge.dataset.to === to);
   if (el === undefined) throw new Error(`missing edge ${from} -> ${to}`);
   return el;
+}
+
+function pathOf(from: string, to: string): HTMLElement {
+  const el = document.querySelector(`.fake-edge-path[data-edge="${from}->${to}"]`);
+  if (el === null) throw new Error(`missing path ${from} -> ${to}`);
+  return el as HTMLElement;
+}
+
+function markerOf(from: string, to: string): unknown {
+  return JSON.parse(pathOf(from, to).getAttribute('data-marker') ?? 'null');
 }
 
 function dblclick(el: HTMLElement): void {
@@ -330,11 +372,15 @@ describe('ArchView with a fake flow', () => {
     await showArchView('', GRAPHS, noopDir, noopPath);
     expect(nodeEls().map(node => node.textContent)).toEqual(['src4 files']);
     expect(nodeById('src').dataset).toMatchObject({ x: '0', y: '0', draggable: 'false' });
-    expect(nodeById('src').querySelector('.box')?.classList.contains('nodrag')).toBe(true);
-    expect(nodeById('src').querySelector('.box')?.classList.contains('nopan')).toBe(true);
+    expect(boxClasses('src').contains('nodrag')).toBe(true);
+    expect(boxClasses('src').contains('nopan')).toBe(true);
+    expect(boxClasses('src').contains('package')).toBe(true);
+    expect(boxClasses('src').contains('file')).toBe(false);
     expect(boxCycleFlag(nodeById('src'))).toBe('false');
     expect(edgeEls()).toEqual([]);
     expect(attrOf('.fake-flow', 'data-draggable-nodes')).toBe('false');
+    expect(attrOf('.fake-flow', 'data-nodes-connectable')).toBe('false');
+    expect(attrOf('.fake-flow', 'data-edges-focusable')).toBe('false');
     expect(attrOf('.fake-flow', 'data-fit-view')).toBe('true');
     expect(attrOf('.fake-flow', 'data-pan-on-drag')).toBe('undefined');
     expect(attrOf('.fake-flow', 'data-zoom-on-scroll')).toBe('undefined');
@@ -368,14 +414,26 @@ describe('ArchView with a fake flow', () => {
     expect(nodeById('src/domain').dataset.y).toBe('280');
     expect(nodeById('src/app').textContent).toBe('app2 files');
     expect(nodeById('src/infra').textContent).toBe('infra1 file');
+    expect(document.querySelectorAll('.box-count')).toHaveLength(3);
     const labelled = edgeBetween('src/app', 'src/infra');
     expect(labelled.getAttribute('data-cycle')).toBe('false');
+    expect(labelled.classList.contains('arrow')).toBe(true);
+    expect(labelled.classList.contains('cycle')).toBe(false);
     expect(labelTextOf(labelled)).toBe('2');
     expect(titleTextOf(labelled)).toBeNull();
     expect(labelTextOf(edgeBetween('src/app', 'src/domain'))).toBeNull();
     expect(labelTextOf(edgeBetween('src/infra', 'src/domain'))).toBeNull();
+    expect(edgeEls().map(edge => `${edge.dataset.from}->${edge.dataset.to}`).sort()).toEqual([
+      'src/app->src/domain',
+      'src/app->src/infra',
+      'src/infra->src/domain',
+    ]);
+    expect(pathOf('src/app', 'src/infra').getAttribute('data-stroke')).toBe('#64748b');
+    expect(pathOf('src/app', 'src/infra').getAttribute('data-stroke-width')).toBe('1.5');
+    expect(markerOf('src/app', 'src/infra')).toMatchObject({ type: 'arrowclosed', width: 14, height: 14, color: '#64748b' });
     expect(document.querySelector('nav[aria-label="breadcrumb"]')?.textContent).toBe('layered / src');
     for (const edge of edgeEls()) expect(edge.getAttribute('data-cycle')).toBe('false');
+    for (const node of nodeEls()) expect(boxCycleFlag(node)).toBe('false');
   });
 
   it('draws the cycle in red with tooltips', async () => {
@@ -384,8 +442,16 @@ describe('ArchView with a fake flow', () => {
     expect(nodeById('src/app/b.ts').dataset.x).toBe('260');
     for (const node of nodeEls()) expect(boxCycleFlag(node)).toBe('true');
     expect(nodeEls().map(node => node.textContent)).toEqual(['a.ts', 'b.ts']);
+    expect(document.querySelectorAll('.box-count')).toHaveLength(0);
+    expect(boxClasses('src/app/a.ts').contains('file')).toBe(true);
+    expect(boxClasses('src/app/a.ts').contains('package')).toBe(false);
     const ab = edgeBetween('src/app/a.ts', 'src/app/b.ts');
     expect(ab.getAttribute('data-cycle')).toBe('true');
+    expect(ab.classList.contains('cycle')).toBe(true);
+    expect(ab.classList.contains('arrow')).toBe(true);
+    expect(pathOf('src/app/a.ts', 'src/app/b.ts').getAttribute('data-stroke')).toBe('#dc2626');
+    expect(pathOf('src/app/a.ts', 'src/app/b.ts').getAttribute('data-stroke-width')).toBe('2');
+    expect(markerOf('src/app/a.ts', 'src/app/b.ts')).toMatchObject({ width: 14, height: 14, color: '#dc2626' });
     expect(titleTextOf(ab)).toBe('a.ts → b.ts → a.ts');
     expect(labelTextOf(ab)).toBeNull();
     expect(titleTextOf(edgeBetween('src/app/b.ts', 'src/app/a.ts'))).toBe('b.ts → a.ts → b.ts');
@@ -425,7 +491,23 @@ describe('ArchView with a fake flow', () => {
 
   it('rescans and redraws with the new arrow', async () => {
     const graphs: Record<string, unknown> = { ...GRAPHS };
-    const calls = await showArchView('src', graphs, noopDir, noopPath);
+    const calls: Call[] = [];
+    const fetcher = archFetcher(calls, graphs);
+    const { ArchView } = await import('./ArchView.tsx');
+    const { waitFor } = await import('@testing-library/dom');
+    await show(
+      createElement(
+        QueryClientProvider,
+        { client: newQueryClient() },
+        createElement(ArchView, { token: 'tok', at: 'src', fetcher, onDrill: noopDir, onOpenFile: noopPath }),
+        createElement(TreeProbe, { token: 'tok', fetcher }),
+        createElement(FileProbe, { token: 'tok', fetcher }),
+      ),
+    );
+    await waitFor(() => {
+      expect(document.querySelector('.fake-flow')).not.toBeNull();
+    });
+    const stamp = Number(attrOf('.fake-flow', 'data-mount-stamp'));
     graphs.src = {
       ...(GRAPHS.src as Record<string, unknown>),
       nodes: [
@@ -437,7 +519,6 @@ describe('ArchView with a fake flow', () => {
       edges: [{ from: 'src/main.ts', to: 'src/app', runtime: 1, type: 0, cycle: false }, ...(GRAPHS.src as { edges: unknown[] }).edges],
     };
     const { act } = await import('react');
-    const { waitFor } = await import('@testing-library/dom');
     const rescanButton = Array.from(document.querySelectorAll('button')).find(el => el.textContent === 'Rescan');
     if (rescanButton === undefined) throw new Error('missing Rescan');
     await act(async () => {
@@ -446,9 +527,14 @@ describe('ArchView with a fake flow', () => {
     await waitFor(() => {
       expect(nodeById('src/main.ts').dataset.y).toBe('0');
     });
+    expect(Number(attrOf('.fake-flow', 'data-mount-stamp'))).toBeGreaterThan(stamp);
     expect(nodeById('src/app').dataset.y).toBe('140');
     expect(edgeBetween('src/main.ts', 'src/app').getAttribute('data-cycle')).toBe('false');
     expect(calls.map(call => `${call.method} ${call.url}`)).toContain('POST /api/rescan');
+    await waitFor(() => {
+      expect(calls.filter(call => call.url === '/api/tree')).toHaveLength(2);
+    });
+    expect(calls.filter(call => call.url === '/api/file?path=src%2Fapp%2Fa.ts')).toHaveLength(1);
   });
 
   it('shows loading then the 404 message', async () => {
@@ -469,6 +555,7 @@ describe('ArchView with a fake flow', () => {
       expect(document.querySelector('.arch-canvas')?.textContent).toBe('no such directory');
     });
     expect(document.querySelector('nav[aria-label="breadcrumb"]')?.textContent).toBe('');
+    expect(document.querySelectorAll('nav[aria-label="breadcrumb"] button')).toHaveLength(0);
   });
 });
 
@@ -497,7 +584,7 @@ describe('App with the Architecture tab', () => {
     root = createRoot(el);
   }
 
-  async function renderApp(calls: Call[], graphs = GRAPHS): Promise<void> {
+  async function renderApp(calls: Call[], graphs = GRAPHS, events: EventTarget = window): Promise<void> {
     const { App } = await import('./App.tsx');
     const { act } = await import('react');
     await act(async () => {
@@ -507,10 +594,20 @@ describe('App with the Architecture tab', () => {
           location: window.location,
           historyApi: window.history,
           fetcher: archFetcher(calls, graphs),
-          events: window,
+          events,
         }),
       );
     });
+  }
+
+  function recordingEvents(): { target: EventTarget; added: string[]; removed: string[] } {
+    const added: string[] = [];
+    const removed: string[] = [];
+    const target = {
+      addEventListener: (type: string) => added.push(type),
+      removeEventListener: (type: string) => removed.push(type),
+    } as unknown as EventTarget;
+    return { target, added, removed };
   }
 
   async function waitForText(text: string): Promise<void> {
@@ -564,6 +661,7 @@ describe('App with the Architecture tab', () => {
     });
     await waitForText('app2 files');
     expect(window.location.hash).toBe('#at=src');
+    expect(tabByName('Architecture').getAttribute('aria-selected')).toBe('true');
     expect(document.querySelector('nav[aria-label="breadcrumb"]')?.textContent).toBe('layered / src');
     expect(Number(nodeById('src/app').dataset.y)).toBeLessThan(Number(nodeById('src/infra').dataset.y));
     expect(Number(nodeById('src/infra').dataset.y)).toBeLessThan(Number(nodeById('src/domain').dataset.y));
@@ -642,6 +740,46 @@ describe('App with the Architecture tab', () => {
     expect(window.location.hash).toBe('#file=src/app/a.ts');
     expect(tabByName('Files').getAttribute('aria-selected')).toBe('true');
     expect(document.querySelector('main header')?.textContent).toBe('src/app/a.ts');
+  });
+
+  it('attaches the popstate listener on the injected target and removes it on unmount', async () => {
+    const events = recordingEvents();
+    const calls: Call[] = [];
+    await renderApp(calls, GRAPHS, events.target);
+    await waitForText('tsconfig.json');
+    expect(events.added).toEqual(['popstate']);
+    const { act } = await import('react');
+    await act(async () => {
+      root.unmount();
+    });
+    expect(events.removed).toEqual(['popstate']);
+    await remount('http://127.0.0.1:4700/?token=tok');
+  });
+
+  it('follows a replaced location object on the next popstate', async () => {
+    const calls: Call[] = [];
+    await renderApp(calls);
+    await waitForText('tsconfig.json');
+    const { act } = await import('react');
+    const { App } = await import('./App.tsx');
+    const otherLocation = { hash: '#at=src', pathname: '/' } as unknown as Location;
+    await act(async () => {
+      root.render(
+        createElement(App, {
+          token: 'tok',
+          location: otherLocation,
+          historyApi: window.history,
+          fetcher: archFetcher(calls, GRAPHS),
+          events: window,
+        }),
+      );
+    });
+    await act(async () => {
+      window.dispatchEvent(new window.Event('popstate'));
+    });
+    await waitForText('app2 files');
+    expect(tabByName('Architecture').getAttribute('aria-selected')).toBe('true');
+    expect(document.querySelector('nav[aria-label="breadcrumb"]')?.textContent).toBe('layered / src');
   });
 
   it('opens a file in the Files tab on double-click', async () => {

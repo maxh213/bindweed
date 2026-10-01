@@ -39,8 +39,11 @@ describe('isTestPath', () => {
     expect(isTestPath('src/test/a.ts')).toBe(true);
     expect(isTestPath('src/tests/a.ts')).toBe(true);
     expect(isTestPath('src/e2e/a.ts')).toBe(true);
+    expect(isTestPath('test/a.ts')).toBe(true);
+    expect(isTestPath('tests')).toBe(true);
     expect(isTestPath('src/app/a.ts')).toBe(false);
     expect(isTestPath('src/testing/a.ts')).toBe(false);
+    expect(isTestPath('src/app/a.tests.ts')).toBe(false);
   });
 });
 
@@ -97,6 +100,22 @@ describe('graphView over the layered fixture shape', () => {
     expect(graphView(LAYERED, 'src/', 'layered')).toEqual(graphView(LAYERED, 'src', 'layered'));
   });
 
+  it('treats a path of slashes as the root view', () => {
+    expect(graphView(LAYERED, '///', 'layered')).toEqual(graphView(LAYERED, '', 'layered'));
+  });
+
+  it('drops a self edge', () => {
+    const scan = scanOf(['src/a.ts'], [['src/a.ts', 'src/a.ts']]);
+    expect(view(scan, '').edges).toEqual([]);
+  });
+
+  it('drops an edge whose source lies outside the view', () => {
+    const scan = scanOf(['main.ts', 'src/app/a.ts'], [['main.ts', 'src/app/a.ts']]);
+    const found = view(scan, 'src');
+    expect(found.nodes.map(node => node.id)).toEqual(['src/app']);
+    expect(found.edges).toEqual([]);
+  });
+
   it('rejects directories without scanned files, files, and escaping paths', () => {
     expect(graphView(LAYERED, 'notes', 'layered')).toBeNull();
     expect(graphView(LAYERED, 'tsconfig.json', 'layered')).toBeNull();
@@ -109,15 +128,19 @@ describe('graphView over the layered fixture shape', () => {
 
   it('keeps test files and their edges out of every view', () => {
     const withTest = scanOf(
-      [...LAYERED.files.map(file => file.path), 'src/app/a.test.ts'],
+      [...LAYERED.files.map(file => file.path), 'src/app/a.test.ts', 'vendor/x.ts'],
       [
         ...LAYERED.edges.map(edge => [edge.from, edge.to, edge.kind] as RawSpec),
         ['src/app/a.test.ts', 'src/app/a.ts'],
         ['src/app/a.ts', 'src/app/a.test.ts'],
+        ['src/app/a.test.ts', 'vendor/x.ts'],
+        ['vendor/x.ts', 'src/app/a.test.ts'],
       ],
     );
     expect(graphView(withTest, 'src/app', 'layered')).toEqual(graphView(LAYERED, 'src/app', 'layered'));
-    expect(withTest.files).toHaveLength(5);
+    expect(view(withTest, '').nodes.map(node => node.id)).toEqual(['src', 'vendor']);
+    expect(view(withTest, '').edges).toEqual([]);
+    expect(withTest.files).toHaveLength(6);
   });
 
   it('drops edges to targets no shown node contains', () => {
@@ -147,6 +170,110 @@ describe('graphView over the layered fixture shape', () => {
 });
 
 describe('graphView layers and ordering', () => {
+  it('sorts the top row by name regardless of file order', () => {
+    const scan = scanOf(['v/z.ts', 'v/a.ts'], []);
+    expect(view(scan, 'v').nodes.map(node => `${node.name}@${node.row}:${node.order}`)).toEqual(['a.ts@0:0', 'z.ts@0:1']);
+  });
+
+  it('averages every neighbour order when placing a row', () => {
+    const scan = scanOf(
+      ['v/b.ts', 'v/a.ts', 'v/i0.ts', 'v/i1.ts', 'v/i2.ts'],
+      [
+        ['v/i0.ts', 'v/a.ts'],
+        ['v/i1.ts', 'v/a.ts'],
+        ['v/i2.ts', 'v/a.ts'],
+        ['v/i1.ts', 'v/b.ts'],
+        ['v/i2.ts', 'v/b.ts'],
+      ],
+    );
+    expect(view(scan, 'v').nodes.map(node => `${node.name}@${node.row}:${node.order}`)).toEqual([
+      'i0.ts@0:0',
+      'i1.ts@0:1',
+      'i2.ts@0:2',
+      'a.ts@1:0',
+      'b.ts@1:1',
+    ]);
+  });
+
+  it('keeps every link between a row and the row above it', () => {
+    const scan = scanOf(
+      ['v/b.ts', 'v/z.ts', 'v/i0.ts', 'v/i1.ts'],
+      [
+        ['v/i0.ts', 'v/z.ts'],
+        ['v/i1.ts', 'v/z.ts'],
+        ['v/i1.ts', 'v/b.ts'],
+      ],
+    );
+    expect(view(scan, 'v').nodes.map(node => `${node.name}@${node.row}:${node.order}`)).toEqual([
+      'i0.ts@0:0',
+      'i1.ts@0:1',
+      'z.ts@1:0',
+      'b.ts@1:1',
+    ]);
+  });
+
+  it('ties two files with the same neighbour average by name', () => {
+    const scan = scanOf(
+      ['v/z.ts', 'v/a.ts', 'v/i0.ts', 'v/i1.ts', 'v/i2.ts'],
+      [
+        ['v/i0.ts', 'v/z.ts'],
+        ['v/i2.ts', 'v/z.ts'],
+        ['v/i1.ts', 'v/a.ts'],
+      ],
+    );
+    expect(view(scan, 'v').nodes.map(node => `${node.name}@${node.row}:${node.order}`)).toEqual([
+      'i0.ts@0:0',
+      'i1.ts@0:1',
+      'i2.ts@0:2',
+      'a.ts@1:0',
+      'z.ts@1:1',
+    ]);
+  });
+
+  it('sinks a file with no neighbours above it below the connected files', () => {
+    const scan = scanOf(['v/a.ts', 'v/z.ts', 'v/m.ts'], [['v/m.ts', 'v/z.ts']]);
+    expect(view(scan, 'v').nodes.map(node => `${node.name}@${node.row}:${node.order}`)).toEqual([
+      'm.ts@0:0',
+      'z.ts@1:0',
+      'a.ts@1:1',
+    ]);
+  });
+
+  it('keeps a file cycle in the same row as the file it imports', () => {
+    const scan = scanOf(
+      ['x/a.ts', 'x/b.ts', 'x/e.ts', 'x/f.ts'],
+      [
+        ['x/a.ts', 'x/b.ts'],
+        ['x/b.ts', 'x/a.ts'],
+        ['x/e.ts', 'x/f.ts'],
+      ],
+    );
+    expect(view(scan, 'x').nodes.map(node => `${node.name}@${node.row}:${node.order}`)).toEqual([
+      'e.ts@0:0',
+      'f.ts@1:0',
+      'a.ts@1:1',
+      'b.ts@1:2',
+    ]);
+  });
+
+  it('keeps an edge that leaves a file cycle unmarked', () => {
+    const scan = scanOf(
+      ['x/a.ts', 'x/b.ts', 'x/c.ts'],
+      [
+        ['x/a.ts', 'x/b.ts'],
+        ['x/b.ts', 'x/a.ts'],
+        ['x/a.ts', 'x/c.ts'],
+      ],
+    );
+    const found = view(scan, 'x');
+    expect(found.nodes.map(node => `${node.name}@${node.row}:${node.order}:${node.cycle}`)).toEqual(['a.ts@0:0:true', 'b.ts@0:1:true', 'c.ts@1:0:false']);
+    expect(found.edges).toEqual([
+      { from: 'x/a.ts', to: 'x/b.ts', runtime: 1, type: 0, cycle: true, cycleText: 'a.ts → b.ts → a.ts' },
+      { from: 'x/a.ts', to: 'x/c.ts', runtime: 1, type: 0, cycle: false },
+      { from: 'x/b.ts', to: 'x/a.ts', runtime: 1, type: 0, cycle: true, cycleText: 'b.ts → a.ts → b.ts' },
+    ]);
+  });
+
   it('puts a root file above the package it imports', () => {
     const scan = scanOf(['main.ts', 'src/app/a.ts'], [['main.ts', 'src/app/a.ts']]);
     expect(view(scan, '')).toEqual({

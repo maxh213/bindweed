@@ -16,7 +16,7 @@ import type { Crumb, GraphView, ViewEdge, ViewNode } from '../domain/graph.ts';
 import { fetchGraph, postRescan } from './client.ts';
 import { graphStateOf, type GraphState } from './view.ts';
 
-type BoxData = { name: string; packageBox: boolean; count: number | undefined; cycle: boolean };
+type BoxData = { name: string; packageBox: boolean; count: string | null; cycle: boolean };
 
 type BoxNode = Node<BoxData, 'box'>;
 
@@ -34,15 +34,13 @@ export type ArchViewProps = {
 
 const X_GAP = 260;
 const Y_GAP = 140;
-const CYCLE_COLOR = '#dc2626';
-const PLAIN_COLOR = '#64748b';
 
 function cycleFlag(cycle: boolean): 'true' | 'false' {
   return cycle ? 'true' : 'false';
 }
 
 function arrowColor(cycle: boolean): string {
-  return cycle ? CYCLE_COLOR : PLAIN_COLOR;
+  return cycle ? '#dc2626' : '#64748b';
 }
 
 function arrowStyle(cycle: boolean): { stroke: string; strokeWidth: number } {
@@ -53,14 +51,18 @@ function countText(count: number): string {
   return count === 1 ? '1 file' : `${count} files`;
 }
 
+function countLabel(count: number | undefined): string | null {
+  return count === undefined ? null : countText(count);
+}
+
 function boxClass(data: BoxData): string {
   const kind = data.packageBox ? 'package' : 'file';
   return data.cycle ? `box ${kind} nodrag nopan cycle` : `box ${kind} nodrag nopan`;
 }
 
-function BoxCount({ count, packageBox }: Readonly<{ count: number | undefined; packageBox: boolean }>) {
-  if (!packageBox || count === undefined) return null;
-  return <span className="box-count">{countText(count)}</span>;
+function BoxCount({ text }: Readonly<{ text: string | null }>) {
+  if (text === null) return null;
+  return <span className="box-count">{text}</span>;
 }
 
 function Box({ data }: NodeProps<BoxNode>) {
@@ -68,7 +70,7 @@ function Box({ data }: NodeProps<BoxNode>) {
     <div className={boxClass(data)} data-cycle={cycleFlag(data.cycle)}>
       <Handle type="target" position={Position.Top} />
       <span className="box-name">{data.name}</span>
-      <BoxCount count={data.count} packageBox={data.packageBox} />
+      <BoxCount text={data.count} />
       <Handle type="source" position={Position.Bottom} />
     </div>
   );
@@ -106,10 +108,11 @@ function arrowClassOf(cycle: boolean): string {
 }
 
 function boxDataOf(node: ViewNode): BoxData {
+  const packageBox = node.kind === 'package';
   return {
     name: node.name,
-    packageBox: node.kind === 'package',
-    count: node.kind === 'package' ? node.files : undefined,
+    packageBox,
+    count: countLabel(packageBox ? node.files : undefined),
     cycle: node.cycle,
   };
 }

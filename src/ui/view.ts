@@ -132,25 +132,25 @@ function replaceState(history: History, url: string): void {
 }
 
 function pushOther(history: History, write: Exclude<HistoryWrite, { kind: 'file' }>): void {
-  if (write.kind === 'at') {
-    pushState(history, atHash(write.at));
-    return;
+  switch (write.kind) {
+    case 'at':
+      pushState(history, atHash(write.at));
+      return;
+    case 'path':
+      pushState(history, write.pathname);
   }
-  pushState(history, write.pathname);
-}
-
-function pushHistory(history: History, write: HistoryWrite): void {
-  if (write.kind === 'file') {
-    pushState(history, fileHash(write.path));
-    return;
-  }
-  pushOther(history, write);
 }
 
 export function writeHistory(history: History, write: HistoryWrite): void {
-  if (write.kind === 'file' && write.mode === 'replace') {
-    replaceState(history, fileHash(write.path));
+  if (write.kind === 'file') {
+    switch (write.mode) {
+      case 'replace':
+        replaceState(history, fileHash(write.path));
+        return;
+      case 'push':
+        pushState(history, fileHash(write.path));
+    }
     return;
   }
-  pushHistory(history, write);
+  pushOther(history, write);
 }

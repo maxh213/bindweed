@@ -1,11 +1,11 @@
 import { existsSync } from 'node:fs';
-import { builtinModules } from 'node:module';
-import { dirname, join, sep } from 'node:path';
+import { isBuiltin } from 'node:module';
+import { dirname, join } from 'node:path';
 import * as ts from 'typescript';
 import { isInternalTarget, repoPath } from './paths.ts';
 import { resolvedWorkspace, type WorkspaceInfo } from './workspaces.ts';
 
-export type Target = { kind: 'file' | 'dir'; path: string } | { kind: 'external'; name: string };
+export type Target = { path: string } | { external: string };
 
 type ScanCtx = {
   root: string;
@@ -14,11 +14,9 @@ type ScanCtx = {
   defaultOptions: ts.CompilerOptions;
 };
 
-const BUILTINS = new Set(builtinModules);
-
 function builtinName(specifier: string): string | undefined {
-  if (specifier.startsWith('node:')) return specifier;
-  return BUILTINS.has(specifier) ? `node:${specifier}` : undefined;
+  const bare = specifier.startsWith('node:') ? specifier.slice(5) : specifier;
+  return isBuiltin(bare) ? `node:${bare}` : undefined;
 }
 
 function packageRoot(specifier: string): string {
@@ -32,17 +30,16 @@ function externalName(specifier: string): string {
 }
 
 function externalTarget(specifier: string): Target {
-  return { kind: 'external', name: externalName(specifier) };
+  return { external: externalName(specifier) };
 }
 
 function dirsUpTo(start: string, root: string): string[] {
-  const dirs: string[] = [];
+  const dirs = [start];
   let dir = start;
-  while (dir !== root && dir.startsWith(`${root}${sep}`)) {
-    dirs.push(dir);
+  while (dir !== root) {
     dir = dirname(dir);
+    dirs.push(dir);
   }
-  dirs.push(root);
   return dirs;
 }
 
@@ -86,7 +83,7 @@ function optionsForFile(file: string, ctx: ScanCtx): ts.CompilerOptions {
 function resolvedTarget(absolute: string, specifier: string, ctx: ScanCtx): Target {
   const rel = repoPath(ctx.root, absolute);
   if (!isInternalTarget(rel)) return externalTarget(specifier);
-  return { kind: 'file', path: rel };
+  return { path: rel };
 }
 
 function tsResolve(specifier: string, file: string, ctx: ScanCtx): Target {
@@ -98,7 +95,7 @@ function tsResolve(specifier: string, file: string, ctx: ScanCtx): Target {
 
 function resolveSpecifier(specifier: string, file: string, ctx: ScanCtx): Target {
   const builtin = builtinName(specifier);
-  if (builtin !== undefined) return { kind: 'external', name: builtin };
+  if (builtin !== undefined) return { external: builtin };
   const ws = ctx.wsByName.get(specifier);
   if (ws !== undefined) return resolvedWorkspace(ctx.root, ws);
   return tsResolve(specifier, file, ctx);
@@ -109,7 +106,7 @@ function newScanCtx(root: string, workspaces: WorkspaceInfo[]): ScanCtx {
     root,
     configs: new Map(),
     wsByName: new Map(workspaces.map(ws => [ws.name, ws])),
-    defaultOptions: { allowJs: true, moduleResolution: ts.ModuleResolutionKind.Bundler, module: ts.ModuleKind.ESNext },
+    defaultOptions: ts.getDefaultCompilerOptions(),
   };
   configAt(root, ctx);
   return ctx;

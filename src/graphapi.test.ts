@@ -211,6 +211,8 @@ describe('the graph api over the layered fixture', () => {
     const body = json(res) as { files: number; ms: number };
     expect(body.files).toBe(4);
     expect(typeof body.ms).toBe('number');
+    expect(body.ms).toBeGreaterThanOrEqual(0);
+    expect(body.ms).toBeLessThan(60000);
   });
 
   it('answers the tree and file routes on the same server', async () => {

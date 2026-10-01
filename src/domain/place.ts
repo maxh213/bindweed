@@ -31,9 +31,8 @@ type Placed = RawNode & { row: number; order: number; cycle: boolean };
 type TarjanState = {
   index: Record<string, number>;
   low: Record<string, number>;
+  stack: Set<string>;
   seen: Set<string>;
-  onStack: Set<string>;
-  stack: string[];
   next: number;
   comp: Record<string, number>;
   compCount: number;
@@ -60,10 +59,10 @@ function adjacency(edges: RawEdge[]): Map<string, string[]> {
 }
 
 function popComponent(v: string, state: TarjanState): void {
-  for (let w = state.stack.pop(); w !== undefined; w = state.stack.pop()) {
-    state.onStack.delete(w);
+  const ordered = [...state.stack].reverse();
+  for (const w of ordered.slice(0, ordered.indexOf(v) + 1)) {
+    state.stack.delete(w);
     state.comp[w] = state.compCount;
-    if (w === v) break;
   }
   state.compCount += 1;
 }
@@ -74,7 +73,7 @@ function lowerOrRecurse(v: string, w: string, succ: Map<string, string[]>, state
     state.low[v] = Math.min(state.low[v], state.low[w]);
     return;
   }
-  if (state.onStack.has(w)) state.low[v] = Math.min(state.low[v], state.index[w]);
+  if (state.stack.has(w)) state.low[v] = Math.min(state.low[v], state.index[w]);
 }
 
 function visitSuccessors(v: string, succ: Map<string, string[]>, state: TarjanState): void {
@@ -85,15 +84,14 @@ function strongConnect(v: string, succ: Map<string, string[]>, state: TarjanStat
   state.index[v] = state.next;
   state.low[v] = state.next;
   state.next += 1;
-  state.stack.push(v);
+  state.stack.add(v);
   state.seen.add(v);
-  state.onStack.add(v);
   visitSuccessors(v, succ, state);
   if (state.low[v] === state.index[v]) popComponent(v, state);
 }
 
 function freshTarjanState(): TarjanState {
-  return { index: {}, low: {}, seen: new Set(), onStack: new Set(), stack: [], next: 0, comp: {}, compCount: 0 };
+  return { index: {}, low: {}, stack: new Set(), seen: new Set(), next: 0, comp: {}, compCount: 0 };
 }
 
 function componentsOf(nodeIds: string[], edges: RawEdge[]): Record<string, number> {
@@ -136,19 +134,13 @@ function buildDag(compCount: number, compEdges: [number, number][]): number[][] 
   return dag;
 }
 
-function heightOf(c: number, dag: number[][], memo: number[]): number {
-  if (memo[c] >= 0) return memo[c];
-  let best = 0;
-  for (const t of dag[c]) best = Math.max(best, 1 + heightOf(t, dag, memo));
-  memo[c] = best;
-  return best;
-}
-
 function heightsOf(compCount: number, compEdges: [number, number][]): number[] {
   const dag = buildDag(compCount, compEdges);
-  const memo = new Array<number>(compCount).fill(-1);
-  for (let c = 0; c < compCount; c += 1) heightOf(c, dag, memo);
-  return memo;
+  const heights = new Array<number>(compCount).fill(0);
+  for (const c of dag.keys()) {
+    for (const t of dag[c]) heights[c] = Math.max(heights[c], 1 + heights[t]);
+  }
+  return heights;
 }
 
 function placeNode(node: RawNode, comp: Record<string, number>, sizes: number[], heights: number[], top: number): Placed {
@@ -156,12 +148,19 @@ function placeNode(node: RawNode, comp: Record<string, number>, sizes: number[],
   return { ...node, row: top - heights[c], order: 0, cycle: sizes[c] > 1 };
 }
 
-function adjacentPairKey(a: string, b: string): string {
-  return a < b ? `${a} ${b}` : `${b} ${a}`;
+function pushInto(map: Map<string, Set<string>>, from: string, to: string): void {
+  const linked = map.get(from);
+  if (linked === undefined) {
+    map.set(from, new Set([to]));
+    return;
+  }
+  linked.add(to);
 }
 
-function adjacencyPairs(edges: RawEdge[]): Set<string> {
-  return new Set(edges.map(edge => adjacentPairKey(edge.from, edge.to)));
+function adjacencyPairs(edges: RawEdge[]): Map<string, Set<string>> {
+  const map = new Map<string, Set<string>>();
+  for (const edge of edges) pushInto(map, edge.to, edge.from);
+  return map;
 }
 
 function rowsOf(placed: Placed[]): Placed[][] {
@@ -186,42 +185,44 @@ function sortAndIndex(row: Placed[]): void {
   reindex(row);
 }
 
-function neighbourOrders(node: Placed, above: Placed[], pairs: Set<string>): number[] {
+function neighbourOrders(node: Placed, above: Placed[], pairs: Map<string, Set<string>>): number[] {
   const orders: number[] = [];
+  const linked = pairs.get(node.id);
+  if (linked === undefined) return orders;
   for (const other of above) {
-    if (pairs.has(adjacentPairKey(node.id, other.id))) orders.push(other.order);
+    if (linked.has(other.id)) orders.push(other.order);
   }
   return orders;
 }
 
-function barycentre(node: Placed, above: Placed[], pairs: Set<string>): number {
+function barycentre(node: Placed, above: Placed[], pairs: Map<string, Set<string>>): number {
   const orders = neighbourOrders(node, above, pairs);
   if (orders.length === 0) return Number.POSITIVE_INFINITY;
   return orders.reduce((sum, order) => sum + order, 0) / orders.length;
 }
 
-function byBary(a: Placed, b: Placed, above: Placed[], pairs: Set<string>): number {
+function byBary(a: Placed, b: Placed, above: Placed[], pairs: Map<string, Set<string>>): number {
   const diff = barycentre(a, above, pairs) - barycentre(b, above, pairs);
   if (diff !== 0) return diff;
   return byName(a, b);
 }
 
-function sortRowByBary(rows: Placed[][], rowNum: number, pairs: Set<string>): void {
+function sortRowByBary(rows: Placed[][], rowNum: number, pairs: Map<string, Set<string>>): void {
   const above = rows[rowNum - 1];
   const row = rows[rowNum];
   row.sort((a, b) => byBary(a, b, above, pairs));
   reindex(row);
 }
 
-function sweepDown(rows: Placed[][], pairs: Set<string>): void {
+function sweepDown(rows: Placed[][], pairs: Map<string, Set<string>>): void {
   for (let rowNum = 1; rowNum < rows.length; rowNum += 1) sortRowByBary(rows, rowNum, pairs);
 }
 
 function orderWithinRows(placed: Placed[], edges: RawEdge[]): void {
   const rows = rowsOf(placed);
-  for (const row of rows) sortAndIndex(row);
+  sortAndIndex(rows[0]);
   const pairs = adjacencyPairs(edges);
-  for (let sweep = 0; sweep < 2; sweep += 1) sweepDown(rows, pairs);
+  [0, 1].forEach(() => sweepDown(rows, pairs));
 }
 
 function placeNodes(nodes: RawNode[], edges: RawEdge[], comp: Record<string, number>, sizes: number[]): Placed[] {

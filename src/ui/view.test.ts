@@ -211,8 +211,10 @@ describe('writeHistory', () => {
 
   it('pushes view and file entries, and a bare path', () => {
     const pushed: string[] = [];
+    const titles: string[] = [];
     const historyApi = {
-      pushState: (_s: unknown, _t: string, next: string) => {
+      pushState: (_s: unknown, title: string, next: string) => {
+        titles.push(title);
         pushed.push(next);
       },
       replaceState: () => undefined,
@@ -222,6 +224,7 @@ describe('writeHistory', () => {
     writeHistory(historyApi, { kind: 'file', path: 'src/domain/model.ts', mode: 'push' });
     writeHistory(historyApi, { kind: 'path', pathname: '/layered' });
     expect(pushed).toEqual(['#at=src/app', '#at=', '#file=src/domain/model.ts', '/layered']);
+    expect(titles).toEqual(['', '', '', '']);
   });
 });
 
