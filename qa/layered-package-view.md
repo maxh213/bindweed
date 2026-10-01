@@ -84,8 +84,8 @@ Paste the `export` line it prints into the second terminal. The `layered` fixtur
 14. Open `http://127.0.0.1:4700/?token=$TOKEN#at=src/app` in a new browser tab, with the token written out.
     **Expect:** the Architecture tab is selected and shows the red `a.ts` and `b.ts` boxes; the breadcrumb shows `layered / src / app`; the address bar keeps `#at=src/app`.
 
-15. In the Architecture tab, drag the empty canvas, zoom in and out with the wheel, then try to drag the `app` box.
-    **Expect:** the boxes move and scale together when panning and zooming; the `app` box does not move when dragged.
+15. In the Architecture tab, drag the empty canvas, then zoom in and out with the wheel.
+    **Expect:** the boxes move and scale together when panning and zooming. Dragging a box is specified by `qa/edge-kinds-pins-and-toggles.md`, not by this procedure.
 
 16. In the second terminal run `printf "import { a } from './app/a';\n" > $QA/layered/src/main.ts`. In the browser go back to the `src` view and click `Rescan`.
     **Expect:** a `main.ts` box appears on a new top row above `app`, with an arrow from `main.ts` to `app`.

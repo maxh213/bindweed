@@ -8,8 +8,9 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
 
   src/domain/model.ts is an interface here. The class body in the 002 fixture is not an
   abstract file, and a package is green only when every file counted in it is, so this
-  fixture replaces that class. The 002 fixture and features/layered-package-view.feature
-  are unchanged.
+  fixture replaces that class. The 002 fixture files are unchanged.
+  features/layered-package-view.feature still pans and zooms, and it no longer says that
+  dragging a box leaves the box where it was. Boxes can be dragged.
 
   Conventions: "bindweed" is "node <bindweed dir>/src/cli.ts"; /tmp/qa is a fresh temporary
   directory; bindweed serves /tmp/qa/layered on port 4800 unless a scenario says otherwise;
@@ -20,6 +21,7 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
   present with a default.
   Each scenario starts from the Background again. In a table cell \n is a newline.
   "tests=1" and "external=1" are the only query values that turn those flags on.
+  A saved settings.tests or settings.external never changes /api/graph or /api/detail.
   On the page the canvas is the Architecture drawing area, the selected tab carries
   aria-selected "true", the breadcrumb is the nav labelled "breadcrumb", and the details
   panel is the complementary region labelled "details". A box carries data-x and data-y,
@@ -35,11 +37,14 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
   stays the 002 red even when it is also abstract. An arrow is red (#dc2626) when
   data-cycle or data-up is "true", otherwise #64748b. Its label is the text of
   runtime + type when that sum is above 1, and heritage is not part of the label.
+  A cycle arrow's tooltip is its cycleText, unless that arrow also points up: then the
+  tooltip is the points-up sentence. data-line, data-head and the label still follow the
+  counts, and data-cycle stays "true".
   An edge points up when the importing box's data-y exceeds the imported box's data-y by
   more than half the importing box's flow height. Flow height is the .box offsetHeight
   divided by the canvas zoom; at the default stylesheet it is more than 16 and less than
-  200, so a gap of 8 does not point up and a gap of 400 does. Tops on the screen follow
-  the same test. The cell of a point is (floor(x / 260), floor(y / 140)),
+  200, so a gap of 8 does not point up and a gap of 400 does. One box height is that
+  flow height. Tops on the screen follow the same test. The cell of a point is (floor(x / 260), floor(y / 140)),
   floor toward -infinity. Hovering a box gives every other box, and every arrow that does
   not touch it, the class "dim" (opacity 0.25).
 
@@ -92,6 +97,8 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       | other/both.ts         | export interface I { n: number }\nexport const n = 1;\n                                                          |
       | cyc/a.ts              | import type { B } from './b';\nexport interface A { b: B }\n                                                      |
       | cyc/b.ts              | import type { A } from './a';\nexport interface B { a: A }\n                                                      |
+      | half/iface.ts         | export interface I { n: number }\n                                                                               |
+      | half/value.test.ts    | export const n = 1;\n                                                                                            |
 
   Rule: The graph keeps the 002 layers and adds a field only when there is something to say
     Tests and externals stay out unless the query asks. Heritage is omitted at 0, abstract
@@ -210,6 +217,18 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       Then the node "pure" has abstract true and "files" 6, and the node "cyc" has abstract true and "cycle" false
       And the nodes "mixed" and "other" have no abstract field
 
+    Scenario: A value test file counts against abstract only while tests=1
+      Given bindweed is serving "/tmp/qa/kinds" on port 4800
+      When I send "GET /api/graph" with the token
+      Then the node "half" has abstract true and "files" 1
+      When I send "GET /api/graph?at=half" with the token
+      Then the only node is "iface.ts", it has abstract true, and there is no node named "value.test.ts"
+      When I send "GET /api/graph?tests=1" with the token
+      Then the node "half" has "files" 2 and no abstract field
+      When I send "GET /api/graph?at=half&tests=1" with the token
+      Then the node "iface.ts" has abstract true
+      And the node "value.test.ts" has "test" true and no abstract field
+
     Scenario: A cycle of abstract files is drawn red, and the cycle tooltip stays the cycle text
       Given bindweed is serving "/tmp/qa/kinds" on port 4800
       When I open "http://127.0.0.1:4800/?token={token}#at=cyc" in a browser
@@ -243,7 +262,42 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       Then the status is 200 and the body is that same JSON
       And "GET /api/layout" with the token returns that same JSON
       And the file "/tmp/qa/layered/.bindweed/layout.json" parses as that same JSON
-      And "GET /api/graph?at=src" still has "src/domain" at row 2, with no "src/gone"
+      When I send "GET /api/graph?at=src" with the token
+      Then the status is 200 and the body is exactly this JSON, with no "node:fs" and no "a.test.ts":
+        """
+        {"at":"src","crumbs":[{"name":"layered","at":""},{"name":"src","at":"src"}],"nodes":[{"id":"src/app","kind":"package","name":"app","path":"src/app","files":2,"row":0,"order":0,"cycle":false},{"id":"src/infra","kind":"package","name":"infra","path":"src/infra","files":2,"row":1,"order":0,"cycle":false},{"id":"src/domain","kind":"package","name":"domain","path":"src/domain","files":2,"row":2,"order":0,"cycle":false,"abstract":true}],"edges":[{"from":"src/app","to":"src/infra","runtime":2,"type":1,"cycle":false},{"from":"src/app","to":"src/domain","runtime":0,"type":1,"cycle":false},{"from":"src/infra","to":"src/domain","runtime":2,"type":0,"heritage":1,"cycle":false}]}
+        """
+      When I send "PUT /api/layout" with the token and this body:
+        """
+        {"version":1,"views":{"src":{"src/domain":{"x":0,"y":-400},"src/gone":{"x":1,"y":2}},"src/app":{"src/app/a.ts":{"x":40,"y":10}}},"settings":{"tests":true,"external":false}}
+        """
+      Then the status is 200 and the body is that same JSON
+      And "GET /api/layout" with the token returns that same JSON, still including the pin for "src/gone"
+      When I send "GET /api/graph?at=src" with the token
+      Then the status is 200 and the body is exactly this JSON, with no "a.test.ts" and no "node:fs":
+        """
+        {"at":"src","crumbs":[{"name":"layered","at":""},{"name":"src","at":"src"}],"nodes":[{"id":"src/app","kind":"package","name":"app","path":"src/app","files":2,"row":0,"order":0,"cycle":false},{"id":"src/infra","kind":"package","name":"infra","path":"src/infra","files":2,"row":1,"order":0,"cycle":false},{"id":"src/domain","kind":"package","name":"domain","path":"src/domain","files":2,"row":2,"order":0,"cycle":false,"abstract":true}],"edges":[{"from":"src/app","to":"src/infra","runtime":2,"type":1,"cycle":false},{"from":"src/app","to":"src/domain","runtime":0,"type":1,"cycle":false},{"from":"src/infra","to":"src/domain","runtime":2,"type":0,"heritage":1,"cycle":false}]}
+        """
+      When I send "GET /api/graph?at=src/app" with the token
+      Then the status is 200 and the body is exactly this JSON, with no "a.test.ts":
+        """
+        {"at":"src/app","crumbs":[{"name":"layered","at":""},{"name":"src","at":"src"},{"name":"app","at":"src/app"}],"nodes":[{"id":"src/app/a.ts","kind":"file","name":"a.ts","path":"src/app/a.ts","row":0,"order":0,"cycle":true},{"id":"src/app/b.ts","kind":"file","name":"b.ts","path":"src/app/b.ts","row":0,"order":1,"cycle":true}],"edges":[{"from":"src/app/a.ts","to":"src/app/b.ts","runtime":1,"type":0,"cycle":true,"cycleText":"a.ts → b.ts → a.ts"},{"from":"src/app/b.ts","to":"src/app/a.ts","runtime":1,"type":0,"cycle":true,"cycleText":"b.ts → a.ts → b.ts"}]}
+        """
+
+    Scenario: A bad file is not rewritten, and a rejected PUT leaves a valid file
+      Given the file "/tmp/qa/layered/.bindweed/layout.json" contains exactly the bytes of "not json"
+      When I send "GET /api/layout" with the token
+      Then the status is 200 and the body is {"version":1,"views":{},"settings":{"tests":false,"external":false}}
+      And the file "/tmp/qa/layered/.bindweed/layout.json" still contains exactly those bytes
+      When I send "PUT /api/layout" with the token and this body:
+        """
+        {"version":1,"views":{"src":{"src/domain":{"x":3,"y":4}}},"settings":{"tests":true,"external":false}}
+        """
+      Then the status is 200 and the body is that same JSON
+      And the file parses as that same JSON
+      When I send "PUT /api/layout" with the token and the body "not json"
+      Then the status is 400 and the body is {"error":"bad layout"}
+      And the file's bytes are unchanged from after the successful PUT
 
     Scenario Outline: A layout that is not the document is refused
       When I send "PUT /api/layout" with the token and the body "<body>"
@@ -288,7 +342,7 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
   Rule: The details list the far end of every edge, including a file outside the view
     Counts in a detail entry are always present, zeros included. External entries are
     included only with external=1, and test files only with tests=1. The entry's id is
-    a file or package the edge actually reaches.
+    the file, package or external the edge reaches. An external entry's kind is "external".
 
     Scenario: infra's package lists domain and app
       When I send "GET /api/detail?id=src/infra&at=src" with the token
@@ -316,6 +370,27 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       Then the status is 404 and the body is {"error":"no such node"}
       When I send "GET /api/detail?id=node:fs&at=src" with the token
       Then the status is 404 and the body is {"error":"no such node"}
+
+    Scenario: external=1 lists node:fs and tests=1 lists a.test.ts
+      When I send "GET /api/detail?id=src/infra&at=src&external=1" with the token
+      Then the status is 200 and "files" is 2 and there is no "abstract" field
+      And "imports" is exactly these entries, in any order:
+        | id         | name    | kind     | runtime | type | heritage |
+        | src/domain | domain  | package  | 2       | 0    | 1        |
+        | node:fs    | node:fs | external | 1       | 0    | 0        |
+      And the only "importedBy" entry is "src/app" with runtime 2, type 1 and heritage 0
+      When I send "GET /api/detail?id=src/app/a.ts&at=src/app&tests=1" with the token
+      Then the status is 200 and the body has no "files" field and no "abstract" field
+      And "importedBy" is exactly these entries, in any order:
+        | id                | name      | kind | runtime | type | heritage |
+        | src/app/b.ts      | b.ts      | file | 1       | 0    | 0        |
+        | src/app/a.test.ts | a.test.ts | file | 1       | 0    | 0        |
+      And "imports" is exactly these entries, in any order:
+        | id                  | name     | kind | runtime | type | heritage |
+        | src/app/b.ts        | b.ts     | file | 1       | 0    | 0        |
+        | src/domain/model.ts | model.ts | file | 0       | 1    | 0        |
+        | src/infra/db.ts     | db.ts    | file | 1       | 0    | 0        |
+        | src/infra/repo.ts   | repo.ts  | file | 0       | 1    | 0        |
 
   Rule: The Architecture tab draws the kinds, the pin and the panel
     The toolbar holds the breadcrumb, the checkboxes "Tests" and "External packages"
@@ -371,10 +446,10 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       Given the Architecture tab shows the "src" view
       When I drag the empty canvas
       Then the boxes move together and "GET /api/layout" still returns the default document
-      When I drag the "domain" box until it is above "app" and drop it
-      Then the "domain" box stays where it was dropped
-      And the arrow from "app" to "domain" carries data-up "true" and data-line "dashed", and its tooltip is "points up: app is drawn below domain"
-      And the arrow from "infra" to "domain" carries data-up "true", and its tooltip is "points up: infra is drawn below domain"
+      When I drag the "domain" box until its top is at least one box height above the "app" box and drop it
+      Then the "domain" box stays where it was dropped, and its data-y is less than the "app" box's data-y by at least the "domain" box's flow height
+      And the arrow from "app" to "domain" carries data-up "true", data-line "dashed" and data-head "filled", and its tooltip is "points up: app is drawn below domain"
+      And the arrow from "infra" to "domain" carries data-up "true", data-line "solid" and data-head "hollow", and its tooltip is "points up: infra is drawn below domain"
       And the arrow from "app" to "infra" carries data-up "false"
       And "GET /api/layout" returns a document whose "views" "src" "src/domain" x and y are the dropped data-x and data-y, and whose other views are absent
 
@@ -386,6 +461,13 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       When "PUT /api/layout" saves the same document with "src/domain" y -400
       And I open "http://127.0.0.1:4800/?token={token}#at=src" in a browser
       Then the arrow from "app" to "domain" carries data-up "true" and its tooltip is "points up: app is drawn below domain"
+
+    Scenario: A cycle arrow that points up says so and stays a cycle
+      Given "PUT /api/layout" has saved {"version":1,"views":{"src/app":{"src/app/a.ts":{"x":0,"y":-400}}},"settings":{"tests":false,"external":false}}
+      When I open "http://127.0.0.1:4800/?token={token}#at=src/app" in a browser
+      Then the "a.ts" box has data-x 0 and data-y -400, and the "b.ts" box has data-x 260 and data-y 0
+      And the arrow from "b.ts" to "a.ts" carries data-cycle "true", data-up "true", data-line "solid" and data-head "filled", has no label, and its tooltip is "points up: b.ts is drawn below a.ts"
+      And the arrow from "a.ts" to "b.ts" carries data-cycle "true", data-up "false", data-line "solid" and data-head "filled", has no label, and its tooltip is "a.ts → b.ts → a.ts"
 
     Scenario: The pin survives a new page load, a rescan and a restart, and a token-less refresh still fails
       Given the "domain" box is pinned above "app" in the "src" view
@@ -399,11 +481,13 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       And I open the newly printed link with "#at=src"
       Then the "domain" box is above "app"
 
-    Scenario: Reset layout clears this view's pins and leaves every other view's pins
+    Scenario: Reset layout clears this view's pins and leaves settings and every other view
       Given the "domain" box is pinned above "app" in the "src" view and "a.ts" is pinned away from its layer in the "src/app" view
+      And "Tests" is checked, so "settings" "tests" is true
       When I click "Reset layout" while the "src" view is showing
       Then "app" is above "infra" and "infra" is above "domain", and no arrow carries data-up "true"
-      And "GET /api/layout" has no "src" key under "views" and still has the pin for "src/app/a.ts"
+      And "Tests" is still checked
+      And "GET /api/layout" has no "src" key under "views", still has the pin for "src/app/a.ts", and "settings" "tests" is still true
       When I open the "src/app" view
       Then the "a.ts" box is still where it was pinned
 
@@ -429,6 +513,8 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       When I check "Tests"
       Then the box "a.test.ts" is above "a.ts" and "b.ts", it shows a "test" tag, and an arrow runs from "a.test.ts" to "a.ts"
       And "GET /api/layout" has "settings" "tests" true
+      When I click the "a.ts" box
+      Then under "Imported by" the only buttons are "a.test.ts" and "b.ts", each showing "1 runtime · 0 type-only · 0 extends/implements"
       When I open "http://127.0.0.1:4800/?token={token}#at=src/app" in a browser
       Then "Tests" is checked and the "a.test.ts" box is shown
       When I uncheck "Tests"
@@ -440,8 +526,10 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       Then a box "node:fs" with a dashed border is below "domain", and an arrow runs from "infra" to "node:fs"
       And "domain" is still above "node:fs" and still green
       And "GET /api/layout" has "settings" "external" true
+      When I click the "infra" box
+      Then under "Imports" the only buttons are "domain" showing "2 runtime · 0 type-only · 1 extends/implements" and "node:fs" showing "1 runtime · 0 type-only · 0 extends/implements"
       When I uncheck "External packages"
-      Then the "node:fs" box is gone
+      Then the "node:fs" box is gone and the panel no longer shows "node:fs"
 
     Scenario: The README lists the new routes beside the old ones
       When I read the "## Routes" table in bindweed's README.md

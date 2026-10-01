@@ -163,12 +163,10 @@ Feature: bindweed shows a repository's architecture as layered boxes and arrows
       And the row "model.ts" is marked as selected
       And the address bar shows "http://127.0.0.1:4700/#file=src/domain/model.ts"
 
-    Scenario: The canvas pans and zooms and boxes stay put
+    Scenario: The canvas pans and zooms
       Given the Architecture tab shows the "src" view
       When I drag the empty canvas and turn the zoom wheel
       Then the boxes move and scale together
-      When I drag the "app" box
-      Then it has not moved
 
     Scenario: The Rescan button picks up a new file and its arrow
       Given the Architecture tab shows the "src" view

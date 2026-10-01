@@ -2,7 +2,9 @@
 
 For a person with two terminals and a desktop browser on the machine that runs bindweed (Node 22.18 or newer, git, curl). Every step runs the real `node src/cli.ts`. This procedure uses port 4800, clear of every port in `qa/serve-the-file-tree.md` and of 4700 in `qa/layered-package-view.md`.
 
-`src/domain/model.ts` is an interface in this fixture, not the class from the 002 procedure. A package is green only when every file in it is types, and the 002 class is not. The 002 files are not edited.
+`src/domain/model.ts` is an interface in this fixture, not the class from the 002 procedure. A package is green only when every file in it is types, and the 002 class is not. The 002 fixture files are not edited.
+
+The 002 scenario no longer says that dragging a box leaves it unmoved. Pan and zoom stay. The QA role, not the coder, deletes from `qa/layered-package-view.e2e.ts` the drag of the `app` box and the check that every centre stays within 2px, leaves the pan and zoom checks, and writes the end-to-end test for this procedure. The coder writes no file under `qa/`.
 
 A refresh of the address after the token has left it still shows the 001 line `bindweed: use the link bindweed printed in the terminal`. "Open the printed link again" is the reload that must keep a pin. Where JSON is expected, the order of keys, nodes and edges may differ, and a key the expected body omits is absent.
 
@@ -68,8 +70,8 @@ Paste the `export` line it prints into the second terminal. `app` imports `infra
 9. Double-click `app`, click `a.ts`, then click `db.ts` in the panel.
    **Expect:** the app view shows the red boxes `a.ts` and `b.ts` and no `a.test.ts`. The panel for `a.ts` lists `db.ts` under `Imports`. After clicking it the address bar reads `http://127.0.0.1:4800/#at=src/infra`, the `db.ts` box is selected, and the panel is headed `db.ts`.
 
-10. Click `src` in the breadcrumb. Drag `domain` until the whole box sits above `app`, and drop it.
-    **Expect:** `domain` stays where it was dropped. The dashed arrow from `app` to `domain` turns red and its tooltip is `points up: app is drawn below domain`. The hollow arrow from `infra` to `domain` turns red and its tooltip is `points up: infra is drawn below domain`. The arrow from `app` to `infra` stays grey. In the second terminal, `curl -s -H "Authorization: Bearer $TOKEN" $U/api/layout` shows `src/domain` under `views` → `src`, with numeric `x` and `y`, and `settings` still `"tests":false,"external":false`.
+10. Click `src` in the breadcrumb. Drag `domain` until the whole box sits above `app` — the top of `domain` is at least `domain`'s own height above the top of `app` — and drop it.
+    **Expect:** `domain` stays where it was dropped. The dashed arrow from `app` to `domain` turns red, stays dashed with a filled head, and its tooltip is `points up: app is drawn below domain`. The arrow from `infra` to `domain` turns red, stays solid with a hollow head, and its tooltip is `points up: infra is drawn below domain`. The arrow from `app` to `infra` stays grey. In the second terminal, `curl -s -H "Authorization: Bearer $TOKEN" $U/api/layout` shows `src/domain` under `views` → `src`, with numeric `x` and `y`, and `settings` still `"tests":false,"external":false`.
 
 11. Open the printed link with `#at=src` added, in a new tab. Then, in that tab, open `http://127.0.0.1:4800/#at=src` with no token.
     **Expect:** the new tab still shows `domain` above `app` and the two red arrows with the same `points up` tooltips. The token-less address shows only `bindweed: use the link bindweed printed in the terminal`.
@@ -77,14 +79,14 @@ Paste the `export` line it prints into the second terminal. `app` imports `infra
 12. In the first terminal press Ctrl-C. Run `node $BW/src/cli.ts --port 4800` again, set `TOKEN` from the new first line, and open the new printed link with `#at=src`.
     **Expect:** the token differs from step 1. `domain` is still above `app`.
 
-13. Click `Rescan`. Double-click `app`, drag `a.ts` to the right of `b.ts` and drop it, click `src` in the breadcrumb, click `Reset layout`, then double-click `app` again.
-    **Expect:** after Rescan, `domain` is still above `app`. After Reset, `app` is above `infra` and `infra` is above `domain`, and no arrow is red. Back in `app`, `a.ts` is still to the right of where the layers would put it. In the second terminal the layout JSON has no `src` key and still has `src/app` → `src/app/a.ts`.
+13. Click `Rescan`. Double-click `app`, drag `a.ts` to the right of `b.ts` and drop it, click `src` in the breadcrumb, check `Tests`, then click `Reset layout`. Double-click `app`.
+    **Expect:** after Rescan, `domain` is still above `app`. After Reset, `app` is above `infra` and `infra` is above `domain`, no arrow is red, and `Tests` is still checked. Back in `app`, `a.ts` is still to the right of where the layers would put it, and `a.test.ts` is on the canvas because Tests stayed on. The layout JSON has no `src` key, still has `src/app` → `src/app/a.ts`, and `"tests":true`.
 
-14. On the app view, click `Reset layout`, then check `Tests`. Open the printed link with `#at=src/app` in a new tab, then uncheck `Tests` there.
-    **Expect:** checking it shows a box `a.test.ts` above the red pair, with a small `test` tag, and an arrow from `a.test.ts` to `a.ts`. The new tab opens with `Tests` already checked and that box visible. Unchecking removes the box and leaves `a.ts` and `b.ts` side by side. `curl -s -H "Authorization: Bearer $TOKEN" $U/api/layout` then has `"tests":false`.
+14. On the app view, click `Reset layout`. Click `a.ts`. Open the printed link with `#at=src/app` in a new tab, then uncheck `Tests` there.
+    **Expect:** `Tests` is still checked, and `a.ts` is back beside `b.ts`. `a.test.ts` is above that pair, with a small `test` tag, and an arrow runs from `a.test.ts` to `a.ts`. Under Imported by the only buttons are `b.ts` and `a.test.ts`, each with `1 runtime · 0 type-only · 0 extends/implements`. The new tab opens with `Tests` already checked and that box visible. Unchecking removes the box and leaves `a.ts` and `b.ts` side by side. `curl -s -H "Authorization: Bearer $TOKEN" $U/api/layout` then has `"tests":false`.
 
-15. Open the src view and check `External packages`, then uncheck it.
-    **Expect:** a box `node:fs` with a dashed border appears below `domain`, with an arrow from `infra` to it. `domain` stays green and stays above `node:fs`. The `app`, `infra` and `domain` rows are otherwise unchanged. Unchecking removes the `node:fs` box. The layout JSON has `"external":false` after the uncheck.
+15. Open the src view and check `External packages`. Click `infra`, then uncheck `External packages`.
+    **Expect:** a box `node:fs` with a dashed border appears below `domain`, with an arrow from `infra` to it. `domain` stays green and stays above `node:fs`. The `app`, `infra` and `domain` rows are otherwise unchanged. Under Imports the only buttons are `domain` and `node:fs`, and `node:fs` shows `1 runtime · 0 type-only · 0 extends/implements`. Unchecking removes the `node:fs` box, and the panel no longer shows `node:fs`. The layout JSON has `"external":false` after the uncheck.
 
 16. In the second terminal save a pin on the cell `main.ts` will want, add that file, and rescan:
 
@@ -92,11 +94,12 @@ Paste the `export` line it prints into the second terminal. `app` imports `infra
     curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X PUT $U/api/layout \
       --data '{"version":1,"views":{"src":{"src/app":{"x":0,"y":0}}},"settings":{"tests":false,"external":false}}'
     printf "import { a } from './app/a';\n" > $QA/layered/src/main.ts
-    curl -s -X POST -H "Authorization: Bearer $TOKEN" $U/api/rescan
+    curl -s -X POST -H "Authorization: Bearer $TOKEN" $U/api/rescan; echo
+    curl -s -H "Authorization: Bearer $TOKEN" "$U/api/graph?at=src"; echo
     ```
 
     Reload the src view with the printed link.
-    **Expect:** the rescan body holds `"files":8`. On the canvas `app` and `main.ts` share the top row, with `main.ts` to the right of `app`, not on top of it. `infra` is below that row and `domain` below `infra`. The graph JSON still gives `main.ts` row 0 and `app` row 1: the pin does not change `row`.
+    **Expect:** the rescan body holds `"files":8` and `"ms"` a number, and it has no `row`. The graph body has `main.ts` at row 0 and `app` at row 1. On the canvas `app` and `main.ts` share the top row, with `main.ts` to the right of `app`, not on top of it. `infra` is below that row and `domain` below `infra`. The pin does not change `row`.
 
 17. Replace the layout with a pin for a file that is not there, and open the domain view:
 
@@ -111,5 +114,32 @@ Paste the `export` line it prints into the second terminal. `app` imports `infra
 18. Double-click `shape.ts`. In the second terminal run `curl -s -H "Authorization: Bearer $TOKEN" "$U/api/file?path=src/domain/model.ts"`.
     **Expect:** the page is on the Files tab, the right side shows the header `src/domain/shape.ts` and line 1 `export interface Shape { draw(): void }`, and the address bar reads `http://127.0.0.1:4800/#file=src/domain/shape.ts`. The curl body is `{"path":"src/domain/model.ts","text":"export interface Model { id: number }\n"}`.
 
-19. In the first terminal press Ctrl-C, then run `grep -n 'api/layout\|api/detail\|api/graph\|api/rescan' $BW/README.md` and `rm -rf $QA`.
+19. Overwrite the layout with bytes that are not JSON, then reject a later write. In the second terminal:
+
+    ```sh
+    printf 'not json' > $QA/layered/.bindweed/layout.json
+    cp $QA/layered/.bindweed/layout.json /tmp/layout-corrupt
+    curl -s -H "Authorization: Bearer $TOKEN" $U/api/layout; echo
+    cmp /tmp/layout-corrupt $QA/layered/.bindweed/layout.json && echo 'corrupt bytes unchanged'
+    curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X PUT $U/api/layout \
+      --data '{"version":1,"views":{"src":{"src/domain":{"x":3,"y":4}}},"settings":{"tests":true,"external":false}}'
+    echo
+    cp $QA/layered/.bindweed/layout.json /tmp/layout-valid
+    curl -si -H "Authorization: Bearer $TOKEN" -X PUT $U/api/layout --data 'not json'
+    cmp /tmp/layout-valid $QA/layered/.bindweed/layout.json && echo 'valid bytes unchanged'
+    ```
+
+    **Expect:** the GET body is `{"version":1,"views":{},"settings":{"tests":false,"external":false}}` and the first `cmp` prints `corrupt bytes unchanged`. The PUT of the document returns that same JSON. The PUT of `not json` is status 400 and body `{"error":"bad layout"}`. The second `cmp` prints `valid bytes unchanged`.
+
+20. Pin `a.ts` more than half a box above `b.ts` and open the app view:
+
+    ```sh
+    curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X PUT $U/api/layout \
+      --data '{"version":1,"views":{"src/app":{"src/app/a.ts":{"x":0,"y":-400}}},"settings":{"tests":false,"external":false}}'
+    ```
+
+    Open the printed link with `#at=src/app`.
+    **Expect:** `a.ts` sits about 400 pixels above `b.ts`, more than half a box. Both boxes stay red. The arrow from `b.ts` to `a.ts` is solid with a filled head and no number, and its tooltip is `points up: b.ts is drawn below a.ts`, not the cycle sentence. The arrow from `a.ts` to `b.ts` has the tooltip `a.ts → b.ts → a.ts`.
+
+21. In the first terminal press Ctrl-C, then run `grep -n 'api/layout\|api/detail\|api/graph\|api/rescan' $BW/README.md` and `rm -rf $QA`.
     **Expect:** the Routes table has live rows for `/api/graph`, `/api/rescan`, `/api/layout` and `/api/detail`, and the earlier live rows for `/`, `/assets/`, `/api/tree` and `/api/file` are still there. The playground is gone.
