@@ -9,24 +9,23 @@ Feature: the Architecture canvas colours boxes by health and lists Martin's pack
   covered statements divided by statements whose statementMap location lies inside the
   function's line span. The task names statementMap and s, and does not name branches;
   marestail's ts_crap.py also counts branch arms, and that extra count is not part of
-  this task. A function with no statements inside its span is fully covered. File and
-  package coverage stay a sum of statements, branches included nowhere. The en dash in
-  every missing number below is U+2013. CRAP is shown as an integer when it is a whole
-  number, otherwise to two decimals; coverage, I, A and D are always two decimals.
-  A report is stale when its mtime is strictly older than the newest mtime among scanned
-  source files. Reports are read from the served repository root, not from [ts] root.
-  Coverage keys and mutation file keys are absolute paths, or paths relative to that
-  root; any other key is ignored. A file with no coverage entry has CRAP "–" and is left
-  out of a coverage sum; a file with no mutation entry counts 0 surviving mutants.
-  Tests and external packages never enter Ca, Ce, I, A, D or zone, even while their
-  checkboxes are on. File nodes have no zone. The overlay choice is a third settings
-  field and does not change tests or external. GET /api/graph and GET /api/detail gain
-  fields and otherwise keep the 003 bodies.
+  this task. A function whose span holds no statement is fully covered. File and package
+  coverage stay a sum of statements, branches counted nowhere. The en dash in every
+  missing number below is U+2013. CRAP is shown as a whole number when it is whole,
+  otherwise to two decimals; coverage, I, A and D are always two decimals. A report is
+  stale when its mtime is strictly older than the newest mtime among scanned source
+  files; equal mtimes are fresh. Reports are read from the served repository root, not
+  from [ts] root. A coverage or mutation key is an absolute path inside that root, or a
+  path relative to it; any other key is ignored. A file with no coverage entry has CRAP
+  "–" and is left out of a coverage sum; a file with no mutation entry counts 0 surviving
+  mutants. Tests and external packages never enter Ca, Ce, I, A, D or zone, even while
+  their checkboxes are on. A file node has no zone. The overlay choice is a third
+  settings field and does not change tests or external. GET /api/graph and GET /api/detail
+  gain fields and otherwise keep the 003 bodies.
 
   Conventions: "bindweed" is "node <bindweed dir>/src/cli.ts"; /tmp/qa is a fresh temporary
   directory; bindweed serves /tmp/qa/healthy on port 4900 unless a scenario says otherwise;
-  {token} is the token of the bindweed that scenario started and {root} is the served
-  repository's absolute path with no trailing slash; "with the token" means
+  {token} is the token of the bindweed that scenario started; "with the token" means
   "Authorization: Bearer ***"; requests carry "Host: 127.0.0.1:4900" unless a scenario sets
   another. JSON is compared as JSON. A key these bodies omit is absent, not present with
   a default. In a table cell \n is a newline. Each scenario starts from the Background again.
@@ -62,13 +61,13 @@ Feature: the Architecture canvas colours boxes by health and lists Martin's pack
       | src/infra/db.ts     | import { Model } from '../domain/model';\nexport const query = new Model();\n                                                                    |
       | src/infra/repo.ts   | import { readFileSync } from 'node:fs';\nimport React from 'react';\nimport { Shape } from '../domain/shape';\nexport class Repo implements Shape { draw(): void { readFileSync('/dev/null'); } }\n |
     And "/tmp/qa/bare" is a git repository with "src/only.ts" committed, holding "export const n = 1;\n", and no marestail.toml
-    And the coverage report of "/tmp/qa/healthy" is the file ".marestail/ts-coverage/coverage-final.json" holding this JSON, {root} filled with that repository's absolute path:
+    And the coverage report of "/tmp/qa/healthy" is the file ".marestail/ts-coverage/coverage-final.json" holding this JSON:
       """
-      {"{root}/src/green.ts":{"statementMap":{"0":{"start":{"line":2}},"1":{"start":{"line":3}},"2":{"start":{"line":4}}},"s":{"0":1,"1":1,"2":1},"fnMap":{},"f":{},"branchMap":{},"b":{}},"{root}/src/amber.ts":{"statementMap":{"0":{"start":{"line":2}},"1":{"start":{"line":3}},"2":{"start":{"line":4}},"3":{"start":{"line":5}}},"s":{"0":1,"1":0,"2":1,"3":0},"fnMap":{},"f":{},"branchMap":{},"b":{}},"{root}/src/red.ts":{"statementMap":{"0":{"start":{"line":2}},"1":{"start":{"line":3}},"2":{"start":{"line":4}},"3":{"start":{"line":5}}},"s":{"0":0,"1":0,"2":0,"3":0},"fnMap":{},"f":{},"branchMap":{},"b":{}},"{root}/src/plain.ts":{"statementMap":{"0":{"start":{"line":1}}},"s":{"0":1},"fnMap":{},"f":{},"branchMap":{},"b":{}},"{root}/src/clean.ts":{"statementMap":{"0":{"start":{"line":1}}},"s":{"0":1},"fnMap":{},"f":{},"branchMap":{},"b":{}}}
+      {"src/green.ts":{"statementMap":{"0":{"start":{"line":2}},"1":{"start":{"line":3}},"2":{"start":{"line":4}}},"s":{"0":1,"1":1,"2":1},"fnMap":{},"f":{},"branchMap":{},"b":{}},"src/amber.ts":{"statementMap":{"0":{"start":{"line":2}},"1":{"start":{"line":3}},"2":{"start":{"line":4}},"3":{"start":{"line":5}}},"s":{"0":1,"1":0,"2":1,"3":0},"fnMap":{},"f":{},"branchMap":{},"b":{}},"src/red.ts":{"statementMap":{"0":{"start":{"line":2}},"1":{"start":{"line":3}},"2":{"start":{"line":4}},"3":{"start":{"line":5}}},"s":{"0":0,"1":0,"2":0,"3":0},"fnMap":{},"f":{},"branchMap":{},"b":{}},"src/plain.ts":{"statementMap":{"0":{"start":{"line":1}}},"s":{"0":1},"fnMap":{},"f":{},"branchMap":{},"b":{}},"src/clean.ts":{"statementMap":{"0":{"start":{"line":1}}},"s":{"0":1},"fnMap":{},"f":{},"branchMap":{},"b":{}}}
       """
-    And the mutation report of "/tmp/qa/healthy" is the file "reports/mutation/mutation.json" holding this JSON, {root} filled the same way:
+    And the mutation report of "/tmp/qa/healthy" is the file "reports/mutation/mutation.json" holding this JSON:
       """
-      {"files":{"{root}/src/plain.ts":{"mutants":[{"status":"Survived"},{"status":"NoCoverage"},{"status":"Survived"}]},"{root}/src/clean.ts":{"mutants":[{"status":"Killed"},{"status":"Timeout"}]},"{root}/src/green.ts":{"mutants":[{"status":"Killed"}]}}}
+      {"files":{"src/plain.ts":{"mutants":[{"status":"Survived"},{"status":"NoCoverage"},{"status":"Survived"}]},"src/clean.ts":{"mutants":[{"status":"Killed"},{"status":"Timeout"}]},"src/green.ts":{"mutants":[{"status":"Killed"}]}}}
       """
     And both of those reports are newer than every source file in "/tmp/qa/healthy"
 
@@ -105,7 +104,8 @@ Feature: the Architecture canvas colours boxes by health and lists Martin's pack
       When I send "GET /api/graph" with the token
       Then the only node is "src"
       And that node has crap 42, coverage "0.54" and mutants 3
-      And it has "files" 5, "row" 0, "order" 0 and "cycle" false
+      And it has "files" 5, "row" 0, "order" 0, ca 0, ce 0, i "–", a "0.00", d "–" and no zone field
+      And it has "cycle" false
       And the body has "at" "" and one crumb "healthy" at ""
       And the body has no edges
 
@@ -191,12 +191,13 @@ Feature: the Architecture canvas colours boxes by health and lists Martin's pack
       When I send "GET /api/graph" with the token
       Then the body has "crapMax" 4, "coverage" "off" and "mutation" "off"
 
-    Scenario: A relative coverage key counts and a key outside the repository does not
-      Given the coverage report keys "src/green.ts" by its repository-relative path and keys "src/amber.ts" by "/tmp/elsewhere/amber.ts"
-      And every other coverage entry is absent
+    Scenario: An absolute key inside the repository counts and a key outside it does not
+      Given the coverage report keys "src/green.ts" by its absolute path under the served repository and keys "src/amber.ts" by "/tmp/elsewhere/amber.ts"
+      And the mutation report keys "src/plain.ts" by its absolute path under the served repository and leaves its other entries as they are
       When I send "GET /api/graph?at=src" with the token
       Then the node "src/green.ts" has crap 3 and coverage "1.00"
       And the node "src/amber.ts" has crap "–" and no coverage field
+      And the node "src/plain.ts" has mutants 3
 
     Scenario: Rescan reads the reports again and writes nothing but the cache
       Given I noted the mtime of every file outside ".bindweed"
@@ -212,23 +213,28 @@ Feature: the Architecture canvas colours boxes by health and lists Martin's pack
     A file that imports three files outside counts once. I is Ce divided by Ca plus Ce,
     and "–" when both are 0. A is the abstract files divided by the files, using the 003
     meaning of an abstract file. D is the absolute value of A plus I minus 1, and "–"
-    when I is. Zone is "pain" when D is greater than 0.5 and A plus I is less than 1,
-    "useless" when D is greater than 0.5 and A plus I is greater than 1, and "healthy"
-    otherwise, including when D is 0.5. Tests and external packages never count. File
-    nodes have Ca, Ce, I, A and D, and no zone: a file's Ca is the files that import it,
-    its Ce is the files it imports, and its A is 1 when it is abstract and 0 otherwise.
-    The layered repository has no reports, so CRAP and coverage are blank and mutants are off.
+    when I is. When I is "–" the node has no zone field and the Metrics Zone cell reads
+    "–". Zone is "pain" when D is greater than 0.5 and A plus I is less than 1, "useless"
+    when D is greater than 0.5 and A plus I is greater than 1, and "healthy" otherwise,
+    including when D is exactly 0.5. Tests and external packages never count, so a test
+    file is neither a file inside nor a file outside. A file node has Ca, Ce, I, A and D
+    and no zone: its Ca is the distinct files that import it and its Ce is the distinct
+    files it imports, tests and external packages left out of both. The layered
+    repository has no reports, so its CRAP and coverage are blank and its mutants are off.
 
     Scenario: The src view of layered has a stable domain, an unstable app and a middle infra
       Given bindweed is serving "/tmp/qa/layered" on port 4900
       When I send "GET /api/graph?at=src" with the token
       Then the status is 200
-      And the node "src/domain" has files 2, ca 2, ce 0, i "0.00", a "1.00", d "0.00" and zone "healthy"
-      And the node "src/app" has files 2, ca 1, ce 2, i "0.67", a "0.00", d "0.33" and zone "healthy"
-      And the node "src/infra" has files 2, ca 1, ce 1, i "0.50", a "0.00", d "0.50" and zone "healthy"
+      And the node "src/domain" has files 2, ca 3, ce 0, i "0.00", a "1.00", d "0.00" and zone "healthy"
+      And the node "src/app" has files 2, ca 0, ce 2, i "1.00", a "0.00", d "0.00" and zone "healthy"
+      And the node "src/infra" has files 2, ca 2, ce 2, i "0.50", a "0.00", d "0.50" and zone "healthy"
       And every node has crap "–" and no coverage field and no mutants field
       And the body has "coverage" "off" and "mutation" "off"
-      And the edges are the three edges of the 003 src view
+      And the edges are exactly:
+        """
+        [{"from":"src/app","to":"src/infra","runtime":2,"type":1,"cycle":false},{"from":"src/app","to":"src/domain","runtime":0,"type":1,"cycle":false},{"from":"src/infra","to":"src/domain","runtime":2,"type":0,"heritage":1,"cycle":false}]
+        """
 
     Scenario: The root package of layered imports nothing and is imported by nothing
       Given bindweed is serving "/tmp/qa/layered" on port 4900
@@ -240,7 +246,7 @@ Feature: the Architecture canvas colours boxes by health and lists Martin's pack
     Scenario: A file in the app view counts its own fan-in and fan-out
       Given bindweed is serving "/tmp/qa/layered" on port 4900
       When I send "GET /api/graph?at=src/app" with the token
-      Then the node "src/app/a.ts" has ca 1, ce 3, i "0.75", a "0.00" and d "0.25"
+      Then the node "src/app/a.ts" has ca 1, ce 4, i "0.80", a "0.00" and d "0.20"
       And the node "src/app/b.ts" has ca 1, ce 2, i "0.67", a "0.00" and d "0.33"
       And neither node has a zone field
       And neither node is named "a.test.ts"
@@ -248,36 +254,40 @@ Feature: the Architecture canvas colours boxes by health and lists Martin's pack
     Scenario: Turning tests on does not change a package's numbers
       Given bindweed is serving "/tmp/qa/layered" on port 4900
       When I send "GET /api/graph?at=src&tests=1" with the token
-      Then the node "src/app" has files 3, ca 1, ce 2, i "0.67", a "0.00", d "0.33" and zone "healthy"
-      And the node "src/domain" has ca 2 and ce 0
+      Then the node "src/app" has files 3, ca 0, ce 2, i "1.00", a "0.00", d "0.00" and zone "healthy"
+      And the node "src/domain" has ca 3 and ce 0
+      When I send "GET /api/graph?at=src/app&tests=1" with the token
+      Then the node "src/app/a.ts" has ca 1, ce 4, i "0.80", a "0.00" and d "0.20"
       When I send "GET /api/detail?id=src/app&at=src&tests=1" with the token
-      Then the body has files 3, ca 1, ce 2, i "0.67", a "0.00", d "0.33" and zone "healthy"
+      Then the body has files 3, ca 0, ce 2, i "1.00", a "0.00", d "0.00" and zone "healthy"
 
     Scenario: An external import does not count as fan-out
       Given bindweed is serving "/tmp/qa/layered" on port 4900
       When I send "GET /api/graph?at=src&external=1" with the token
-      Then the node "src/infra" has ca 1, ce 1, i "0.50", a "0.00", d "0.50" and zone "healthy"
+      Then the node "src/infra" has ca 2, ce 2, i "0.50", a "0.00", d "0.50" and zone "healthy"
       And the node "node:fs" has no ca field and no zone field
       When I send "GET /api/detail?id=node:fs&at=src&external=1" with the token
       Then the body has no ca field, no ce field, no i field, no a field, no d field and no zone field
 
-    Scenario: A package that nothing touches is pain, and a package everyone abstracts through is useless
+    Scenario: A package nothing imports is pain, a pure-abstraction consumer is useless, and D of 0.5 is healthy
       Given "/tmp/qa/zones" is a git repository with these files committed:
-        | path          | content                                              |
-        | src/pain/a.ts | export const a = 1;\n                                |
-        | src/use/b.ts  | export interface B { n: number }\n                     |
-        | src/use/c.ts  | import type { B } from '../use/b';\nexport type C = B;\n |
-        | src/mid/d.ts  | import { a } from '../pain/a';\nexport const d = a;\n      |
+        | path          | content                                                                                     |
+        | src/pain/a.ts | export const a = 1;\n                                                                       |
+        | src/use/b.ts  | export interface B { n: number }\n                                                          |
+        | src/use/c.ts  | import type { B } from './b';\nimport type { D } from '../mid/d';\nexport type C = B \| D;\n |
+        | src/mid/d.ts  | import { a } from '../pain/a';\nexport const d = a;\nexport type D = typeof a;\n           |
       And bindweed is serving "/tmp/qa/zones" on port 4900
       When I send "GET /api/graph?at=src" with the token
       Then the node "src/pain" has files 1, ca 1, ce 0, i "0.00", a "0.00", d "1.00" and zone "pain"
-      And the node "src/use" has files 2, ca 0, ce 0, i "–", a "1.00", d "–" and zone "useless"
-      And the node "src/mid" has files 1, ca 0, ce 1, i "1.00", a "0.00", d "0.00" and zone "healthy"
+      And the node "src/use" has files 2, ca 0, ce 1, i "1.00", a "1.00", d "1.00" and zone "useless"
+      And the node "src/mid" has files 1, ca 1, ce 1, i "0.50", a "0.00", d "0.50" and zone "healthy"
 
-  Rule: The overlay and the table are remembered, and a bad layout is still refused
-    settings gains "overlay", one of "none", "crap", "coverage" and "mutants". A document
-    that 003 accepted, with no overlay field, still reads, and its overlay is "none".
-    A document with any other overlay value is refused. GET still writes nothing.
+  Rule: The overlay is remembered, and a bad layout is still refused
+    settings holds "tests", "external" and, once one was chosen, "overlay", one of "none",
+    "crap", "coverage" and "mutants". A settings object of just "tests" and "external" is
+    still a valid 003 document, it reads as overlay "none", and GET returns the document
+    exactly as it was stored. A settings object with any other overlay value, or with any
+    other key, is refused. A rejected PUT leaves the file as it was. GET still writes nothing.
 
     Scenario: A saved overlay is returned and a 003 document still reads
       When I send "PUT /api/layout" with the token and this body:
@@ -288,12 +298,15 @@ Feature: the Architecture canvas colours boxes by health and lists Martin's pack
       And "GET /api/layout" with the token returns that same JSON
       Given the file "/tmp/qa/healthy/.bindweed/layout.json" contains exactly the bytes of "{\"version\":1,\"views\":{},\"settings\":{\"tests\":true,\"external\":false}}"
       When I send "GET /api/layout" with the token
-      Then the status is 200 and the body is {"version":1,"views":{},"settings":{"tests":true,"external":false,"overlay":"none"}}
+      Then the status is 200 and the body is {"version":1,"views":{},"settings":{"tests":true,"external":false}}
       And the file's bytes are unchanged
 
     Scenario: An unknown overlay is refused and the file is left as it was
       Given "PUT /api/layout" has saved {"version":1,"views":{},"settings":{"tests":false,"external":false,"overlay":"none"}}
       When I send "PUT /api/layout" with the token and the body "{\"version\":1,\"views\":{},\"settings\":{\"tests\":false,\"external\":false,\"overlay\":\"zones\"}}"
+      Then the status is 400 and the body is {"error":"bad layout"}
+      And "GET /api/layout" with the token still returns overlay "none"
+      When I send "PUT /api/layout" with the token and the body "{\"version\":1,\"views\":{},\"settings\":{\"tests\":false,\"external\":false,\"overlay\":\"crap\",\"zones\":1}}"
       Then the status is 400 and the body is {"error":"bad layout"}
       And "GET /api/layout" with the token still returns overlay "none"
 
@@ -320,13 +333,15 @@ Feature: the Architecture canvas colours boxes by health and lists Martin's pack
     The Overlay combobox sits in the Architecture toolbar and offers None, CRAP, Coverage
     and Surviving mutants. A disabled option has the tooltip named in the scenario, and
     choosing a disabled option does nothing. The choice is saved as settings.overlay.
-    The stale badge is shown next to the combobox when the selected report is stale.
-    The Metrics button toggles the drawer. The drawer lists every package node in the
-    current view and no file node, one row each, columns Name, Files, Ca, Ce, I, A, D,
-    Zone, CRAP, Coverage and Mutants. It opens sorted by D descending, "–" sorting last,
-    and a click on a header sorts by that column, toggling direction. A click on a row
-    selects that box. The details panel shows the same numbers for the selected box, and
-    for a file adds a Hot functions list of the functions over the limit.
+    The stale badge is shown next to the combobox when the selected overlay's report is
+    stale; None has no report, so it shows no badge. The Metrics button toggles the
+    drawer. The drawer lists every package node in the current view and no file node, one
+    row each, columns Name, Files, Ca, Ce, I, A, D, Zone, CRAP, Coverage and Mutants.
+    It opens sorted by D descending, "–" sorting last and ties broken by name ascending.
+    A click on a header sorts by that column, descending on the first click on a new
+    column and toggling direction after that; ties still break by name ascending. A click
+    on a row selects that box. The details panel shows the same numbers for the selected
+    box, and for a file adds a Hot functions list of the functions over the limit.
 
     Scenario: CRAP colours the three functions green, amber and red
       When I open "http://127.0.0.1:4900/?token={token}#at=src" in a browser
@@ -342,8 +357,8 @@ Feature: the Architecture canvas colours boxes by health and lists Martin's pack
       Then the Overlay combobox shows "CRAP" and the "red.ts" badge still reads "42"
 
     Scenario: Coverage and mutants colour by their own scales
-      Given the Architecture tab shows the "src" view and Overlay is "None"
-      When I choose "Coverage" in the Overlay combobox
+      When I open "http://127.0.0.1:4900/?token={token}#at=src" in a browser
+      And I choose "Coverage" in the Overlay combobox
       Then the "green.ts" badge reads "1.00" and its data-health is "green"
       And the "amber.ts" badge reads "0.50" and its data-health is "red"
       And the "red.ts" badge reads "0.00" and its data-health is "red"
@@ -376,9 +391,9 @@ Feature: the Architecture canvas colours boxes by health and lists Martin's pack
       And I click "Metrics"
       Then the Metrics drawer is shown
       And its rows are "infra", "app", "domain", in that order
-      And the "infra" row reads Files 2, Ca 1, Ce 1, I 0.50, A 0.00, D 0.50, Zone healthy, CRAP "–", Coverage "–", Mutants "–"
-      And the "app" row reads Files 2, Ca 1, Ce 2, I 0.67, A 0.00, D 0.33, Zone healthy, CRAP "–", Coverage "–", Mutants "–"
-      And the "domain" row reads Files 2, Ca 2, Ce 0, I 0.00, A 1.00, D 0.00, Zone healthy, CRAP "–", Coverage "–", Mutants "–"
+      And the "infra" row reads Files 2, Ca 2, Ce 2, I 0.50, A 0.00, D 0.50, Zone healthy, CRAP "–", Coverage "–", Mutants "–"
+      And the "app" row reads Files 2, Ca 0, Ce 2, I 1.00, A 0.00, D 0.00, Zone healthy, CRAP "–", Coverage "–", Mutants "–"
+      And the "domain" row reads Files 2, Ca 3, Ce 0, I 0.00, A 1.00, D 0.00, Zone healthy, CRAP "–", Coverage "–", Mutants "–"
       And the D header carries aria-sort "descending"
       When I click the I header
       Then the rows are "app", "infra", "domain" and the I header carries aria-sort "descending"
