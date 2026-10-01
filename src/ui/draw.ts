@@ -107,22 +107,6 @@ export type MetricsRow = { id: string; name: string; cells: Record<SortKey, stri
 
 export type MetricLine = { label: string; value: string };
 
-export const COLUMNS: SortKey[] = ['name', 'files', 'ca', 'ce', 'i', 'a', 'd', 'zone', 'crap', 'coverage', 'mutants'];
-
-export const COLUMN_LABELS: Record<SortKey, string> = {
-  name: 'Name',
-  files: 'Files',
-  ca: 'Ca',
-  ce: 'Ce',
-  i: 'I',
-  a: 'A',
-  d: 'D',
-  zone: 'Zone',
-  crap: 'CRAP',
-  coverage: 'Coverage',
-  mutants: 'Mutants',
-};
-
 export const DEFAULT_LIMIT = 4;
 
 export const OVERLAY_OPTIONS: { value: OverlayName; label: string }[] = [
@@ -132,30 +116,25 @@ export const OVERLAY_OPTIONS: { value: OverlayName; label: string }[] = [
   { value: 'mutants', label: 'Surviving mutants' },
 ];
 
-function missingText(value: string | undefined): string {
+type CrapValue = number | '–' | undefined;
+
+type Measured = HealthFacts & { name: string; files?: number };
+
+function dash(value: string | undefined): string {
   return value ?? DASH;
 }
 
-function numberText(value: number | undefined): string {
+function countText(value: number | undefined): string {
   if (value === undefined) return DASH;
   return String(value);
 }
 
-function crapText(value: number | '–' | undefined): string {
+function crapText(value: CrapValue): string {
   if (typeof value !== 'number') return DASH;
   return Number.isInteger(value) ? String(value) : value.toFixed(2);
 }
 
-function mutantsText(value: number | undefined): string {
-  if (value === undefined) return DASH;
-  return String(value);
-}
-
-function zoneText(value: Zone | undefined): string {
-  return value ?? DASH;
-}
-
-function crapLevel(value: number | '–' | undefined, limit: number): Level | null {
+function crapLevel(value: CrapValue, limit: number): Level | null {
   if (typeof value !== 'number') return null;
   if (value <= limit) return 'green';
   if (value <= limit * 2) return 'amber';
@@ -177,18 +156,26 @@ function mutantsLevel(value: number | undefined): Level | null {
   return 'red';
 }
 
+const BADGE_TEXT: Record<Exclude<OverlayName, 'none'>, (facts: HealthFacts) => string> = {
+  crap: facts => crapText(facts.crap),
+  coverage: facts => dash(facts.coverage),
+  mutants: facts => countText(facts.mutants),
+};
+
+const BADGE_LEVEL: Record<Exclude<OverlayName, 'none'>, (facts: HealthFacts, limit: number) => Level | null> = {
+  crap: (facts, limit) => crapLevel(facts.crap, limit),
+  coverage: facts => coverageLevel(facts.coverage),
+  mutants: facts => mutantsLevel(facts.mutants),
+};
+
 export function badgeText(overlay: OverlayName, facts: HealthFacts): string | null {
-  if (overlay === 'crap') return crapText(facts.crap);
-  if (overlay === 'coverage') return missingText(facts.coverage);
-  if (overlay === 'mutants') return mutantsText(facts.mutants);
-  return null;
+  if (overlay === 'none') return null;
+  return BADGE_TEXT[overlay](facts);
 }
 
 export function badgeLevel(overlay: OverlayName, facts: HealthFacts, limit: number): Level | null {
-  if (overlay === 'crap') return crapLevel(facts.crap, limit);
-  if (overlay === 'coverage') return coverageLevel(facts.coverage);
-  if (overlay === 'mutants') return mutantsLevel(facts.mutants);
-  return null;
+  if (overlay === 'none') return null;
+  return BADGE_LEVEL[overlay](facts, limit);
 }
 
 function reportFor(overlay: OverlayName, flags: ReportFacts): string | null {
@@ -232,71 +219,67 @@ export function overlayChoice(value: string, current: OverlayName, flags: Report
 }
 
 export function detailLines(facts: HealthFacts): MetricLine[] {
-  return [
-    { label: 'Ca', value: numberText(facts.ca) },
-    { label: 'Ce', value: numberText(facts.ce) },
-    { label: 'I', value: missingText(facts.i) },
-    { label: 'A', value: missingText(facts.a) },
-    { label: 'D', value: missingText(facts.d) },
-    { label: 'Zone', value: zoneText(facts.zone) },
-    { label: 'CRAP', value: crapText(facts.crap) },
-    { label: 'Coverage', value: missingText(facts.coverage) },
-    { label: 'Mutants', value: mutantsText(facts.mutants) },
-  ];
+  const lines: MetricLine[] = [];
+  const measured: Measured = { ...facts, name: '' };
+  for (const column of COLUMN_LIST) {
+    if (!column.detail) continue;
+    lines.push({ label: column.label, value: column.text(measured) });
+  }
+  return lines;
 }
 
 export function hotRow(fn: HotFacts): string {
   return `${fn.name} · line ${fn.line} · cc ${fn.cc} · coverage ${fn.coverage}`;
 }
 
-function numberCell(value: number | undefined): CellValue {
-  return value ?? null;
-}
-
-function crapCell(value: number | '–' | undefined): CellValue {
+function crapValue(value: CrapValue): CellValue {
   if (typeof value !== 'number') return null;
   return value;
 }
 
-function decimalCell(value: string | undefined): CellValue {
+function ratioValue(value: string | undefined): CellValue {
   if (value === undefined || value === DASH) return null;
   return Number(value);
 }
 
-function zoneCell(value: Zone | undefined): CellValue {
-  return value ?? null;
+type Column = {
+  key: SortKey;
+  label: string;
+  detail: boolean;
+  text: (box: Measured) => string;
+  value: (box: MetricBox) => CellValue;
+};
+
+const COLUMN_LIST: Column[] = [
+  { key: 'name', label: 'Name', detail: false, text: box => box.name, value: box => box.name },
+  { key: 'files', label: 'Files', detail: false, text: box => countText(box.files), value: box => box.files ?? null },
+  { key: 'ca', label: 'Ca', detail: true, text: box => countText(box.ca), value: box => box.ca ?? null },
+  { key: 'ce', label: 'Ce', detail: true, text: box => countText(box.ce), value: box => box.ce ?? null },
+  { key: 'i', label: 'I', detail: true, text: box => dash(box.i), value: box => ratioValue(box.i) },
+  { key: 'a', label: 'A', detail: true, text: box => dash(box.a), value: box => ratioValue(box.a) },
+  { key: 'd', label: 'D', detail: true, text: box => dash(box.d), value: box => ratioValue(box.d) },
+  { key: 'zone', label: 'Zone', detail: true, text: box => dash(box.zone), value: box => box.zone ?? null },
+  { key: 'crap', label: 'CRAP', detail: true, text: box => crapText(box.crap), value: box => crapValue(box.crap) },
+  { key: 'coverage', label: 'Coverage', detail: true, text: box => dash(box.coverage), value: box => ratioValue(box.coverage) },
+  { key: 'mutants', label: 'Mutants', detail: true, text: box => countText(box.mutants), value: box => box.mutants ?? null },
+];
+
+function recordFrom<T>(pick: (column: Column) => T): Record<SortKey, T> {
+  const record: Partial<Record<SortKey, T>> = {};
+  for (const column of COLUMN_LIST) record[column.key] = pick(column);
+  return record as Record<SortKey, T>;
 }
 
+export const COLUMNS: SortKey[] = COLUMN_LIST.map(column => column.key);
+
+export const COLUMN_LABELS: Record<SortKey, string> = recordFrom(column => column.label);
+
 function cellsOf(box: MetricBox): Record<SortKey, string> {
-  return {
-    name: box.name,
-    files: numberText(box.files),
-    ca: numberText(box.ca),
-    ce: numberText(box.ce),
-    i: missingText(box.i),
-    a: missingText(box.a),
-    d: missingText(box.d),
-    zone: zoneText(box.zone),
-    crap: crapText(box.crap),
-    coverage: missingText(box.coverage),
-    mutants: mutantsText(box.mutants),
-  };
+  return recordFrom(column => column.text(box));
 }
 
 function valuesOf(box: MetricBox): Record<SortKey, CellValue> {
-  return {
-    name: box.name,
-    files: numberCell(box.files),
-    ca: numberCell(box.ca),
-    ce: numberCell(box.ce),
-    i: decimalCell(box.i),
-    a: decimalCell(box.a),
-    d: decimalCell(box.d),
-    zone: zoneCell(box.zone),
-    crap: crapCell(box.crap),
-    coverage: decimalCell(box.coverage),
-    mutants: numberCell(box.mutants),
-  };
+  return recordFrom(column => column.value(box));
 }
 
 export function metricRows(boxes: MetricBox[]): MetricsRow[] {

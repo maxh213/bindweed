@@ -296,13 +296,13 @@ function nodeExtras(scan: ScanResult, node: ViewNode, health: Health, index: Mar
   return { ...healthExtras(scan, node, health), ...martinFields(index, node.path, node.kind) };
 }
 
-function fileAt(scan: ScanResult, path: string): ScannedFile {
-  return scan.files.filter(file => file.path === path)[0];
+function fileByPath(scan: ScanResult, path: string): ScannedFile {
+  return scan.files.find(file => file.path === path) as ScannedFile;
 }
 
 function hotFields(scan: ScanResult, node: ViewNode | ExternalNode, health: Health): { hot?: HotFunction[] } {
   if (node.kind !== 'file') return {};
-  return { hot: fileStats(health, fileAt(scan, node.path)).hot };
+  return { hot: fileStats(health, fileByPath(scan, node.path)).hot };
 }
 
 function withExternals(nodes: GraphNode[], edges: ViewEdge[], ext: RawEdge[]): { nodes: GraphNode[]; edges: ViewEdge[] } {
@@ -452,7 +452,7 @@ function nodeMeta(node: GraphNode): { files?: number; abstract?: true } {
 
 function detailExtras(scan: ScanResult, node: ViewNode | ExternalNode, health: Health): Extra {
   if (node.kind === 'external') return {};
-  return { ...healthExtras(scan, node, health), ...martinFields(martinIndex(scan), node.path, node.kind) };
+  return nodeExtras(scan, node, health, martinIndex(scan));
 }
 
 function detailResult(scan: ScanResult, node: GraphNode, at: string, flags: GraphFlags, view: GraphView, health: Health): NodeDetail {

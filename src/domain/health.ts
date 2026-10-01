@@ -34,23 +34,15 @@ export type MartinFields = { ca: number; ce: number; i: string; a: string; d: st
 
 export type MartinIndex = { files: ScannedFile[]; imports: ReadonlyMap<string, ReadonlySet<string>> };
 
-const OFF_HEALTH: Health = {
-  crapMax: 4,
-  coverage: 'off',
-  mutation: 'off',
-  coverageEntries: new Map(),
-  mutantCounts: new Map(),
-};
-
 export function emptyHealth(crapMax = 4): Health {
-  return { ...OFF_HEALTH, crapMax };
+  return { crapMax, coverage: 'off', mutation: 'off', coverageEntries: new Map(), mutantCounts: new Map() };
 }
 
-function coveredCount(entry: CoverageEntry): number {
-  return entry.statements.filter(statement => statement.hits > 0).length;
+function hitCount(statements: CoverageStatement[]): number {
+  return statements.filter(statement => statement.hits > 0).length;
 }
 
-function ratioText(covered: number, total: number): string {
+function coverageRatio(covered: number, total: number): string {
   if (total === 0) return '1.00';
   return (covered / total).toFixed(2);
 }
@@ -59,10 +51,14 @@ function crapOf(cc: number, coverage: number): number {
   return Number((cc * cc * (1 - coverage) ** 3 + cc).toFixed(2));
 }
 
+function statementsInside(entry: CoverageEntry, fn: RawFunction): CoverageStatement[] {
+  return entry.statements.filter(statement => statement.line >= fn.line && statement.line <= fn.endLine);
+}
+
 function functionCoverage(entry: CoverageEntry, fn: RawFunction): number {
-  const inside = entry.statements.filter(statement => statement.line >= fn.line && statement.line <= fn.endLine);
+  const inside = statementsInside(entry, fn);
   if (inside.length === 0) return 1;
-  return coveredCount({ statements: inside }) / inside.length;
+  return hitCount(inside) / inside.length;
 }
 
 function hotOf(entry: CoverageEntry, fn: RawFunction, limit: number): HotFunction | undefined {
@@ -92,24 +88,42 @@ export function fileStats(health: Health, file: FileLike): FileStats {
   const entry = health.coverageEntries.get(file.path);
   if (entry === undefined) return { kind: 'no-entry', hot: [], mutants };
   const functions = file.functions ?? [];
-  return { kind: 'entry', entry, coverage: ratioText(coveredCount(entry), entry.statements.length), crap: fileCrap(entry, functions), hot: hotList(entry, functions, health.crapMax), mutants };
+  return {
+    kind: 'entry',
+    entry,
+    coverage: coverageRatio(hitCount(entry.statements), entry.statements.length),
+    crap: fileCrap(entry, functions),
+    hot: hotList(entry, functions, health.crapMax),
+    mutants,
+  };
 }
 
-function fileCoverageFields(stats: FileStats): HealthFields {
-  if (stats.kind === 'no-entry') return { crap: DASH };
-  if (stats.crap === null) return { coverage: stats.coverage };
-  return { crap: stats.crap, coverage: stats.coverage };
+type Scored = { inReport: false } | { inReport: true; coverage: string; crap: number | null };
+
+function scoredFields(scored: Scored): HealthFields {
+  if (!scored.inReport) return { crap: DASH };
+  if (scored.crap === null) return { coverage: scored.coverage };
+  return { crap: scored.crap, coverage: scored.coverage };
 }
 
-function mutantFields(health: Health, mutants: number, fields: HealthFields): HealthFields {
+function withMutants(health: Health, mutants: number, fields: HealthFields): HealthFields {
   if (health.mutation === 'off') return fields;
   return { ...fields, mutants };
 }
 
+function reportedFields(health: Health, scored: Scored, mutants: number): HealthFields {
+  const base = health.coverage === 'off' ? {} : scoredFields(scored);
+  return withMutants(health, mutants, base);
+}
+
+function fileScore(stats: FileStats): Scored {
+  if (stats.kind === 'no-entry') return { inReport: false };
+  return { inReport: true, coverage: stats.coverage, crap: stats.crap };
+}
+
 export function fileFields(health: Health, file: FileLike): HealthFields {
   const stats = fileStats(health, file);
-  const base = health.coverage === 'off' ? {} : fileCoverageFields(stats);
-  return mutantFields(health, stats.mutants, base);
+  return reportedFields(health, fileScore(stats), stats.mutants);
 }
 
 type PackageAcc = { covered: number; statements: number; hasEntry: boolean; crap: number | null; mutants: number };
@@ -128,7 +142,7 @@ function addStats(acc: PackageAcc, health: Health, file: FileLike): void {
   acc.mutants += stats.mutants;
   if (stats.kind === 'no-entry') return;
   acc.hasEntry = true;
-  acc.covered += coveredCount(stats.entry);
+  acc.covered += hitCount(stats.entry.statements);
   acc.statements += stats.entry.statements.length;
   addCrap(acc, stats.crap);
 }
@@ -136,19 +150,17 @@ function addStats(acc: PackageAcc, health: Health, file: FileLike): void {
 function packageStats(health: Health, files: FileLike[]): PackageStats {
   const acc = freshAcc();
   for (const file of files) addStats(acc, health, file);
-  return { hasEntry: acc.hasEntry, coverage: ratioText(acc.covered, acc.statements), crap: acc.crap, mutants: acc.mutants };
+  return { hasEntry: acc.hasEntry, coverage: coverageRatio(acc.covered, acc.statements), crap: acc.crap, mutants: acc.mutants };
 }
 
-function packageCoverageFields(stats: PackageStats): HealthFields {
-  if (!stats.hasEntry) return { crap: DASH };
-  if (stats.crap === null) return { coverage: stats.coverage };
-  return { crap: stats.crap, coverage: stats.coverage };
+function packageScore(stats: PackageStats): Scored {
+  if (!stats.hasEntry) return { inReport: false };
+  return { inReport: true, coverage: stats.coverage, crap: stats.crap };
 }
 
 export function packageFields(health: Health, files: FileLike[]): HealthFields {
   const stats = packageStats(health, files);
-  const base = health.coverage === 'off' ? {} : packageCoverageFields(stats);
-  return mutantFields(health, stats.mutants, base);
+  return reportedFields(health, packageScore(stats), stats.mutants);
 }
 
 function internalPaths(scan: ScanResult): Set<string> {

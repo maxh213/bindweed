@@ -48,13 +48,13 @@ function boolField(rec: Record<string, unknown>, key: string): boolean | undefin
   return value;
 }
 
-const SETTING_KEYS = ['tests', 'external', 'overlay'];
+const SETTING_KEYS = new Set(['tests', 'external', 'overlay']);
 
 const OVERLAYS: Record<string, Overlay | undefined> = { none: 'none', crap: 'crap', coverage: 'coverage', mutants: 'mutants' };
 
 function knownKeys(rec: Record<string, unknown>): boolean {
   for (const key of Object.keys(rec)) {
-    if (!SETTING_KEYS.includes(key)) return false;
+    if (!SETTING_KEYS.has(key)) return false;
   }
   return true;
 }

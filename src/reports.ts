@@ -26,7 +26,7 @@ const COVERAGE_FILE = ['.marestail', 'ts-coverage', 'coverage-final.json'];
 
 const MUTATION_FILE = ['reports', 'mutation', 'mutation.json'];
 
-const CRAP_MAX_KEY = /crap_max\s*=\s*([0-9]+(?:\.[0-9]+)?)/;
+const CRAP_MAX_KEY = /crap_max\s*=\s*(\d+(?:\.\d+)?)/;
 
 const DEFAULT_CRAP_MAX = 4;
 
@@ -46,14 +46,18 @@ function statementsOf(file: CoverageFile): CoverageStatement[] {
   return Object.keys(file.statementMap).map(id => ({ line: file.statementMap[id].start.line, hits: file.s[id] ?? 0 }));
 }
 
-function coverageEntries(root: string, data: Record<string, CoverageFile> | undefined): Map<string, CoverageEntry> {
-  const entries = new Map<string, CoverageEntry>();
-  if (data === undefined) return entries;
-  for (const [key, file] of Object.entries(data)) {
+function indexReport<T, V>(root: string, rows: Record<string, T> | undefined, valueOf: (row: T) => V): Map<string, V> {
+  const indexed = new Map<string, V>();
+  if (rows === undefined) return indexed;
+  for (const [key, row] of Object.entries(rows)) {
     const path = relativeKey(root, key);
-    if (path !== undefined) entries.set(path, { statements: statementsOf(file) });
+    if (path !== undefined) indexed.set(path, valueOf(row));
   }
-  return entries;
+  return indexed;
+}
+
+function coverageEntries(root: string, data: Record<string, CoverageFile> | undefined): Map<string, CoverageEntry> {
+  return indexReport(root, data, file => ({ statements: statementsOf(file) }));
 }
 
 function survivorsOf(file: { mutants: { status: string }[] }): number {
@@ -61,13 +65,7 @@ function survivorsOf(file: { mutants: { status: string }[] }): number {
 }
 
 function mutantCounts(root: string, data: MutationReport | undefined): Map<string, number> {
-  const counts = new Map<string, number>();
-  if (data === undefined) return counts;
-  for (const [key, file] of Object.entries(data.files)) {
-    const path = relativeKey(root, key);
-    if (path !== undefined) counts.set(path, survivorsOf(file));
-  }
-  return counts;
+  return indexReport(root, data?.files, survivorsOf);
 }
 
 function mtimeOf(full: string): number | undefined {
@@ -119,7 +117,7 @@ function readText(full: string): string | undefined {
 }
 
 function crapMaxIn(text: string): number {
-  const match = text.match(CRAP_MAX_KEY);
+  const match = CRAP_MAX_KEY.exec(text);
   if (match === null) return DEFAULT_CRAP_MAX;
   return Number(match[1]);
 }

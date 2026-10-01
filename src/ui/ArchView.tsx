@@ -205,7 +205,7 @@ function OverlayBox(props: Readonly<{ overlay: OverlayName; flags: ReportFacts; 
   return (
     <span className="overlay-box">
       <label>
-        Overlay
+        Overlay{' '}
         <select aria-label="Overlay" value={props.overlay} onChange={event => props.onChoose(event.currentTarget.value)}>
           {OVERLAY_OPTIONS.map(option => (
             <OverlayOption key={option.value} value={option.value} label={option.label} flags={props.flags} />

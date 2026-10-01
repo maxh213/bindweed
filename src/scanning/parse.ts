@@ -277,8 +277,8 @@ function isFunctionNode(node: ts.Node): boolean {
 }
 
 function isShortCircuit(node: ts.Node): boolean {
-  if (node.kind !== ts.SyntaxKind.BinaryExpression) return false;
-  return SHORT_CIRCUIT.has((node as ts.BinaryExpression).operatorToken.kind);
+  if (!ts.isBinaryExpression(node)) return false;
+  return SHORT_CIRCUIT.has(node.operatorToken.kind);
 }
 
 function bumpCc(node: ts.Node, cc: Cc): void {
@@ -299,21 +299,30 @@ function parentName(parent: ts.Node): string {
   return '<anonymous>';
 }
 
+function declarationName(fn: ts.Node): ts.Node | undefined {
+  if (ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn) || ts.isMethodDeclaration(fn)) return fn.name;
+  return undefined;
+}
+
+function accessorName(fn: ts.Node): ts.Node | undefined {
+  if (ts.isGetAccessor(fn) || ts.isSetAccessor(fn)) return fn.name;
+  return undefined;
+}
+
 function functionName(fn: ts.Node): string {
-  const name = (fn as { name?: ts.Node }).name;
+  const name = declarationName(fn) ?? accessorName(fn);
   if (name === undefined) return parentName(fn.parent);
   return name.getText();
+}
+
+function lineNumber(source: ts.SourceFile, pos: number): number {
+  return source.getLineAndCharacterOfPosition(pos).line + 1;
 }
 
 function measureFunction(fn: ts.Node, source: ts.SourceFile): RawFunction {
   const cc: Cc = { value: 1 };
   countBranches(fn, cc);
-  return {
-    name: functionName(fn),
-    line: source.getLineAndCharacterOfPosition(fn.getStart(source)).line + 1,
-    endLine: source.getLineAndCharacterOfPosition(fn.getEnd()).line + 1,
-    cc: cc.value,
-  };
+  return { name: functionName(fn), line: lineNumber(source, fn.getStart(source)), endLine: lineNumber(source, fn.getEnd()), cc: cc.value };
 }
 
 function collectFunctions(node: ts.Node, source: ts.SourceFile, found: RawFunction[]): void {

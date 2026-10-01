@@ -212,7 +212,7 @@ describe('health reports over HTTP', () => {
     expect(body).toMatchObject({ crap: 42, coverage: '0.54', mutants: 3, files: 5 });
     expect(body.hot).toBeUndefined();
     expect(body.crapMax).toBeUndefined();
-    expect(body.coverage === '0.54').toBe(true);
+    expect(body.coverage).toBe('0.54');
   });
 
   it('A missing coverage entry leaves CRAP blank and drops out of the sum', async () => {
