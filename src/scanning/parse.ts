@@ -205,13 +205,8 @@ function markHeritage(source: ts.SourceFile, drafts: ImportDraft[], bindings: Im
   for (const name of names) countHeritage(name, bindings, declared, drafts);
 }
 
-function modifierList(node: ts.Node): readonly ts.ModifierLike[] | undefined {
-  if (!ts.canHaveModifiers(node)) return undefined;
-  return ts.getModifiers(node);
-}
-
 function hasKind(node: ts.Node, kind: ts.SyntaxKind): boolean {
-  return modifierList(node)?.some(modifier => modifier.kind === kind) ?? false;
+  return ts.getModifiers(node as ts.HasModifiers)?.some(modifier => modifier.kind === kind) ?? false;
 }
 
 function isTypeDeclaration(node: ts.Statement): boolean {

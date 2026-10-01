@@ -84,17 +84,21 @@ describe('graph flags, order and detail', () => {
 
   it('orders external nodes by name', () => {
     const src: ScanResult = {
-      files: [{ path: 'src/repo.ts', test: false }],
+      files: [
+        { path: 'a.ts', test: false },
+        { path: 'b.ts', test: false },
+      ],
       edges: [],
       externals: [
-        { from: 'src/repo.ts', name: 'react', kind: 'runtime' },
-        { from: 'src/repo.ts', name: 'node:fs', kind: 'runtime' },
+        { from: 'a.ts', name: 'zod', kind: 'runtime' },
+        { from: 'b.ts', name: 'react', kind: 'runtime' },
       ],
       workspaces: [],
     };
-    const shown = viewWith(src, 'src', { tests: false, external: true });
-    expect(shown.nodes.map(node => node.id).slice(-2)).toEqual(['node:fs', 'react']);
-    expect(shown.edges.map(edge => edge.to)).toEqual(['node:fs', 'react']);
+    const shown = viewWith(src, '', { tests: false, external: true });
+    expect(shown.nodes.slice(-2).map(node => node.id)).toEqual(['react', 'zod']);
+    expect(shown.nodes.slice(-2).map(node => node.order)).toEqual([0, 1]);
+    expect(shown.nodes.slice(-2).every(node => node.row === 1)).toBe(true);
   });
 
   it('orders detail importedBy entries without files property', () => {
@@ -497,6 +501,8 @@ describe('graphView workspaces', () => {
     expect(detail?.name).toBe('@acme/core');
     expect(detail?.kind).toBe('package');
     expect(detail).not.toHaveProperty('test');
+    const web = nodeDetail(WORKSPACE_SCAN, 'packages/web', '', 'workspace');
+    expect(web?.imports).toEqual([{ id: 'packages/core', name: '@acme/core', kind: 'package', runtime: 1, type: 0, heritage: 0 }]);
   });
 
   it('replaces workspace directories with named boxes at the root', () => {

@@ -196,11 +196,11 @@ const nodeTypes = { box: Box };
 const edgeTypes = { arrow: Arrow };
 
 function isAbstract(node: GraphNode): boolean {
-  return node.kind !== 'external' && node.abstract === true;
+  return (node as { abstract?: true }).abstract === true;
 }
 
 function isTestNode(node: GraphNode): boolean {
-  return node.kind === 'file' && node.test === true;
+  return (node as { test?: true }).test === true;
 }
 
 function countOf(node: GraphNode): string | null {

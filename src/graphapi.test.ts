@@ -284,6 +284,11 @@ describe('the graph api over the workspace fixture', () => {
         ],
         edges: [{ from: 'packages/web', to: 'packages/core', runtime: 1, type: 0, cycle: false }],
       });
+      const detail = await hit(app.port, 'GET', '/api/detail?id=packages/web', { Authorization: `Bearer ${app.token}` });
+      expect(detail.status).toBe(200);
+      expect(json(detail)).toMatchObject({
+        imports: [{ id: 'packages/core', name: '@acme/core', kind: 'package', runtime: 1, type: 0, heritage: 0 }],
+      });
     } finally {
       await closeServer(app.server);
       await rm(dirname(root), { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });

@@ -333,7 +333,8 @@ describe('fetchLayout', () => {
   });
 
   it('uses the empty document when the body is refused or the network fails', async () => {
-    const denied = (async () => jsonResponse(false, EMPTY_LAYOUT)) as typeof fetch;
+    const saved: LayoutDoc = { version: 1, views: { src: { 'src/domain': { x: 1, y: 2 } } }, settings: { tests: true, external: true } };
+    const denied = (async () => jsonResponse(false, saved)) as typeof fetch;
     expect(await fetchLayout('tok', denied)).toEqual(EMPTY_LAYOUT);
     const odd = (async () => jsonResponse(true, { version: 2 })) as typeof fetch;
     expect(await fetchLayout('tok', odd)).toEqual(EMPTY_LAYOUT);

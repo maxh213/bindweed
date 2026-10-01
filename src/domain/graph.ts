@@ -68,10 +68,7 @@ function baseName(path: string): string {
 
 function stripTrailingSlashes(text: string): string {
   let end = text.length;
-  for (let i = 0; i < text.length; i += 1) {
-    if (text.charAt(end - 1) !== '/') break;
-    end -= 1;
-  }
+  while (text.charAt(end - 1) === '/') end -= 1;
   return text.slice(0, end);
 }
 
@@ -378,8 +375,7 @@ function entriesOf(map: Map<string, Tally>, nodes: Map<string, GraphNode>): Deta
 }
 
 function fileMeta(node: GraphNode): { abstract?: true } {
-  if (node.kind !== 'file') return {};
-  if (node.abstract !== true) return {};
+  if ((node as { abstract?: true }).abstract !== true) return {};
   return { abstract: true };
 }
 

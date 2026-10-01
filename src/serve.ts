@@ -229,18 +229,26 @@ async function writeLayout(root: string, doc: LayoutDoc): Promise<void> {
   await writeFile(layoutFile(root), JSON.stringify(doc));
 }
 
-async function putLayout(app: App, req: IncomingMessage, res: ServerResponse): Promise<void> {
+type AcceptedLayout = { ok: true; doc: LayoutDoc } | { ok: false };
+
+function layoutFromText(text: string): AcceptedLayout {
   try {
-    const doc = parseLayout(JSON.parse(await readBody(req)));
-    if (doc === undefined) {
-      sendJson(res, 400, { error: 'bad layout' });
-      return;
-    }
-    await writeLayout(app.repoRoot, doc);
-    sendJson(res, 200, doc);
+    const doc = parseLayout(JSON.parse(text));
+    if (doc === undefined) return { ok: false };
+    return { ok: true, doc };
   } catch {
-    sendJson(res, 400, { error: 'bad layout' });
+    return { ok: false };
   }
+}
+
+async function putLayout(app: App, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const read = layoutFromText(await readBody(req));
+  if (!read.ok) {
+    sendJson(res, 400, { error: 'bad layout' });
+    return;
+  }
+  await writeLayout(app.repoRoot, read.doc);
+  sendJson(res, 200, read.doc);
 }
 
 function detailFor(scan: ScanResult, url: URL, rootName: string): ReturnType<typeof nodeDetail> {

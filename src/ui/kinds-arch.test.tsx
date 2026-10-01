@@ -2,7 +2,7 @@ import { fireEvent, waitFor } from '@testing-library/react';
 import { JSDOM } from 'jsdom';
 import { act, createElement, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const sheet = process.getBuiltinModule('node:fs').readFileSync(new URL('./app.css', import.meta.url), 'utf8');
 
@@ -188,7 +188,7 @@ vi.mock('@xyflow/react', async () => {
 
 type Pin = { x: number; y: number };
 type LayoutDoc = { version: 1; views: Record<string, Record<string, Pin>>; settings: { tests: boolean; external: boolean } };
-type World = { layout: LayoutDoc; main: boolean; armMain: boolean; puts: number; gate: Promise<void> | null; details: string[] };
+type World = { layout: LayoutDoc; main: boolean; armMain: boolean; puts: number; gate: Promise<void> | null; details: string[]; graphs: string[] };
 type GNode = {
   id: string;
   kind: string;
@@ -487,7 +487,7 @@ const DETAILS: Record<string, unknown> = {
 };
 
 function freshWorld(): World {
-  return { layout: { version: 1, views: {}, settings: { tests: false, external: false } }, main: false, armMain: false, puts: 0, gate: null, details: [] };
+  return { layout: { version: 1, views: {}, settings: { tests: false, external: false } }, main: false, armMain: false, puts: 0, gate: null, details: [], graphs: [] };
 }
 
 let world = freshWorld();
@@ -659,8 +659,10 @@ async function releaseLayout(current: World, path: string, method: string): Prom
 function pageFetcher(): typeof fetch {
   return (async (url: string, init?: RequestInit) => {
     const text = String(url);
-    if (pathOfUrl(text) === '/api/detail') world.details.push(text);
-    await releaseLayout(world, pathOfUrl(text), methodOf(init));
+    const path = pathOfUrl(text);
+    if (path === '/api/detail') world.details.push(text);
+    if (path === '/api/graph') world.graphs.push(text);
+    await releaseLayout(world, path, methodOf(init));
     return answer(world, text, init);
   }) as typeof fetch;
 }
@@ -880,11 +882,31 @@ async function seeNode(name: string): Promise<void> {
   });
 }
 
+const heightTimers: unknown[] = [];
+const clearedTimers: unknown[] = [];
+
+function spyHeightTimer(): void {
+  const originalSet = globalThis.setTimeout;
+  const originalClear = globalThis.clearTimeout;
+  vi.spyOn(globalThis, 'setTimeout').mockImplementation((fn, delay, ...args) => {
+    const id = originalSet(fn, delay, ...args);
+    if ((new Error().stack ?? '').includes('watchBoxes')) heightTimers.push(id);
+    return id;
+  });
+  vi.spyOn(globalThis, 'clearTimeout').mockImplementation(id => {
+    clearedTimers.push(id);
+    originalClear(id);
+  });
+}
+
 describe('Architecture kinds, pins and toggles', () => {
   let dom: JSDOM;
   let root: Root;
 
   beforeEach(async () => {
+    heightTimers.length = 0;
+    clearedTimers.length = 0;
+    spyHeightTimer();
     await import('@xyflow/react');
     world = freshWorld();
     centers().length = 0;
@@ -894,13 +916,20 @@ describe('Architecture kinds, pins and toggles', () => {
     root = createRoot(el);
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   async function remount(url: string): Promise<void> {
     const wasMounted = document.querySelector('.arch-canvas') !== null;
     const disconnect = vi.spyOn(MutationObserver.prototype, 'disconnect');
     await act(async () => {
       root.unmount();
     });
-    if (wasMounted) expect(disconnect).toHaveBeenCalled();
+    if (wasMounted) {
+      expect(disconnect).toHaveBeenCalled();
+      expect(heightTimers.some(id => clearedTimers.includes(id))).toBe(true);
+    }
     disconnect.mockRestore();
     dom.window.close();
     dom = installDom(url);
@@ -1112,6 +1141,18 @@ describe('Architecture kinds, pins and toggles', () => {
     expect(arrowNamed('app', 'domain').dataset.up).toBe('false');
     expect(arrowNamed('app', 'domain').querySelector('title')?.textContent).toBe('0 runtime · 1 type-only · 0 extends/implements');
     expect(arrowNamed('infra', 'domain').dataset.up).toBe('true');
+    Object.defineProperty(window.HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.classList.contains('box') ? 12 : 0;
+      },
+    });
+    const canvas = document.querySelector('.arch-canvas');
+    if (canvas === null) throw new Error('canvas');
+    await act(async () => {
+      canvas.appendChild(document.createElement('span'));
+    });
+    expect(arrowNamed('app', 'domain').dataset.up).toBe('true');
     world.layout = {
       version: 1,
       views: { src: { 'src/app': { x: 0, y: 0 }, 'src/domain': { x: 0, y: -400 } } },
@@ -1190,17 +1231,44 @@ describe('Architecture kinds, pins and toggles', () => {
     world.gate = new Promise(resolve => {
       release = resolve;
     });
+    const reported: unknown[] = [];
+    const onProcess = (error: unknown): void => {
+      reported.push(error);
+    };
+    process.on('uncaughtException', onProcess);
     await remount('http://127.0.0.1:4800/?token=tok#at=src');
-    await render();
-    const reset = [...document.querySelectorAll('button')].find(el => el.textContent === 'Reset layout');
-    if (!(reset instanceof HTMLElement)) throw new Error('reset');
-    await press(reset);
-    expect(document.querySelector('.fake-flow')).toBeNull();
-    expect(world.puts).toBe(0);
+    const onWindow = (event: Event): void => {
+      reported.push(event);
+      event.preventDefault();
+    };
+    window.addEventListener('error', onWindow);
+    try {
+      await render();
+      expect(world.graphs).toEqual([]);
+      const reset = [...document.querySelectorAll('button')].find(el => el.textContent === 'Reset layout');
+      if (!(reset instanceof HTMLElement)) throw new Error('reset');
+      await press(reset);
+      expect(reported).toEqual([]);
+      expect(document.querySelector('.fake-flow')).toBeNull();
+      expect(world.puts).toBe(0);
+      expect(world.graphs).toEqual([]);
+    } finally {
+      process.off('uncaughtException', onProcess);
+      window.removeEventListener('error', onWindow);
+    }
     release();
     await waitFor(() => {
       expect(document.querySelector('.fake-flow')).not.toBeNull();
     });
+  });
+
+  it('Clicking the current src crumb closes the infra panel', async () => {
+    await openHash('#at=src');
+    await press(nodeById(idNamed('infra')));
+    await seeHeading('infra');
+    await press(crumbNamed('src'));
+    expect(window.location.href).toBe('http://127.0.0.1:4800/#at=src');
+    expect(document.querySelector('aside[aria-label="details"]')).toBeNull();
   });
 
   it('Selecting a listed box still selects it when its element has no id', async () => {

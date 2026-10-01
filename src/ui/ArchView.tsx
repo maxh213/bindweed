@@ -37,9 +37,15 @@ function noSpots(): PlacedBox[] {
   return JSON.parse('[]');
 }
 
+function readSpots(spots: PlacedBox[]): PlacedBox[] {
+  const copy: PlacedBox[] = [];
+  for (const spot of spots) copy.push({ id: spot.id, x: spot.x, y: spot.y });
+  return copy;
+}
+
 function spotsOf(state: GraphState, pins: Record<string, Pin>): PlacedBox[] {
-  if (state.kind !== 'ok') return noSpots();
-  return arrange(state.view.nodes.map(layerOf), pins);
+  if (state.kind !== 'ok') return readSpots(noSpots());
+  return readSpots(arrange(state.view.nodes.map(layerOf), pins));
 }
 
 function CrumbButton(props: Readonly<{ crumb: Crumb; separator: boolean; onDrill: (dir: string) => void }>) {
@@ -76,7 +82,19 @@ function FlagBox(props: Readonly<{ label: string; checked: boolean; onCheck: (ch
   );
 }
 
-function MaybePanel(props: Readonly<{ chosen: string | null; data: NodeDetail | { error: string } | undefined; onPick: (id: string) => void }>) {
+type DetailData = NodeDetail | { error: string } | undefined;
+
+function nextHeld(chosen: string | null, data: DetailData, held: DetailData): DetailData {
+  if (chosen === null || data === undefined) return held;
+  return data;
+}
+
+function shownDetail(chosen: string | null, data: DetailData, held: DetailData): DetailData {
+  if (chosen === null) return held;
+  return data;
+}
+
+function MaybePanel(props: Readonly<{ chosen: string | null; data: DetailData; onPick: (id: string) => void }>) {
   if (props.chosen === null) return null;
   return <DetailSlot data={props.data} onPick={props.onPick} />;
 }
@@ -153,6 +171,7 @@ function ArchPane(props: Readonly<ArchViewProps>) {
   const [picked, setPicked] = useState<string | null>(null);
   const [armed, setArmed] = useState<string | null>(null);
   const [hover, setHover] = useState<string | null>(null);
+  const [held, setHeld] = useState<DetailData>(undefined);
   const state = graphStateOf(graphQuery.data, graphQuery.isPending);
   const ids = idsOf(state);
   const chosen = chosenId(picked, armed, ids);
@@ -161,6 +180,8 @@ function ArchPane(props: Readonly<ArchViewProps>) {
     queryFn: () => fetchDetail(props.token, detailId(chosen), props.at, props.fetcher, settings),
     enabled: detailOn(chosen),
   });
+  const next = nextHeld(chosen, detailQuery.data, held);
+  if (next !== held) setHeld(next);
   const pins = pinsOf(layoutQuery.data, props.at);
   const spots = useMemo(() => spotsOf(state, pins), [state, pins]);
   const center = useCenterOn(spots);
@@ -224,7 +245,7 @@ function ArchPane(props: Readonly<ArchViewProps>) {
           }}
           onPin={(id, x, y) => commitLayout(layoutQuery.data, doc => withPin(doc, props.at, id, { x, y }), store)}
         />
-        <MaybePanel chosen={chosen} data={detailQuery.data} onPick={pickEntry} />
+        <MaybePanel chosen={chosen} data={shownDetail(chosen, detailQuery.data, held)} onPick={pickEntry} />
       </div>
     </div>
   );
