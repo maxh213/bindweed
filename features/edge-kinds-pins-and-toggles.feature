@@ -61,7 +61,7 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       | src/domain/model.ts | export interface Model { id: number }\n                                                                                                          |
       | src/domain/shape.ts | export interface Shape { draw(): void }\n                                                                                                        |
       | src/infra/db.ts     | import { Model } from '../domain/model';\nexport const query = new Model();\n                                                                    |
-      | src/infra/repo.ts   | import { readFileSync } from 'node:fs';\nimport { Shape } from '../domain/shape';\nexport class Repo implements Shape { draw(): void { readFileSync('/dev/null'); } }\n |
+      | src/infra/repo.ts   | import { readFileSync } from 'node:fs';\nimport React from 'react';\nimport { Shape } from '../domain/shape';\nexport class Repo implements Shape { draw(): void { readFileSync('/dev/null'); } }\n |
     And "/tmp/qa/kinds" is a git repository with these files committed:
       | path                  | content                                                                                                          |
       | named/shape.ts        | export interface Shape { draw(): void }\n                                                                        |
@@ -96,16 +96,21 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       | other/ns.ts           | export namespace Bag { export type Id = string; }\n                                                              |
       | other/empty.ts        | \n                                                                                                               |
       | other/both.ts         | export interface I { n: number }\nexport const n = 1;\n                                                          |
+      | other/valuereexp.ts   | export { n } from './both';\n                                                                                    |
+      | other/valueimport.ts  | import { n } from './both';\n                                                                                    |
       | cyc/a.ts              | import type { B } from './b';\nexport interface A { b: B }\n                                                      |
       | cyc/b.ts              | import type { A } from './a';\nexport interface B { a: A }\n                                                      |
       | half/iface.ts         | export interface I { n: number }\n                                                                               |
       | half/value.test.ts    | export const n = 1;\n                                                                                            |
+      | half/value.spec.ts    | export const n = 1;\n                                                                                            |
 
   Rule: The graph keeps the 002 layers and adds a field only when there is something to say
-    Tests and externals stay out unless the query asks. Heritage is omitted at 0, abstract
-    is omitted when false, and test is omitted when false. row and order are the 002
-    layering and never move because of a pin. External nodes are given the next row after
-    that layering, in name order, and their edges are not fed into layering or cycles.
+    Tests and externals stay out unless the query asks, and tests=1 and external=1 apply
+    together. A file is a test when its name matches *.test.* or *.spec.*, or a path
+    segment is __tests__, test, tests or e2e. Heritage is omitted at 0, abstract is
+    omitted when false, and test is omitted when false. row and order are the 002
+    layering and never move because of a pin. External nodes share one row, the next
+    after that layering, ordered by name, and their edges are not fed into layering or cycles.
 
     Scenario: The src view has three layers, one hollow count and one green box
       When I send "GET /api/graph?at=src" with the token
@@ -142,16 +147,51 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
         {"at":"src/app","crumbs":[{"name":"layered","at":""},{"name":"src","at":"src"},{"name":"app","at":"src/app"}],"nodes":[{"id":"src/app/a.test.ts","kind":"file","name":"a.test.ts","path":"src/app/a.test.ts","row":0,"order":0,"cycle":false,"test":true},{"id":"src/app/a.ts","kind":"file","name":"a.ts","path":"src/app/a.ts","row":1,"order":0,"cycle":true},{"id":"src/app/b.ts","kind":"file","name":"b.ts","path":"src/app/b.ts","row":1,"order":1,"cycle":true}],"edges":[{"from":"src/app/a.test.ts","to":"src/app/a.ts","runtime":1,"type":0,"cycle":false},{"from":"src/app/a.ts","to":"src/app/b.ts","runtime":1,"type":0,"cycle":true,"cycleText":"a.ts → b.ts → a.ts"},{"from":"src/app/b.ts","to":"src/app/a.ts","runtime":1,"type":0,"cycle":true,"cycleText":"b.ts → a.ts → b.ts"}]}
         """
       When I send "GET /api/graph?at=src&tests=1" with the token
-      Then the node "src/app" has "files" 3 and there is still no node named "a.test.ts"
+      Then the node "src/app" has "files" 3 and there is still no node named "a.test.ts", "node:fs" or "react"
 
-    Scenario: Turning externals on adds node:fs on its own row under the layers
+    Scenario: Turning externals on adds node:fs and react on one row under the layers
       When I send "GET /api/graph?at=src&external=1" with the token
-      Then the three nodes and three edges of the default src view are unchanged
-      And the body also has the node {"id":"node:fs","kind":"external","name":"node:fs","path":"node:fs","row":3,"order":0,"cycle":false}
-      And the body also has the edge {"from":"src/infra","to":"node:fs","runtime":1,"type":0,"cycle":false}
+      Then the only nodes are "src/app", "src/infra", "src/domain", "node:fs" and "react"
+      And "src/app" has "files" 2 and "row" 0, "src/infra" has "files" 2 and "row" 1, and "src/domain" has "files" 2, "row" 2 and abstract true
+      And the edges are the three edges of the default src view plus {"from":"src/infra","to":"node:fs","runtime":1,"type":0,"cycle":false} and {"from":"src/infra","to":"react","runtime":1,"type":0,"cycle":false}
+      And the body has the node {"id":"node:fs","kind":"external","name":"node:fs","path":"node:fs","row":3,"order":0,"cycle":false}
+      And the body has the node {"id":"react","kind":"external","name":"react","path":"react","row":3,"order":1,"cycle":false}
       When I send "GET /api/graph?at=src/infra&external=1" with the token
-      Then "db.ts" and "repo.ts" are row 0 and "node:fs" is row 1
-      And the only edge is {"from":"src/infra/repo.ts","to":"node:fs","runtime":1,"type":0,"cycle":false}
+      Then "db.ts" and "repo.ts" are row 0, "node:fs" is row 1 order 0 and "react" is row 1 order 1
+      And the only edges are {"from":"src/infra/repo.ts","to":"node:fs","runtime":1,"type":0,"cycle":false} and {"from":"src/infra/repo.ts","to":"react","runtime":1,"type":0,"cycle":false}
+
+    Scenario: tests=1 and external=1 together keep the test count and both externals
+      When I send "GET /api/graph?at=src&tests=1&external=1" with the token
+      Then the status is 200 and the only nodes are "src/app", "src/infra", "src/domain", "node:fs" and "react"
+      And "src/app" has "files" 3, "row" 0 and "order" 0
+      And "src/infra" has "files" 2 and "row" 1, and "src/domain" has "files" 2, "row" 2 and abstract true
+      And the body has the node {"id":"node:fs","kind":"external","name":"node:fs","path":"node:fs","row":3,"order":0,"cycle":false}
+      And the body has the node {"id":"react","kind":"external","name":"react","path":"react","row":3,"order":1,"cycle":false}
+      And the edges are the three edges of the default src view plus {"from":"src/infra","to":"node:fs","runtime":1,"type":0,"cycle":false} and {"from":"src/infra","to":"react","runtime":1,"type":0,"cycle":false}
+      And there is no node named "a.test.ts"
+      When I send "GET /api/graph?at=src/app&tests=1&external=1" with the token
+      Then the only nodes are "src/app/a.test.ts", "src/app/a.ts" and "src/app/b.ts", and "a.test.ts" has "test" true
+      And the edges are {"from":"src/app/a.test.ts","to":"src/app/a.ts","runtime":1,"type":0,"cycle":false} plus the two cycle edges of the default app view
+      When I send "GET /api/detail?id=src/infra&at=src&tests=1&external=1" with the token
+      Then the status is 200 and "files" is 2 and there is no "abstract" field
+      And "imports" is exactly these entries, in any order:
+        | id         | name    | kind     | runtime | type | heritage |
+        | src/domain | domain  | package  | 2       | 0    | 1        |
+        | node:fs    | node:fs | external | 1       | 0    | 0        |
+        | react      | react   | external | 1       | 0    | 0        |
+      And the only "importedBy" entry is "src/app" with runtime 2, type 1 and heritage 0
+      When I send "GET /api/detail?id=src/app/a.ts&at=src/app&tests=1&external=1" with the token
+      Then the status is 200 and the body has no "files" field and no "abstract" field
+      And "importedBy" is exactly these entries, in any order:
+        | id                | name      | kind | runtime | type | heritage |
+        | src/app/b.ts      | b.ts      | file | 1       | 0    | 0        |
+        | src/app/a.test.ts | a.test.ts | file | 1       | 0    | 0        |
+      And "imports" is exactly these entries, in any order:
+        | id                  | name     | kind | runtime | type | heritage |
+        | src/app/b.ts        | b.ts     | file | 1       | 0    | 0        |
+        | src/domain/model.ts | model.ts | file | 0       | 1    | 0        |
+        | src/infra/db.ts     | db.ts    | file | 1       | 0    | 0        |
+        | src/infra/repo.ts   | repo.ts  | file | 0       | 1    | 0        |
 
     Scenario: Rescan counts the test file
       When I send "POST /api/rescan" with the token
@@ -197,7 +237,7 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
     Scenario Outline: The file's box is abstract only in the yes rows
       Given bindweed is serving "/tmp/qa/kinds" on port 4800
       When I send "GET /api/graph?at=<at>" with the token
-      Then the node named "<name>" has abstract true if "<abstract>" is yes, and no abstract field if "<abstract>" is no
+      Then a node named "<name>" is present, and it has abstract true when "<abstract>" is yes and no abstract field when "<abstract>" is no
       Examples:
         | at    | name         | abstract |
         | pure  | iface.ts     | yes      |
@@ -211,6 +251,8 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
         | other | ns.ts        | no       |
         | other | empty.ts     | no       |
         | other | both.ts      | no       |
+        | other | valuereexp.ts | no      |
+        | other | valueimport.ts | no     |
 
     Scenario: A package is green only when all of its files are abstract
       Given bindweed is serving "/tmp/qa/kinds" on port 4800
@@ -218,24 +260,26 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       Then the node "pure" has abstract true and "files" 6, and the node "cyc" has abstract true and "cycle" false
       And the nodes "mixed" and "other" have no abstract field
 
-    Scenario: A value test file counts against abstract only while tests=1
+    Scenario: Value test and spec files count against abstract only while tests=1
       Given bindweed is serving "/tmp/qa/kinds" on port 4800
       When I send "GET /api/graph" with the token
       Then the node "half" has abstract true and "files" 1
       When I send "GET /api/graph?at=half" with the token
-      Then the only node is "iface.ts", it has abstract true, and there is no node named "value.test.ts"
+      Then the only node is "iface.ts", it has abstract true, and there is no node named "value.test.ts" or "value.spec.ts"
       When I send "GET /api/graph?tests=1" with the token
-      Then the node "half" has "files" 2 and no abstract field
+      Then the node "half" has "files" 3 and no abstract field
       When I send "GET /api/graph?at=half&tests=1" with the token
       Then the node "iface.ts" has abstract true
       And the node "value.test.ts" has "test" true and no abstract field
+      And the node "value.spec.ts" has "test" true and no abstract field
 
     Scenario: A cycle of abstract files is drawn red, and the cycle tooltip stays the cycle text
       Given bindweed is serving "/tmp/qa/kinds" on port 4800
       When I open "http://127.0.0.1:4800/?token={token}#at=cyc" in a browser
       Then the boxes "a.ts" and "b.ts" carry data-abstract "true" and data-cycle "true" and are drawn red, not green
-      And both arrows carry data-cycle "true" and data-up "false"
+      And both arrows carry data-cycle "true", data-up "false", data-line "dashed" and data-head "filled", and neither has a label
       And the tooltip of the arrow from "a.ts" to "b.ts" is "a.ts → b.ts → a.ts"
+      And the tooltip of the arrow from "b.ts" to "a.ts" is "b.ts → a.ts → b.ts"
 
     Scenario: A type-only heritage arrow is dashed and hollow
       Given bindweed is serving "/tmp/qa/kinds" on port 4800
@@ -264,12 +308,12 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       And "GET /api/layout" with the token returns that same JSON
       And the file "/tmp/qa/layered/.bindweed/layout.json" parses as that same JSON
       When I send "GET /api/graph?at=src" with the token
-      Then the status is 200 and the body is exactly this JSON, with no "node:fs" and no "a.test.ts":
+      Then the status is 200 and the body is exactly this JSON, with no "node:fs", no "react" and no "a.test.ts":
         """
         {"at":"src","crumbs":[{"name":"layered","at":""},{"name":"src","at":"src"}],"nodes":[{"id":"src/app","kind":"package","name":"app","path":"src/app","files":2,"row":0,"order":0,"cycle":false},{"id":"src/infra","kind":"package","name":"infra","path":"src/infra","files":2,"row":1,"order":0,"cycle":false},{"id":"src/domain","kind":"package","name":"domain","path":"src/domain","files":2,"row":2,"order":0,"cycle":false,"abstract":true}],"edges":[{"from":"src/app","to":"src/infra","runtime":2,"type":1,"cycle":false},{"from":"src/app","to":"src/domain","runtime":0,"type":1,"cycle":false},{"from":"src/infra","to":"src/domain","runtime":2,"type":0,"heritage":1,"cycle":false}]}
         """
       When I send "GET /api/detail?id=src/infra&at=src" with the token
-      Then the status is 200 and the body is exactly this JSON, with no "node:fs":
+      Then the status is 200 and the body is exactly this JSON, with no "node:fs" and no "react":
         """
         {"id":"src/infra","name":"infra","path":"src/infra","kind":"package","files":2,"imports":[{"id":"src/domain","name":"domain","kind":"package","runtime":2,"type":0,"heritage":1}],"importedBy":[{"id":"src/app","name":"app","kind":"package","runtime":2,"type":1,"heritage":0}]}
         """
@@ -280,7 +324,7 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       Then the status is 200 and the body is that same JSON
       And "GET /api/layout" with the token returns that same JSON, still including the pin for "src/gone"
       When I send "GET /api/graph?at=src" with the token
-      Then the status is 200 and the body is exactly this JSON, with no "a.test.ts" and no "node:fs":
+      Then the status is 200 and the body is exactly this JSON, with no "a.test.ts", no "node:fs" and no "react":
         """
         {"at":"src","crumbs":[{"name":"layered","at":""},{"name":"src","at":"src"}],"nodes":[{"id":"src/app","kind":"package","name":"app","path":"src/app","files":2,"row":0,"order":0,"cycle":false},{"id":"src/infra","kind":"package","name":"infra","path":"src/infra","files":2,"row":1,"order":0,"cycle":false},{"id":"src/domain","kind":"package","name":"domain","path":"src/domain","files":2,"row":2,"order":0,"cycle":false,"abstract":true}],"edges":[{"from":"src/app","to":"src/infra","runtime":2,"type":1,"cycle":false},{"from":"src/app","to":"src/domain","runtime":0,"type":1,"cycle":false},{"from":"src/infra","to":"src/domain","runtime":2,"type":0,"heritage":1,"cycle":false}]}
         """
@@ -381,14 +425,17 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       Then the status is 404 and the body is {"error":"no such node"}
       When I send "GET /api/detail?id=node:fs&at=src" with the token
       Then the status is 404 and the body is {"error":"no such node"}
+      When I send "GET /api/detail?id=react&at=src" with the token
+      Then the status is 404 and the body is {"error":"no such node"}
 
-    Scenario: external=1 lists node:fs and tests=1 lists a.test.ts
+    Scenario: external=1 lists node:fs and react, and tests=1 lists a.test.ts
       When I send "GET /api/detail?id=src/infra&at=src&external=1" with the token
       Then the status is 200 and "files" is 2 and there is no "abstract" field
       And "imports" is exactly these entries, in any order:
         | id         | name    | kind     | runtime | type | heritage |
         | src/domain | domain  | package  | 2       | 0    | 1        |
         | node:fs    | node:fs | external | 1       | 0    | 0        |
+        | react      | react   | external | 1       | 0    | 0        |
       And the only "importedBy" entry is "src/app" with runtime 2, type 1 and heritage 0
       When I send "GET /api/detail?id=src/app/a.ts&at=src/app&tests=1" with the token
       Then the status is 200 and the body has no "files" field and no "abstract" field
@@ -406,6 +453,11 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       Then the status is 200 and the body is this JSON:
         """
         {"id":"node:fs","name":"node:fs","path":"node:fs","kind":"external","imports":[],"importedBy":[{"id":"src/infra","name":"infra","kind":"package","runtime":1,"type":0,"heritage":0}]}
+        """
+      When I send "GET /api/detail?id=react&at=src&external=1" with the token
+      Then the status is 200 and the body is this JSON:
+        """
+        {"id":"react","name":"react","path":"react","kind":"external","imports":[],"importedBy":[{"id":"src/infra","name":"infra","kind":"package","runtime":1,"type":0,"heritage":0}]}
         """
       When I send "GET /api/detail?id=src/app/a.test.ts&at=src/app&tests=1" with the token
       Then the status is 200 and the body is this JSON:
@@ -463,8 +515,10 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
 
     Scenario: Double-clicking a file still opens it in the Files tab
       Given the Architecture tab shows the "src/domain" view
+      When I click the "shape.ts" box
+      Then the details panel's heading is "shape.ts"
       When I double-click the "shape.ts" box
-      Then "Files" carries aria-selected "true" and the panel is gone
+      Then "Files" carries aria-selected "true" and the details panel is not shown
       And the right side shows the header "src/domain/shape.ts" and the numbered line 1 "export interface Shape { draw(): void }"
       And the address bar shows "http://127.0.0.1:4800/#file=src/domain/shape.ts"
 
@@ -551,22 +605,37 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       When I uncheck "Tests"
       Then the "a.test.ts" box is gone and the "a.ts" and "b.ts" boxes are one row again
 
-    Scenario: The External packages checkbox shows node:fs under the layers
+    Scenario: The External packages checkbox shows node:fs and react on one row
       Given the Architecture tab shows the "src" view and both checkboxes are unchecked
       When I check "External packages"
-      Then a box "node:fs" with a dashed border is below "domain", and an arrow runs from "infra" to "node:fs"
-      And "domain" is still above "node:fs" and still green
-      And "GET /api/layout" has "settings" "external" true
+      Then the boxes "node:fs" and "react" have a dashed border and the same data-y, greater than the "domain" box's data-y
+      And the "node:fs" box's data-x is less than the "react" box's data-x
+      And an arrow runs from "infra" to "node:fs" and an arrow runs from "infra" to "react"
+      And the "app" box's data-y is less than the "infra" box's, which is less than the "domain" box's, and "domain" is still green
+      And "GET /api/layout" has "settings" "external" true and "settings" "tests" false
       When I open "http://127.0.0.1:4800/?token={token}#at=src" in a browser
-      Then "External packages" is checked and the "node:fs" box is still below "domain"
+      Then "External packages" is checked and "node:fs" is still left of "react" on the row below "domain"
       When I click the "infra" box
-      Then under "Imports" the only buttons are "domain" showing "2 runtime · 0 type-only · 1 extends/implements" and "node:fs" showing "1 runtime · 0 type-only · 0 extends/implements"
+      Then under "Imports" the only buttons are "domain" showing "2 runtime · 0 type-only · 1 extends/implements", "node:fs" showing "1 runtime · 0 type-only · 0 extends/implements" and "react" showing "1 runtime · 0 type-only · 0 extends/implements"
       When I click the "node:fs" box
       Then the panel's heading is "node:fs"
       And under "Imported by" one button shows "infra" and "1 runtime · 0 type-only · 0 extends/implements"
       And under "Imports" there is no button
+      When I click the "react" box
+      Then the panel's heading is "react"
+      And under "Imported by" one button shows "infra" and "1 runtime · 0 type-only · 0 extends/implements"
+      And under "Imports" there is no button
       When I uncheck "External packages"
-      Then the "node:fs" box is gone and the panel no longer shows "node:fs"
+      Then the "node:fs" box and the "react" box are gone and the panel no longer shows "react"
+
+    Scenario: Both checkboxes on show the external row and the test file
+      Given the Architecture tab shows the "src" view and both checkboxes are unchecked
+      When I check "Tests" and check "External packages"
+      Then "node:fs" and "react" share a data-y greater than the "domain" box's, and the "node:fs" box's data-x is less than the "react" box's
+      And the "app" box's data-y is less than the "infra" box's, which is less than the "domain" box's
+      And "GET /api/layout" has "settings" exactly {"tests":true,"external":true}
+      When I open the "src/app" view
+      Then the box "a.test.ts" is shown, it shows a "test" tag, and both checkboxes are checked
 
     Scenario: The README lists the new routes beside the old ones
       When I read the "## Routes" table in bindweed's README.md

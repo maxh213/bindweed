@@ -24,12 +24,12 @@ printf "import { a } from './a';\n" > src/app/a.test.ts
 printf 'export interface Model { id: number }\n' > src/domain/model.ts
 printf 'export interface Shape { draw(): void }\n' > src/domain/shape.ts
 printf "import { Model } from '../domain/model';\nexport const query = new Model();\n" > src/infra/db.ts
-printf "import { readFileSync } from 'node:fs';\nimport { Shape } from '../domain/shape';\nexport class Repo implements Shape { draw(): void { readFileSync('/dev/null'); } }\n" > src/infra/repo.ts
+printf "import { readFileSync } from 'node:fs';\nimport React from 'react';\nimport { Shape } from '../domain/shape';\nexport class Repo implements Shape { draw(): void { readFileSync('/dev/null'); } }\n" > src/infra/repo.ts
 git init -q && git add -A && git -c user.name=qa -c user.email=qa@example.test -c commit.gpgsign=false commit -qm fixture
 echo "export QA=$QA U=http://127.0.0.1:4800"
 ```
 
-Paste the `export` line it prints into the second terminal. `app` imports `infra` twice at runtime and once type-only, and `domain` once type-only through the `@domain/*` alias. `infra` imports `domain` twice at runtime, and `repo.ts` implements `Shape`. `a.ts` and `b.ts` import each other. `domain` is two interfaces. `a.test.ts` and `node:fs` are scanned and hidden until their checkboxes are on.
+Paste the `export` line it prints into the second terminal. `app` imports `infra` twice at runtime and once type-only, and `domain` once type-only through the `@domain/*` alias. `infra` imports `domain` twice at runtime, and `repo.ts` implements `Shape`. `a.ts` and `b.ts` import each other. `domain` is two interfaces. `repo.ts` also imports `react`. `a.test.ts`, `node:fs` and `react` are scanned and hidden until their checkboxes are on.
 
 ## Steps
 
@@ -37,7 +37,7 @@ Paste the `export` line it prints into the second terminal. `app` imports `infra
    **Expect:** stdout shows exactly two lines: `bindweed: http://127.0.0.1:4800/?token=` followed by 32 characters from `0-9a-f`, then `serving $QA/layered`. The command keeps running. In the second terminal set `TOKEN` to that token.
 
 2. In the second terminal run `curl -s -H "Authorization: Bearer $TOKEN" $U/api/layout; echo; test ! -e $QA/layered/.bindweed/layout.json && echo 'no layout file'`, then `curl -s -H "Authorization: Bearer $TOKEN" "$U/api/graph?at=src"`.
-   **Expect:** the layout body is `{"version":1,"views":{},"settings":{"tests":false,"external":false}}` and the echo is `no layout file`. The graph has crumbs `layered`, `src`. Three nodes: `app` (package, `"files":2`, row 0), `infra` (`"files":2`, row 1), `domain` (`"files":2`, row 2, `"abstract":true`). `app` and `infra` have no `abstract` field. Three edges: app→infra `"runtime":2,"type":1` and no `heritage`; app→domain `"runtime":0,"type":1` and no `heritage`; infra→domain `"runtime":2,"type":0,"heritage":1`. Nothing named `a.test.ts` or `node:fs`.
+   **Expect:** the layout body is `{"version":1,"views":{},"settings":{"tests":false,"external":false}}` and the echo is `no layout file`. The graph has crumbs `layered`, `src`. Three nodes: `app` (package, `"files":2`, row 0), `infra` (`"files":2`, row 1), `domain` (`"files":2`, row 2, `"abstract":true`). `app` and `infra` have no `abstract` field. Three edges: app→infra `"runtime":2,"type":1` and no `heritage`; app→domain `"runtime":0,"type":1` and no `heritage`; infra→domain `"runtime":2,"type":0,"heritage":1`. Nothing named `a.test.ts`, `node:fs` or `react`.
 
 3. Run each command, then `test ! -e $QA/layered/.bindweed/layout.json && echo 'no layout file'`.
    **Expect:** the status and body in its row, then `no layout file`.
@@ -85,8 +85,8 @@ Paste the `export` line it prints into the second terminal. `app` imports `infra
 14. On the app view, click `Reset layout`. Click `a.ts`, then click `a.test.ts`. Open the printed link with `#at=src/app` in a new tab, then uncheck `Tests` there.
     **Expect:** `Tests` is still checked, and `a.ts` is back beside `b.ts`. `a.test.ts` is above that pair, with a small `test` tag, and an arrow runs from `a.test.ts` to `a.ts`. Under Imported by the only buttons are `b.ts` and `a.test.ts`, each with `1 runtime · 0 type-only · 0 extends/implements`. The `a.test.ts` panel is headed `a.test.ts`. Under Imports the only button is `a.ts` with `1 runtime · 0 type-only · 0 extends/implements`, and Imported by has no button. The new tab opens with `Tests` already checked and that box visible. Unchecking removes the box and leaves `a.ts` and `b.ts` side by side. `curl -s -H "Authorization: Bearer $TOKEN" $U/api/layout` then has `"tests":false`.
 
-15. Open the src view and check `External packages`. Open the printed link with `#at=src` in a new tab. In that tab click `infra`, then click `node:fs`, then uncheck `External packages`.
-    **Expect:** a box `node:fs` with a dashed border appears below `domain`, with an arrow from `infra` to it. `domain` stays green and stays above `node:fs`. The `app`, `infra` and `domain` rows are otherwise unchanged. The new tab opens with `External packages` already checked and `node:fs` still below `domain`. Under Imports the only buttons are `domain` and `node:fs`, and `node:fs` shows `1 runtime · 0 type-only · 0 extends/implements`. The `node:fs` panel is headed `node:fs`, Imports has no button, and under Imported by the only button is `infra` with `1 runtime · 0 type-only · 0 extends/implements`. Unchecking removes the `node:fs` box, and the panel no longer shows `node:fs`. The layout JSON has `"external":false` after the uncheck.
+15. Click `src` in the breadcrumb and check `External packages`. Open the printed link with `#at=src` in a new tab. In that tab click `infra`, then `node:fs`, then `react`. Check `Tests` as well, look at the row under `domain`, double-click `app`, click `src` in the breadcrumb, and uncheck both boxes.
+    **Expect:** `node:fs` and `react`, each with a dashed border, share the row below `domain`, with `node:fs` left of `react` and an arrow from `infra` to each. `app` stays above `infra` and `infra` above `domain`. `domain` stays green. The new tab opens with `External packages` already checked, `Tests` unchecked, and both boxes still on that row. Under Imports the only buttons are `domain`, `node:fs` and `react`; `node:fs` and `react` each show `1 runtime · 0 type-only · 0 extends/implements`. The `node:fs` panel is headed `node:fs`, Imports has no button, and under Imported by the only button is `infra` with `1 runtime · 0 type-only · 0 extends/implements`. The `react` panel is headed `react` and reads the same way. With both boxes checked, that row is unchanged, and in the app view `a.test.ts` is on the canvas with its `test` tag while both checkboxes stay checked. Unchecking both removes `node:fs` and `react`. `curl -s -H "Authorization: Bearer $TOKEN" $U/api/layout` then has `"tests":false` and `"external":false`.
 
 16. In the second terminal save a pin on the cell `main.ts` will want, add that file, and rescan:
 
@@ -111,8 +111,8 @@ Paste the `export` line it prints into the second terminal. `app` imports `infra
     Open the printed link with `#at=src/domain`.
     **Expect:** the only boxes are `model.ts` and `shape.ts`, both green, with `model.ts` the leftmost and one column between them — the same spacing `a.ts` and `b.ts` had before any pin, not a vacant column to the left of `model.ts`. There is no box named `gone.ts`. `curl -s -H "Authorization: Bearer $TOKEN" $U/api/layout` still contains `src/domain/gone.ts`.
 
-18. Double-click `shape.ts`. In the second terminal run `curl -s -H "Authorization: Bearer $TOKEN" "$U/api/file?path=src/domain/model.ts"`.
-    **Expect:** the page is on the Files tab, the right side shows the header `src/domain/shape.ts` and line 1 `export interface Shape { draw(): void }`, and the address bar reads `http://127.0.0.1:4800/#file=src/domain/shape.ts`. The curl body is `{"path":"src/domain/model.ts","text":"export interface Model { id: number }\n"}`.
+18. Click `shape.ts`, then double-click it. In the second terminal run `curl -s -H "Authorization: Bearer $TOKEN" "$U/api/file?path=src/domain/model.ts"`.
+    **Expect:** after the click the panel is headed `shape.ts`. After the double-click the panel is gone, the page is on the Files tab, the right side shows the header `src/domain/shape.ts` and line 1 `export interface Shape { draw(): void }`, and the address bar reads `http://127.0.0.1:4800/#file=src/domain/shape.ts`. The curl body is `{"path":"src/domain/model.ts","text":"export interface Model { id: number }\n"}`.
 
 19. Overwrite the layout with bytes that are not JSON, then reject a later write. In the second terminal:
 
