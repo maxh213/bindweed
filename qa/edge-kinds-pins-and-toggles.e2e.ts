@@ -25,8 +25,8 @@ const SRC_GRAPH = {
     { name: 'src', at: 'src' },
   ],
   nodes: [
-    { id: 'src/app', kind: 'package', name: 'app', path: 'src/app', files: 2, row: 0, order: 0, cycle: false },
-    { id: 'src/infra', kind: 'package', name: 'infra', path: 'src/infra', files: 2, row: 1, order: 0, cycle: false },
+    { id: 'src/app', kind: 'package', name: 'app', path: 'src/app', files: 2, row: 0, order: 0, cycle: false, ca: 0, ce: 2, i: '1.00', a: '0.00', d: '0.00', zone: 'healthy' },
+    { id: 'src/infra', kind: 'package', name: 'infra', path: 'src/infra', files: 2, row: 1, order: 0, cycle: false, ca: 2, ce: 2, i: '0.50', a: '0.00', d: '0.50', zone: 'healthy' },
     {
       id: 'src/domain',
       kind: 'package',
@@ -37,6 +37,12 @@ const SRC_GRAPH = {
       order: 0,
       cycle: false,
       abstract: true,
+      ca: 3,
+      ce: 0,
+      i: '0.00',
+      a: '1.00',
+      d: '0.00',
+      zone: 'healthy',
     },
   ],
   edges: [
@@ -44,6 +50,9 @@ const SRC_GRAPH = {
     { from: 'src/app', to: 'src/domain', runtime: 0, type: 1, cycle: false },
     { from: 'src/infra', to: 'src/domain', runtime: 2, type: 0, heritage: 1, cycle: false },
   ],
+  crapMax: 4,
+  coverage: 'off',
+  mutation: 'off',
 };
 
 type BoxRect = { x: number; y: number; width: number; height: number };

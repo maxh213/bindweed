@@ -1,0 +1,1 @@
+{"files":{"src/plain.ts":{"mutants":[{"status":"Survived"},{"status":"NoCoverage"},{"status":"Survived"}]},"src/clean.ts":{"mutants":[{"status":"Killed"},{"status":"Timeout"}]},"src/green.ts":{"mutants":[{"status":"Killed"}]}}}

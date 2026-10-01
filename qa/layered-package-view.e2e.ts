@@ -20,6 +20,12 @@ type GraphNode = {
   row: number;
   order: number;
   cycle: boolean;
+  ca: number;
+  ce: number;
+  i: string;
+  a: string;
+  d: string;
+  zone?: 'pain' | 'useless' | 'healthy';
 };
 
 type GraphEdge = {
@@ -36,15 +42,21 @@ type Graph = {
   crumbs: { name: string; at: string }[];
   nodes: GraphNode[];
   edges: GraphEdge[];
+  crapMax: number;
+  coverage: 'off' | 'on' | 'stale';
+  mutation: 'off' | 'on' | 'stale';
 };
 
 const ROOT_GRAPH: Graph = {
   at: '',
   crumbs: [{ name: 'layered', at: '' }],
   nodes: [
-    { id: 'src', kind: 'package', name: 'src', path: 'src', files: 4, row: 0, order: 0, cycle: false },
+    { id: 'src', kind: 'package', name: 'src', path: 'src', files: 4, row: 0, order: 0, cycle: false, ca: 0, ce: 0, i: '–', a: '0.00', d: '–' },
   ],
   edges: [],
+  crapMax: 4,
+  coverage: 'off',
+  mutation: 'off',
 };
 
 const SRC_GRAPH: Graph = {
@@ -54,15 +66,18 @@ const SRC_GRAPH: Graph = {
     { name: 'src', at: 'src' },
   ],
   nodes: [
-    { id: 'src/app', kind: 'package', name: 'app', path: 'src/app', files: 2, row: 0, order: 0, cycle: false },
-    { id: 'src/infra', kind: 'package', name: 'infra', path: 'src/infra', files: 1, row: 1, order: 0, cycle: false },
-    { id: 'src/domain', kind: 'package', name: 'domain', path: 'src/domain', files: 1, row: 2, order: 0, cycle: false },
+    { id: 'src/app', kind: 'package', name: 'app', path: 'src/app', files: 2, row: 0, order: 0, cycle: false, ca: 0, ce: 2, i: '1.00', a: '0.00', d: '0.00', zone: 'healthy' },
+    { id: 'src/infra', kind: 'package', name: 'infra', path: 'src/infra', files: 1, row: 1, order: 0, cycle: false, ca: 2, ce: 1, i: '0.33', a: '0.00', d: '0.67', zone: 'pain' },
+    { id: 'src/domain', kind: 'package', name: 'domain', path: 'src/domain', files: 1, row: 2, order: 0, cycle: false, ca: 2, ce: 0, i: '0.00', a: '0.00', d: '1.00', zone: 'pain' },
   ],
   edges: [
     { from: 'src/app', to: 'src/infra', runtime: 2, type: 0, cycle: false },
     { from: 'src/app', to: 'src/domain', runtime: 0, type: 1, cycle: false },
     { from: 'src/infra', to: 'src/domain', runtime: 1, type: 0, cycle: false },
   ],
+  crapMax: 4,
+  coverage: 'off',
+  mutation: 'off',
 };
 
 const APP_GRAPH: Graph = {
@@ -73,23 +88,29 @@ const APP_GRAPH: Graph = {
     { name: 'app', at: 'src/app' },
   ],
   nodes: [
-    { id: 'src/app/a.ts', kind: 'file', name: 'a.ts', path: 'src/app/a.ts', row: 0, order: 0, cycle: true },
-    { id: 'src/app/b.ts', kind: 'file', name: 'b.ts', path: 'src/app/b.ts', row: 0, order: 1, cycle: true },
+    { id: 'src/app/a.ts', kind: 'file', name: 'a.ts', path: 'src/app/a.ts', row: 0, order: 0, cycle: true, ca: 1, ce: 3, i: '0.75', a: '0.00', d: '0.25' },
+    { id: 'src/app/b.ts', kind: 'file', name: 'b.ts', path: 'src/app/b.ts', row: 0, order: 1, cycle: true, ca: 1, ce: 2, i: '0.67', a: '0.00', d: '0.33' },
   ],
   edges: [
     { from: 'src/app/a.ts', to: 'src/app/b.ts', runtime: 1, type: 0, cycle: true, cycleText: 'a.ts → b.ts → a.ts' },
     { from: 'src/app/b.ts', to: 'src/app/a.ts', runtime: 1, type: 0, cycle: true, cycleText: 'b.ts → a.ts → b.ts' },
   ],
+  crapMax: 4,
+  coverage: 'off',
+  mutation: 'off',
 };
 
 const WORKSPACE_GRAPH: Graph = {
   at: '',
   crumbs: [{ name: 'workspace', at: '' }],
   nodes: [
-    { id: 'packages/web', kind: 'package', name: '@acme/web', path: 'packages/web', files: 1, row: 0, order: 0, cycle: false },
-    { id: 'packages/core', kind: 'package', name: '@acme/core', path: 'packages/core', files: 1, row: 1, order: 0, cycle: false },
+    { id: 'packages/web', kind: 'package', name: '@acme/web', path: 'packages/web', files: 1, row: 0, order: 0, cycle: false, ca: 0, ce: 1, i: '1.00', a: '0.00', d: '0.00', zone: 'healthy' },
+    { id: 'packages/core', kind: 'package', name: '@acme/core', path: 'packages/core', files: 1, row: 1, order: 0, cycle: false, ca: 1, ce: 0, i: '0.00', a: '0.00', d: '1.00', zone: 'pain' },
   ],
   edges: [{ from: 'packages/web', to: 'packages/core', runtime: 1, type: 0, cycle: false }],
+  crapMax: 4,
+  coverage: 'off',
+  mutation: 'off',
 };
 
 function exactName(name: string): RegExp {
@@ -177,6 +198,9 @@ function sortedGraph(graph: Graph): Graph {
     crumbs: graph.crumbs,
     nodes: [...graph.nodes].sort((a, b) => a.id.localeCompare(b.id)),
     edges: [...graph.edges].sort((a, b) => `${a.from}\0${a.to}`.localeCompare(`${b.from}\0${b.to}`)),
+    crapMax: graph.crapMax,
+    coverage: graph.coverage,
+    mutation: graph.mutation,
   };
 }
 
