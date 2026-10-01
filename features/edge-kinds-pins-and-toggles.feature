@@ -41,10 +41,11 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
   tooltip is the points-up sentence. data-line, data-head and the label still follow the
   counts, and data-cycle stays "true".
   An edge points up when the importing box's data-y exceeds the imported box's data-y by
-  more than half the importing box's flow height. Flow height is the .box offsetHeight
-  divided by the canvas zoom; at the default stylesheet it is more than 16 and less than
+  more than half the importing box's flow height. Flow height is the .box offsetHeight;
+  zoom does not change it. At the default stylesheet that height stays between 16 and
   200, so a gap of 8 does not point up and a gap of 400 does. One box height is that
-  flow height. Tops on the screen follow the same test. The cell of a point is (floor(x / 260), floor(y / 140)),
+  flow height. Screen tops agree: the gap and the height scale by the same zoom.
+  The cell of a point is (floor(x / 260), floor(y / 140)),
   floor toward -infinity. Hovering a box gives every other box, and every arrow that does
   not touch it, the class "dim" (opacity 0.25).
 
@@ -267,6 +268,11 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
         """
         {"at":"src","crumbs":[{"name":"layered","at":""},{"name":"src","at":"src"}],"nodes":[{"id":"src/app","kind":"package","name":"app","path":"src/app","files":2,"row":0,"order":0,"cycle":false},{"id":"src/infra","kind":"package","name":"infra","path":"src/infra","files":2,"row":1,"order":0,"cycle":false},{"id":"src/domain","kind":"package","name":"domain","path":"src/domain","files":2,"row":2,"order":0,"cycle":false,"abstract":true}],"edges":[{"from":"src/app","to":"src/infra","runtime":2,"type":1,"cycle":false},{"from":"src/app","to":"src/domain","runtime":0,"type":1,"cycle":false},{"from":"src/infra","to":"src/domain","runtime":2,"type":0,"heritage":1,"cycle":false}]}
         """
+      When I send "GET /api/detail?id=src/infra&at=src" with the token
+      Then the status is 200 and the body is exactly this JSON, with no "node:fs":
+        """
+        {"id":"src/infra","name":"infra","path":"src/infra","kind":"package","files":2,"imports":[{"id":"src/domain","name":"domain","kind":"package","runtime":2,"type":0,"heritage":1}],"importedBy":[{"id":"src/app","name":"app","kind":"package","runtime":2,"type":1,"heritage":0}]}
+        """
       When I send "PUT /api/layout" with the token and this body:
         """
         {"version":1,"views":{"src":{"src/domain":{"x":0,"y":-400},"src/gone":{"x":1,"y":2}},"src/app":{"src/app/a.ts":{"x":40,"y":10}}},"settings":{"tests":true,"external":false}}
@@ -282,6 +288,11 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       Then the status is 200 and the body is exactly this JSON, with no "a.test.ts":
         """
         {"at":"src/app","crumbs":[{"name":"layered","at":""},{"name":"src","at":"src"},{"name":"app","at":"src/app"}],"nodes":[{"id":"src/app/a.ts","kind":"file","name":"a.ts","path":"src/app/a.ts","row":0,"order":0,"cycle":true},{"id":"src/app/b.ts","kind":"file","name":"b.ts","path":"src/app/b.ts","row":0,"order":1,"cycle":true}],"edges":[{"from":"src/app/a.ts","to":"src/app/b.ts","runtime":1,"type":0,"cycle":true,"cycleText":"a.ts → b.ts → a.ts"},{"from":"src/app/b.ts","to":"src/app/a.ts","runtime":1,"type":0,"cycle":true,"cycleText":"b.ts → a.ts → b.ts"}]}
+        """
+      When I send "GET /api/detail?id=src/app/a.ts&at=src/app" with the token
+      Then the status is 200 and the body is exactly this JSON, with no "a.test.ts":
+        """
+        {"id":"src/app/a.ts","name":"a.ts","path":"src/app/a.ts","kind":"file","imports":[{"id":"src/app/b.ts","name":"b.ts","kind":"file","runtime":1,"type":0,"heritage":0},{"id":"src/domain/model.ts","name":"model.ts","kind":"file","runtime":0,"type":1,"heritage":0},{"id":"src/infra/db.ts","name":"db.ts","kind":"file","runtime":1,"type":0,"heritage":0},{"id":"src/infra/repo.ts","name":"repo.ts","kind":"file","runtime":0,"type":1,"heritage":0}],"importedBy":[{"id":"src/app/b.ts","name":"b.ts","kind":"file","runtime":1,"type":0,"heritage":0}]}
         """
 
     Scenario: A bad file is not rewritten, and a rejected PUT leaves a valid file
@@ -391,6 +402,16 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
         | src/domain/model.ts | model.ts | file | 0       | 1    | 0        |
         | src/infra/db.ts     | db.ts    | file | 1       | 0    | 0        |
         | src/infra/repo.ts   | repo.ts  | file | 0       | 1    | 0        |
+      When I send "GET /api/detail?id=node:fs&at=src&external=1" with the token
+      Then the status is 200 and the body is this JSON:
+        """
+        {"id":"node:fs","name":"node:fs","path":"node:fs","kind":"external","imports":[],"importedBy":[{"id":"src/infra","name":"infra","kind":"package","runtime":1,"type":0,"heritage":0}]}
+        """
+      When I send "GET /api/detail?id=src/app/a.test.ts&at=src/app&tests=1" with the token
+      Then the status is 200 and the body is this JSON:
+        """
+        {"id":"src/app/a.test.ts","name":"a.test.ts","path":"src/app/a.test.ts","kind":"file","imports":[{"id":"src/app/a.ts","name":"a.ts","kind":"file","runtime":1,"type":0,"heritage":0}],"importedBy":[]}
+        """
 
   Rule: The Architecture tab draws the kinds, the pin and the panel
     The toolbar holds the breadcrumb, the checkboxes "Tests" and "External packages"
@@ -413,10 +434,13 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       And no arrow carries data-up "true" and no box carries data-cycle "true"
 
     Scenario: Hovering infra dims everything that does not touch it
-      Given the Architecture tab shows the "src" view
+      Given the Architecture tab shows the "src" view and the address bar shows "http://127.0.0.1:4800/#at=src"
       When I hover the "infra" box
       Then the "infra" box and the arrows between "app" and "infra" and between "infra" and "domain" do not carry "dim"
       And the "app" box, the "domain" box and the arrow from "app" to "domain" carry "dim"
+      When I move the pointer off the "infra" box
+      Then no box and no arrow carries "dim"
+      And the address bar is unchanged
 
     Scenario: Clicking infra opens the panel, and domain in the panel selects that box
       Given the Architecture tab shows the "src" view and the address bar shows "http://127.0.0.1:4800/#at=src"
@@ -427,7 +451,9 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       And under "Imported by" one button shows "app" and "2 runtime · 1 type-only · 0 extends/implements"
       When I click "domain" in the panel
       Then the "domain" box carries data-selected "true", no other box does, and its centre is the closest to the canvas centre
-      And the panel's heading is "domain", it shows "abstract", and under "Imports" there is no button
+      And the panel's heading is "domain", it shows "abstract" and "2 files", and under "Imports" there is no button
+      And under "Imported by" one button shows "app" and "0 runtime · 1 type-only · 0 extends/implements"
+      And under "Imported by" one button shows "infra" and "2 runtime · 0 type-only · 1 extends/implements"
 
     Scenario: Clicking db.ts in a.ts's panel drills to the infra view
       Given the Architecture tab shows the "src/app" view
@@ -449,9 +475,10 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       When I drag the "domain" box until its top is at least one box height above the "app" box and drop it
       Then the "domain" box stays where it was dropped, and its data-y is less than the "app" box's data-y by at least the "domain" box's flow height
       And the arrow from "app" to "domain" carries data-up "true", data-line "dashed" and data-head "filled", and its tooltip is "points up: app is drawn below domain"
-      And the arrow from "infra" to "domain" carries data-up "true", data-line "solid" and data-head "hollow", and its tooltip is "points up: infra is drawn below domain"
+      And the arrow from "infra" to "domain" carries data-up "true", data-line "solid" and data-head "hollow", is labelled "2", and its tooltip is "points up: infra is drawn below domain"
       And the arrow from "app" to "infra" carries data-up "false"
-      And "GET /api/layout" returns a document whose "views" "src" "src/domain" x and y are the dropped data-x and data-y, and whose other views are absent
+      And "GET /api/layout" returns version 1 and "settings" exactly {"tests":false,"external":false}
+      And "views" has exactly the key "src", and "views" "src" has exactly the entry "src/domain" at the dropped data-x and data-y
 
     Scenario: A gap of half a box or less does not point up
       Given "PUT /api/layout" has saved {"version":1,"views":{"src":{"src/app":{"x":0,"y":0},"src/domain":{"x":0,"y":-8}}},"settings":{"tests":false,"external":false}}
@@ -515,6 +542,10 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       And "GET /api/layout" has "settings" "tests" true
       When I click the "a.ts" box
       Then under "Imported by" the only buttons are "a.test.ts" and "b.ts", each showing "1 runtime · 0 type-only · 0 extends/implements"
+      When I click the "a.test.ts" box
+      Then the panel's heading is "a.test.ts"
+      And under "Imports" one button shows "a.ts" and "1 runtime · 0 type-only · 0 extends/implements"
+      And under "Imported by" there is no button
       When I open "http://127.0.0.1:4800/?token={token}#at=src/app" in a browser
       Then "Tests" is checked and the "a.test.ts" box is shown
       When I uncheck "Tests"
@@ -526,8 +557,14 @@ Feature: arrows show what kind of dependency they are, and dragged boxes stay pu
       Then a box "node:fs" with a dashed border is below "domain", and an arrow runs from "infra" to "node:fs"
       And "domain" is still above "node:fs" and still green
       And "GET /api/layout" has "settings" "external" true
+      When I open "http://127.0.0.1:4800/?token={token}#at=src" in a browser
+      Then "External packages" is checked and the "node:fs" box is still below "domain"
       When I click the "infra" box
       Then under "Imports" the only buttons are "domain" showing "2 runtime · 0 type-only · 1 extends/implements" and "node:fs" showing "1 runtime · 0 type-only · 0 extends/implements"
+      When I click the "node:fs" box
+      Then the panel's heading is "node:fs"
+      And under "Imported by" one button shows "infra" and "1 runtime · 0 type-only · 0 extends/implements"
+      And under "Imports" there is no button
       When I uncheck "External packages"
       Then the "node:fs" box is gone and the panel no longer shows "node:fs"
 
