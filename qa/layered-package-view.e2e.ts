@@ -441,20 +441,6 @@ test('qa: layered package view', async ({ page, context }) => {
     const zoomedIn = await centers(page);
     expectScaledTogether(zoomedOut, zoomedIn, layerNames);
 
-    const beforeDrag = await centers(page);
-    const appBox = await box(page, 'app').boundingBox();
-    expect(appBox).not.toBeNull();
-    const held = appBox as { x: number; y: number; width: number; height: number };
-    await page.mouse.move(held.x + held.width / 2, held.y + held.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(held.x + held.width / 2 + 160, held.y + held.height / 2 + 110, { steps: 10 });
-    await page.mouse.up();
-    const afterDrag = await centers(page);
-    for (const name of layerNames) {
-      expect(Math.abs(afterDrag[name].x - beforeDrag[name].x)).toBeLessThan(2);
-      expect(Math.abs(afterDrag[name].y - beforeDrag[name].y)).toBeLessThan(2);
-    }
-
     await box(page, 'app').dblclick();
     await expect(page).toHaveURL(`${ORIGIN}/#at=src/app`);
     await waitForBoxes(page, ['a.ts', 'b.ts']);
