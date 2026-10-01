@@ -5,9 +5,11 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { basename, dirname, extname, join } from 'node:path';
 import { z } from 'zod';
 import { graphView, nodeDetail, type GraphFlags } from './domain/graph.ts';
+import type { Health } from './domain/health.ts';
 import { emptyLayout, parseLayout, type LayoutDoc } from './domain/layout.ts';
 import type { ScanResult } from './domain/scan.ts';
 import { buildTree, filePathSet, type TreeRoot } from './domain/tree.ts';
+import { readHealth } from './reports.ts';
 import { listedRegularFiles } from './repo.ts';
 
 export type PortChoice = { mode: 'fixed' | 'range'; port: number };
@@ -192,8 +194,13 @@ async function readyScan(app: App, graphs: GraphHolder): Promise<ScanResult> {
   return graphs.scan;
 }
 
+function healthOf(root: string, scan: ScanResult): Health {
+  return readHealth(root, scan.files.map(file => file.path));
+}
+
 async function serveGraph(app: App, graphs: GraphHolder, res: ServerResponse, url: URL): Promise<void> {
-  const view = graphView(await readyScan(app, graphs), url.searchParams.get('at') ?? '', basename(app.repoRoot), graphFlags(url));
+  const scan = await readyScan(app, graphs);
+  const view = graphView(scan, url.searchParams.get('at') ?? '', basename(app.repoRoot), graphFlags(url), healthOf(app.repoRoot, scan));
   if (view === null) {
     sendJson(res, 404, { error: 'no such directory' });
     return;
@@ -251,10 +258,10 @@ async function putLayout(app: App, req: IncomingMessage, res: ServerResponse): P
   sendJson(res, 200, read.doc);
 }
 
-function detailFor(scan: ScanResult, url: URL, rootName: string): ReturnType<typeof nodeDetail> {
+function detailFor(scan: ScanResult, url: URL, rootName: string, health: Health): ReturnType<typeof nodeDetail> {
   const id = url.searchParams.get('id');
   if (typeof id !== 'string') return null;
-  return nodeDetail(scan, id, url.searchParams.get('at') ?? '', rootName, graphFlags(url));
+  return nodeDetail(scan, id, url.searchParams.get('at') ?? '', rootName, graphFlags(url), health);
 }
 
 function sendDetail(res: ServerResponse, detail: ReturnType<typeof nodeDetail>): void {
@@ -267,7 +274,7 @@ function sendDetail(res: ServerResponse, detail: ReturnType<typeof nodeDetail>):
 
 async function serveDetail(app: App, graphs: GraphHolder, res: ServerResponse, url: URL): Promise<void> {
   const scan = await readyScan(app, graphs);
-  sendDetail(res, detailFor(scan, url, basename(app.repoRoot)));
+  sendDetail(res, detailFor(scan, url, basename(app.repoRoot), healthOf(app.repoRoot, scan)));
 }
 
 async function serveRescan(app: App, graphs: GraphHolder, res: ServerResponse): Promise<void> {

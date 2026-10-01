@@ -237,3 +237,60 @@ aside[aria-label='details'] button {
   text-align: left;
   cursor: pointer;
 }
+
+.box-badge {
+  display: block;
+  border-radius: 4px;
+  padding: 0 0.3rem;
+  font-size: 0.7rem;
+}
+
+.box-badge[data-health='green'] {
+  background: rgb(220, 252, 231);
+}
+
+.box-badge[data-health='amber'] {
+  background: rgb(254, 243, 199);
+}
+
+.box-badge[data-health='red'] {
+  background: rgb(254, 226, 226);
+}
+
+.overlay-box {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.overlay-box [aria-label='stale'] {
+  color: #b45309;
+  font-size: 0.75rem;
+}
+
+aside[aria-label='metrics'] {
+  overflow: auto;
+  max-height: 40%;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 0.5rem 0.75rem;
+}
+
+aside[aria-label='metrics'] table {
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+aside[aria-label='metrics'] th,
+aside[aria-label='metrics'] td {
+  border: 1px solid #e5e7eb;
+  padding: 0.15rem 0.5rem;
+  text-align: left;
+}
+
+aside[aria-label='metrics'] th {
+  cursor: pointer;
+}
+
+aside[aria-label='metrics'] tbody tr {
+  cursor: pointer;
+}

@@ -1,3 +1,17 @@
+import {
+  emptyHealth,
+  fileFields,
+  fileStats,
+  martinFields,
+  martinIndex,
+  packageFields,
+  type Health,
+  type HealthFields,
+  type HotFunction,
+  type MartinFields,
+  type MartinIndex,
+  type ReportFlag,
+} from './health.ts';
 import { byStrings, placeView, toViewEdge, type RawEdge, type RawNode, type ViewEdge, type ViewNode } from './place.ts';
 import type { ExternalRef, ScanEdge, ScanResult, ScannedFile, WorkspacePackage } from './scan.ts';
 
@@ -5,7 +19,17 @@ export type { ViewEdge };
 
 export type Crumb = { name: string; at: string };
 
-export type GraphView = { at: string; crumbs: Crumb[]; nodes: GraphNode[]; edges: ViewEdge[] };
+type Extra = Partial<HealthFields & MartinFields>;
+
+export type GraphView = {
+  at: string;
+  crumbs: Crumb[];
+  nodes: GraphNode[];
+  edges: ViewEdge[];
+  crapMax: number;
+  coverage: ReportFlag;
+  mutation: ReportFlag;
+};
 
 type NodeCount = { isFile: boolean; files: number; abstract: boolean; test: boolean };
 
@@ -23,7 +47,7 @@ type ExternalNode = {
   cycle: boolean;
 };
 
-export type GraphNode = ViewNode | ExternalNode;
+export type GraphNode = (ViewNode | ExternalNode) & Extra;
 
 type DetailEntry = {
   id: string;
@@ -43,7 +67,7 @@ export type NodeDetail = {
   abstract?: true;
   imports: DetailEntry[];
   importedBy: DetailEntry[];
-};
+} & Extra & { hot?: HotFunction[] };
 
 const CLOSED_FLAGS: GraphFlags = { tests: false, external: false };
 
@@ -253,11 +277,35 @@ function externalNodes(names: string[], row: number): ExternalNode[] {
   return names.map((name, order) => ({ id: name, kind: 'external', name, path: name, row, order, cycle: false }));
 }
 
-function nextRow(nodes: ViewNode[]): number {
+function nextRow(nodes: { row: number }[]): number {
   return nodes.reduce((max, node) => Math.max(max, node.row), -1) + 1;
 }
 
-function withExternals(nodes: ViewNode[], edges: ViewEdge[], ext: RawEdge[]): { nodes: GraphNode[]; edges: ViewEdge[] } {
+function isMember(node: ViewNode, file: ScannedFile): boolean {
+  if (node.kind === 'file') return file.path === node.path;
+  return contains(node.path, file.path);
+}
+
+function healthExtras(scan: ScanResult, node: ViewNode, health: Health): HealthFields {
+  const members = scan.files.filter(file => isMember(node, file));
+  if (node.kind === 'package') return packageFields(health, members);
+  return fileFields(health, members[0]);
+}
+
+function nodeExtras(scan: ScanResult, node: ViewNode, health: Health, index: MartinIndex): HealthFields & MartinFields {
+  return { ...healthExtras(scan, node, health), ...martinFields(index, node.path, node.kind) };
+}
+
+function fileAt(scan: ScanResult, path: string): ScannedFile {
+  return scan.files.filter(file => file.path === path)[0];
+}
+
+function hotFields(scan: ScanResult, node: ViewNode | ExternalNode, health: Health): { hot?: HotFunction[] } {
+  if (node.kind !== 'file') return {};
+  return { hot: fileStats(health, fileAt(scan, node.path)).hot };
+}
+
+function withExternals(nodes: GraphNode[], edges: ViewEdge[], ext: RawEdge[]): { nodes: GraphNode[]; edges: ViewEdge[] } {
   return {
     nodes: [...nodes, ...externalNodes(externalNames(ext), nextRow(nodes))],
     edges: [...edges, ...ext.map(edge => toViewEdge(edge, false))],
@@ -287,21 +335,38 @@ function orderOf(scan: ScanResult): WorkspaceOrder {
   };
 }
 
-function assemble(scan: ScanResult, dir: string, rootName: string, nodes: RawNode[], flags: GraphFlags, ws: WorkspaceOrder): GraphView {
+function assemble(scan: ScanResult, dir: string, rootName: string, nodes: RawNode[], flags: GraphFlags, ws: WorkspaceOrder, health: Health): GraphView {
   const nodeIds = new Set(nodes.map(node => node.id));
   const includeTests = flagOn(flags, 'tests');
   const placed = placeView(nodes, viewEdges(scan, dir, nodeIds, includeTests, ws));
   const ext = flagOn(flags, 'external') ? externalEdges(scan, dir, nodeIds, includeTests, ws) : [];
-  const drawn = withExternals(placed.nodes, placed.edges, ext);
-  return { at: dir, crumbs: crumbsFor(dir, rootName, ws), nodes: drawn.nodes, edges: drawn.edges };
+  const index = martinIndex(scan);
+  const drawn = withExternals(
+    placed.nodes.map(node => ({ ...node, ...nodeExtras(scan, node, health, index) })),
+    placed.edges,
+    ext,
+  );
+  return {
+    at: dir,
+    crumbs: crumbsFor(dir, rootName, ws),
+    nodes: drawn.nodes,
+    edges: drawn.edges,
+    crapMax: health.crapMax,
+    coverage: health.coverage,
+    mutation: health.mutation,
+  };
 }
 
-export function graphView(scan: ScanResult, at: string, rootName: string, flags: GraphFlags = CLOSED_FLAGS): GraphView | null {
+function emptyView(nodes: RawNode[], dir: string): boolean {
+  return nodes.length === 0 && dir !== '';
+}
+
+export function graphView(scan: ScanResult, at: string, rootName: string, flags: GraphFlags = CLOSED_FLAGS, health: Health = emptyHealth()): GraphView | null {
   const dir = stripTrailingSlashes(at);
   const ws = orderOf(scan);
   const nodes = viewNodes(scan, dir, ws, flagOn(flags, 'tests'));
-  if (nodes.length === 0 && dir !== '') return null;
-  return assemble(scan, dir, rootName, nodes, flags, ws);
+  if (emptyView(nodes, dir)) return null;
+  return assemble(scan, dir, rootName, nodes, flags, ws, health);
 }
 
 type Tally = { runtime: number; type: number; heritage: number };
@@ -385,7 +450,12 @@ function nodeMeta(node: GraphNode): { files?: number; abstract?: true } {
   return { files: node.files };
 }
 
-function detailResult(scan: ScanResult, node: GraphNode, at: string, flags: GraphFlags, view: GraphView): NodeDetail {
+function detailExtras(scan: ScanResult, node: ViewNode | ExternalNode, health: Health): Extra {
+  if (node.kind === 'external') return {};
+  return { ...healthExtras(scan, node, health), ...martinFields(martinIndex(scan), node.path, node.kind) };
+}
+
+function detailResult(scan: ScanResult, node: GraphNode, at: string, flags: GraphFlags, view: GraphView, health: Health): NodeDetail {
   const dir = stripTrailingSlashes(at);
   const sides = linksFor(scan, dir, node.id, flags, orderOf(scan));
   const nodes = new Map(view.nodes.map(item => [item.id, item]));
@@ -395,22 +465,34 @@ function detailResult(scan: ScanResult, node: GraphNode, at: string, flags: Grap
     path: node.path,
     kind: node.kind,
     ...nodeMeta(node),
+    ...detailExtras(scan, node, health),
+    ...hotFields(scan, node, health),
     imports: entriesOf(sides.imports, nodes),
     importedBy: entriesOf(sides.importedBy, nodes),
   };
 }
 
-function findNode(scan: ScanResult, at: string, rootName: string, flags: GraphFlags, id: string): { view: GraphView; node: GraphNode } | null {
-  const view = graphView(scan, at, rootName, flags);
+function findNode(scan: ScanResult, at: string, rootName: string, flags: GraphFlags, id: string, health: Health): { view: GraphView; node: GraphNode } | null {
+  const view = graphView(scan, at, rootName, flags, health);
   if (view === null) return null;
   const node = view.nodes.find(item => item.id === id);
   if (node === undefined) return null;
   return { view, node };
 }
 
-export function nodeDetail(scan: ScanResult, id: string | null, at: string, rootName: string, flags: GraphFlags = CLOSED_FLAGS): NodeDetail | null {
-  if (typeof id !== 'string') return MISSING_DETAIL;
-  const found = findNode(scan, at, rootName, flags, id);
+function resolvedDetail(scan: ScanResult, found: { view: GraphView; node: GraphNode } | null, at: string, flags: GraphFlags, health: Health): NodeDetail | null {
   if (found === null) return null;
-  return detailResult(scan, found.node, at, flags, found.view);
+  return detailResult(scan, found.node, at, flags, found.view, health);
+}
+
+export function nodeDetail(
+  scan: ScanResult,
+  id: string | null,
+  at: string,
+  rootName: string,
+  flags: GraphFlags = CLOSED_FLAGS,
+  health: Health = emptyHealth(),
+): NodeDetail | null {
+  if (typeof id !== 'string') return MISSING_DETAIL;
+  return resolvedDetail(scan, findNode(scan, at, rootName, flags, id, health), at, flags, health);
 }

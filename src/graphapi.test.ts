@@ -115,8 +115,11 @@ describe('the graph api over the layered fixture', () => {
     const expected = {
       at: '',
       crumbs: [{ name: 'layered', at: '' }],
-      nodes: [{ id: 'src', kind: 'package', name: 'src', path: 'src', files: 4, row: 0, order: 0, cycle: false }],
+      nodes: [{ id: 'src', kind: 'package', name: 'src', path: 'src', files: 4, row: 0, order: 0, cycle: false, ca: 0, ce: 0, i: '–', a: '0.00', d: '–' }],
       edges: [],
+      crapMax: 4,
+      coverage: 'off',
+      mutation: 'off',
     };
     expect(json(await hit(port, 'GET', '/api/graph', bearer))).toEqual(expected);
     expect(json(await hit(port, 'GET', '/api/graph?at=', bearer))).toEqual(expected);
@@ -132,15 +135,18 @@ describe('the graph api over the layered fixture', () => {
         { name: 'src', at: 'src' },
       ],
       nodes: [
-        { id: 'src/app', kind: 'package', name: 'app', path: 'src/app', files: 2, row: 0, order: 0, cycle: false },
-        { id: 'src/infra', kind: 'package', name: 'infra', path: 'src/infra', files: 1, row: 1, order: 0, cycle: false },
-        { id: 'src/domain', kind: 'package', name: 'domain', path: 'src/domain', files: 1, row: 2, order: 0, cycle: false },
+        { id: 'src/app', kind: 'package', name: 'app', path: 'src/app', files: 2, row: 0, order: 0, cycle: false, ca: 0, ce: 2, i: '1.00', a: '0.00', d: '0.00', zone: 'healthy' },
+        { id: 'src/infra', kind: 'package', name: 'infra', path: 'src/infra', files: 1, row: 1, order: 0, cycle: false, ca: 2, ce: 1, i: '0.33', a: '0.00', d: '0.67', zone: 'pain' },
+        { id: 'src/domain', kind: 'package', name: 'domain', path: 'src/domain', files: 1, row: 2, order: 0, cycle: false, ca: 2, ce: 0, i: '0.00', a: '0.00', d: '1.00', zone: 'pain' },
       ],
       edges: [
         { from: 'src/app', to: 'src/domain', runtime: 0, type: 1, cycle: false },
         { from: 'src/app', to: 'src/infra', runtime: 2, type: 0, cycle: false },
         { from: 'src/infra', to: 'src/domain', runtime: 1, type: 0, cycle: false },
       ],
+      crapMax: 4,
+      coverage: 'off',
+      mutation: 'off',
     });
   });
 
@@ -155,13 +161,16 @@ describe('the graph api over the layered fixture', () => {
         { name: 'app', at: 'src/app' },
       ],
       nodes: [
-        { id: 'src/app/a.ts', kind: 'file', name: 'a.ts', path: 'src/app/a.ts', row: 0, order: 0, cycle: true },
-        { id: 'src/app/b.ts', kind: 'file', name: 'b.ts', path: 'src/app/b.ts', row: 0, order: 1, cycle: true },
+        { id: 'src/app/a.ts', kind: 'file', name: 'a.ts', path: 'src/app/a.ts', row: 0, order: 0, cycle: true, ca: 1, ce: 3, i: '0.75', a: '0.00', d: '0.25' },
+        { id: 'src/app/b.ts', kind: 'file', name: 'b.ts', path: 'src/app/b.ts', row: 0, order: 1, cycle: true, ca: 1, ce: 2, i: '0.67', a: '0.00', d: '0.33' },
       ],
       edges: [
         { from: 'src/app/a.ts', to: 'src/app/b.ts', runtime: 1, type: 0, cycle: true, cycleText: 'a.ts → b.ts → a.ts' },
         { from: 'src/app/b.ts', to: 'src/app/a.ts', runtime: 1, type: 0, cycle: true, cycleText: 'b.ts → a.ts → b.ts' },
       ],
+      crapMax: 4,
+      coverage: 'off',
+      mutation: 'off',
     });
   });
 
@@ -279,10 +288,43 @@ describe('the graph api over the workspace fixture', () => {
         at: '',
         crumbs: [{ name: 'workspace', at: '' }],
         nodes: [
-          { id: 'packages/web', kind: 'package', name: '@acme/web', path: 'packages/web', files: 1, row: 0, order: 0, cycle: false },
-          { id: 'packages/core', kind: 'package', name: '@acme/core', path: 'packages/core', files: 1, row: 1, order: 0, cycle: false },
+          {
+            id: 'packages/web',
+            kind: 'package',
+            name: '@acme/web',
+            path: 'packages/web',
+            files: 1,
+            row: 0,
+            order: 0,
+            cycle: false,
+            ca: 0,
+            ce: 1,
+            i: '1.00',
+            a: '0.00',
+            d: '0.00',
+            zone: 'healthy',
+          },
+          {
+            id: 'packages/core',
+            kind: 'package',
+            name: '@acme/core',
+            path: 'packages/core',
+            files: 1,
+            row: 1,
+            order: 0,
+            cycle: false,
+            ca: 1,
+            ce: 0,
+            i: '0.00',
+            a: '0.00',
+            d: '1.00',
+            zone: 'pain',
+          },
         ],
         edges: [{ from: 'packages/web', to: 'packages/core', runtime: 1, type: 0, cycle: false }],
+        crapMax: 4,
+        coverage: 'off',
+        mutation: 'off',
       });
       const detail = await hit(app.port, 'GET', '/api/detail?id=packages/web', { Authorization: `Bearer ${app.token}` });
       expect(detail.status).toBe(200);

@@ -45,10 +45,10 @@ describe('scanRepo over the layered fixture', () => {
     const paths = [...Object.keys(LAYERED_FILES), 'gone.ts', 'src/a.d.ts', 'dist/x.ts', 'build/x.ts', 'out/x.ts', 'coverage/x.ts', 'node_modules/x.ts', '.bindweed/x.ts', '.marestail/x.ts'];
     const scan = scanRepo(root, paths);
     expect(scan.files).toEqual([
-      { path: 'src/app/a.ts', test: false },
-      { path: 'src/app/b.ts', test: false },
-      { path: 'src/domain/model.ts', test: false },
-      { path: 'src/infra/db.ts', test: false },
+      { path: 'src/app/a.ts', test: false, functions: [] },
+      { path: 'src/app/b.ts', test: false, functions: [] },
+      { path: 'src/domain/model.ts', test: false, functions: [] },
+      { path: 'src/infra/db.ts', test: false, functions: [] },
     ]);
     expect(edgeList(root, scan)).toEqual([
       'src/app/a.ts>src/app/b.ts:runtime',
@@ -69,7 +69,7 @@ describe('scanRepo over the layered fixture', () => {
     const second = scanRepo(root, paths);
     expect(second).toEqual(first);
     const cacheText = await import('node:fs/promises').then(fs => fs.readFile(join(root, '.bindweed/cache/scan.json'), 'utf8'));
-    expect(JSON.parse(cacheText).version).toBe(1);
+    expect(JSON.parse(cacheText).version).toBe(2);
     await writeFile(join(root, 'src/infra/db.ts'), "import { Model } from '../domain/model';\nimport { b } from '../app/b';\nexport const query = new Model();\n");
     const third = scanRepo(root, paths);
     expect(edgeList(root, third)).toContain('src/infra/db.ts>src/app/b.ts:runtime');
@@ -101,9 +101,9 @@ describe('scanRepo over the layered fixture', () => {
     await writeFile(
       join(root, '.bindweed/cache/scan.json'),
       JSON.stringify({
-        version: 1,
+        version: 2,
         files: {
-          'src/a.ts': { mtimeMs: stamp.mtimeMs, size: stamp.size + 1, imports: [{ specifier: './gone', typeOnly: false }], abstract: false },
+          'src/a.ts': { mtimeMs: stamp.mtimeMs, size: stamp.size + 1, imports: [{ specifier: './gone', typeOnly: false }], abstract: false, functions: [] },
         },
       }),
     );
@@ -118,13 +118,14 @@ describe('scanRepo over the layered fixture', () => {
     await writeFile(
       join(root, '.bindweed/cache/scan.json'),
       JSON.stringify({
-        version: 1,
+        version: 2,
         files: {
           'src/a.ts': {
             mtimeMs: stamp.mtimeMs + 5,
             size: stamp.size,
             imports: [{ specifier: './gone', typeOnly: false, heritage: 2 }],
             abstract: false,
+            functions: [],
           },
         },
       }),
@@ -138,7 +139,7 @@ describe('scanRepo over the layered fixture', () => {
     await mkdir(join(root, '.bindweed/cache'), { recursive: true });
     await writeFile(join(root, '.bindweed/cache/scan.json'), 'not json');
     expect(scanRepo(root, paths).files).toHaveLength(4);
-    await writeFile(join(root, '.bindweed/cache/scan.json'), '{"version":2,"files":{}}');
+    await writeFile(join(root, '.bindweed/cache/scan.json'), '{"version":1,"files":{}}');
     expect(scanRepo(root, paths).files).toHaveLength(4);
   });
 });
@@ -157,7 +158,7 @@ describe('scanRepo path filtering', () => {
       '.marestail/x.ts': 'export const mx = 1;\n',
     };
     const root = await makeRepo(files);
-    expect(scanRepo(root, Object.keys(files)).files).toEqual([{ path: 'src/a.ts', test: false }]);
+    expect(scanRepo(root, Object.keys(files)).files).toEqual([{ path: 'src/a.ts', test: false, functions: [] }]);
   });
 
   it('treats a resolved sibling directory as external', async () => {
@@ -571,5 +572,41 @@ describe('scanRepo workspaces', () => {
       'app.ts>pkgs/xmts/entry.mts:runtime',
       'app.ts>pkgs/xtsx/entry.tsx:runtime',
     ]);
+  });
+
+  it('scans functions and measures their complexity and line spans', async () => {
+    const fnCode = [
+      'export function demo(x: number, y: number): number {',
+      '  if (x > 0 && y > 0) return 1;',
+      '  if (x < 0 || y < 0) return -1;',
+      '  const z = x ?? y;',
+      '  for (let i = 0; i < z; i++) { if (i === 1) break; }',
+      '  for (const k in {}) { }',
+      '  for (const v of []) { }',
+      '  while (false) { }',
+      '  do { } while (false);',
+      '  switch (x) { case 1: break; default: break; }',
+      '  try { } catch (e) { }',
+      '  const nested = () => { if (x > 0) return 2; return 0; };',
+      '  return z ? 1 : 0;',
+      '}',
+      'export const arrow = () => 42;',
+      'export const obj = { prop: () => 1 };',
+      'export class DemoClass {',
+      '  constructor() { if (false) {} }',
+      '  get value() { return 1; }',
+      '  set value(v) { if (v) {} }',
+      '  method() { if (true) return 1; return 0; }',
+      '}',
+    ].join('\n');
+    const root = await makeRepo({ 'src/fn.ts': fnCode });
+    const scanned = scanRepo(root, ['src/fn.ts']);
+    const names = scanned.files[0].functions?.map(f => f.name);
+    expect(names).toContain('demo');
+    expect(names).toContain('arrow');
+    expect(names).toContain('prop');
+    expect(names).toContain('<anonymous>');
+    expect(names).toContain('value');
+    expect(names).toContain('method');
   });
 });

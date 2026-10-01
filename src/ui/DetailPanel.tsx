@@ -1,5 +1,5 @@
 import type { NodeDetail } from '../domain/graph.ts';
-import { countLine, filesLabel } from './draw.ts';
+import { countLine, detailLines, filesLabel, hotRow } from './draw.ts';
 
 type Entry = NodeDetail['imports'][number];
 
@@ -36,6 +36,32 @@ function AbstractWord(props: Readonly<{ abstract: true | undefined }>) {
   return <p>abstract</p>;
 }
 
+function MetricLines(props: Readonly<{ detail: NodeDetail }>) {
+  return (
+    <>
+      {detailLines(props.detail).map(line => (
+        <div key={line.label}>
+          {line.label} {line.value}
+        </div>
+      ))}
+    </>
+  );
+}
+
+function HotList(props: Readonly<{ hot: NodeDetail['hot'] }>) {
+  if (props.hot === undefined) return null;
+  return (
+    <section>
+      <h3>Hot functions</h3>
+      <ul>
+        {props.hot.map(fn => (
+          <li key={`${fn.name}@${fn.line}`}>{hotRow(fn)}</li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function DetailPanel(props: Readonly<{ detail: NodeDetail; onPick: (id: string) => void }>) {
   return (
     <aside aria-label="details">
@@ -44,6 +70,8 @@ function DetailPanel(props: Readonly<{ detail: NodeDetail; onPick: (id: string) 
       <p>{props.detail.kind}</p>
       <FileCount files={props.detail.files} />
       <AbstractWord abstract={props.detail.abstract} />
+      <MetricLines detail={props.detail} />
+      <HotList hot={props.detail.hot} />
       <EntryList title="Imports" entries={props.detail.imports} onPick={props.onPick} />
       <EntryList title="Imported by" entries={props.detail.importedBy} onPick={props.onPick} />
     </aside>

@@ -16,7 +16,19 @@ import '@xyflow/react/dist/style.css';
 import { useMemo, useSyncExternalStore, type ReactNode } from 'react';
 import type { GraphNode, GraphView, ViewEdge } from '../domain/graph.ts';
 import { pointsUp, type PlacedBox } from '../domain/layout.ts';
-import { arrowColor, boxCenter, edgeLabel, edgeTitle, filesLabel, headOf, lineOf } from './draw.ts';
+import {
+  arrowColor,
+  badgeLevel,
+  badgeText,
+  boxCenter,
+  edgeLabel,
+  edgeTitle,
+  filesLabel,
+  headOf,
+  lineOf,
+  type Level,
+  type OverlayName,
+} from './draw.ts';
 
 type BoxData = {
   name: string;
@@ -29,6 +41,8 @@ type BoxData = {
   y: number;
   selected: boolean;
   dimmed: boolean;
+  badge: string | null;
+  level: Level | null;
   onHover: (id: string | null) => void;
 };
 
@@ -53,6 +67,8 @@ type CanvasProps = {
   spots: PlacedBox[];
   hover: string | null;
   chosen: string | null;
+  overlay: OverlayName;
+  crapMax: number;
   onHover: (id: string | null) => void;
   onSelect: (id: string) => void;
   onOpen: (id: string, kind: GraphNode['kind']) => void;
@@ -105,6 +121,15 @@ function TestTag({ show }: Readonly<{ show: boolean }>) {
   return <span className="box-tag">test</span>;
 }
 
+function HealthBadge({ text, level }: Readonly<{ text: string | null; level: Level | null }>) {
+  if (text === null) return null;
+  return (
+    <span aria-label="health" className="box-badge" data-health={level ?? undefined}>
+      {text}
+    </span>
+  );
+}
+
 function Box({ id, data }: NodeProps<BoxNode>) {
   return (
     <div
@@ -122,6 +147,7 @@ function Box({ id, data }: NodeProps<BoxNode>) {
       <span className="box-name">{data.name}</span>
       <BoxCount text={data.count} />
       <TestTag show={data.test} />
+      <HealthBadge text={data.badge} level={data.level} />
       <Handle type="source" position={Position.Bottom} />
     </div>
   );
@@ -208,7 +234,15 @@ function countOf(node: GraphNode): string | null {
   return filesLabel(node.files);
 }
 
-function toBox(node: GraphNode, spot: PlacedBox, hover: string | null, chosen: string | null, onHover: (id: string | null) => void): BoxNode {
+type BoxStyle = {
+  hover: string | null;
+  chosen: string | null;
+  overlay: OverlayName;
+  crapMax: number;
+  onHover: (id: string | null) => void;
+};
+
+function toBox(node: GraphNode, spot: PlacedBox, style: BoxStyle): BoxNode {
   return {
     id: node.id,
     type: 'box',
@@ -222,9 +256,11 @@ function toBox(node: GraphNode, spot: PlacedBox, hover: string | null, chosen: s
       test: isTestNode(node),
       x: spot.x,
       y: spot.y,
-      selected: node.id === chosen,
-      dimmed: hover !== null && hover !== node.id,
-      onHover,
+      selected: node.id === style.chosen,
+      dimmed: style.hover !== null && style.hover !== node.id,
+      badge: badgeText(style.overlay, node),
+      level: badgeLevel(style.overlay, node, style.crapMax),
+      onHover: style.onHover,
     },
     draggable: true,
   };
@@ -237,8 +273,8 @@ function sizedBox(node: BoxNode): BoxNode {
   return { ...node, measured: { width: size.width, height: size.height } };
 }
 
-function zipBoxes(nodes: GraphNode[], spots: PlacedBox[], hover: string | null, chosen: string | null, onHover: (id: string | null) => void): BoxNode[] {
-  return nodes.map((node, index) => sizedBox(toBox(node, spots[index], hover, chosen, onHover)));
+function zipBoxes(nodes: GraphNode[], spots: PlacedBox[], style: BoxStyle): BoxNode[] {
+  return nodes.map((node, index) => sizedBox(toBox(node, spots[index], style)));
 }
 
 function pointsUpward(from: PlacedBox | undefined, to: PlacedBox | undefined, height: number): boolean {
@@ -330,8 +366,15 @@ export function useCenterOn(spots: PlacedBox[]): (id: string) => void {
 export function ArchCanvas(props: Readonly<CanvasProps & { view: GraphView }>) {
   const height = useBoxHeight();
   const nodes = useMemo(
-    () => zipBoxes(props.view.nodes, props.spots, props.hover, props.chosen, props.onHover),
-    [props.view.nodes, props.spots, props.hover, props.chosen, props.onHover],
+    () =>
+      zipBoxes(props.view.nodes, props.spots, {
+        hover: props.hover,
+        chosen: props.chosen,
+        overlay: props.overlay,
+        crapMax: props.crapMax,
+        onHover: props.onHover,
+      }),
+    [props.view.nodes, props.spots, props.hover, props.chosen, props.overlay, props.crapMax, props.onHover],
   );
   const edges = useMemo(
     () => props.view.edges.map(edge => toArrow(edge, spotMap(props.spots), namesOf(props.view.nodes), props.hover, height)),

@@ -36,6 +36,28 @@ const nodeMarks = {
   test: z.literal(true).optional(),
 };
 
+const healthFields = {
+  crap: z.union([z.number(), z.literal('–')]).optional(),
+  coverage: z.string().optional(),
+  mutants: z.number().optional(),
+  ca: z.number().optional(),
+  ce: z.number().optional(),
+  i: z.string().optional(),
+  a: z.string().optional(),
+  d: z.string().optional(),
+  zone: z.enum(['pain', 'useless', 'healthy']).optional(),
+};
+
+const reportFlag = z.enum(['on', 'stale', 'off']);
+
+const hotFunctionSchema = z.object({
+  name: z.string(),
+  line: z.number(),
+  cc: z.number(),
+  coverage: z.string(),
+  crap: z.number(),
+});
+
 const graphNodeSchema = z.discriminatedUnion('kind', [
   z.object({
     id: z.string(),
@@ -47,6 +69,7 @@ const graphNodeSchema = z.discriminatedUnion('kind', [
     order: z.number(),
     cycle: z.boolean(),
     ...nodeMarks,
+    ...healthFields,
   }),
   z.object({
     id: z.string(),
@@ -57,6 +80,7 @@ const graphNodeSchema = z.discriminatedUnion('kind', [
     order: z.number(),
     cycle: z.boolean(),
     ...nodeMarks,
+    ...healthFields,
   }),
   z.object({
     id: z.string(),
@@ -97,6 +121,8 @@ const detailSchema: z.ZodType<NodeDetail> = z.object({
   abstract: z.literal(true).optional(),
   imports: z.array(detailEntrySchema),
   importedBy: z.array(detailEntrySchema),
+  ...healthFields,
+  hot: z.array(hotFunctionSchema).optional(),
 });
 
 const graphJsonSchema: z.ZodType<GraphView> = z.object({
@@ -104,6 +130,9 @@ const graphJsonSchema: z.ZodType<GraphView> = z.object({
   crumbs: z.array(z.object({ name: z.string(), at: z.string() })),
   nodes: z.array(graphNodeSchema),
   edges: z.array(graphEdgeSchema),
+  crapMax: z.number().default(4),
+  coverage: reportFlag.default('off'),
+  mutation: reportFlag.default('off'),
 });
 
 const rescanJsonSchema = z.object({ files: z.number(), ms: z.number() });

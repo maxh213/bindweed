@@ -162,8 +162,11 @@ describe('graphView over the layered fixture shape', () => {
     expect(graphView(LAYERED, '', 'layered')).toEqual({
       at: '',
       crumbs: [{ name: 'layered', at: '' }],
-      nodes: [{ id: 'src', kind: 'package', name: 'src', path: 'src', files: 4, row: 0, order: 0, cycle: false }],
+      nodes: [{ id: 'src', kind: 'package', name: 'src', path: 'src', files: 4, row: 0, order: 0, cycle: false, ca: 0, ce: 0, i: '–', a: '0.00', d: '–' }],
       edges: [],
+      crapMax: 4,
+      coverage: 'off',
+      mutation: 'off',
     });
   });
 
@@ -175,15 +178,18 @@ describe('graphView over the layered fixture shape', () => {
         { name: 'src', at: 'src' },
       ],
       nodes: [
-        { id: 'src/app', kind: 'package', name: 'app', path: 'src/app', files: 2, row: 0, order: 0, cycle: false },
-        { id: 'src/infra', kind: 'package', name: 'infra', path: 'src/infra', files: 1, row: 1, order: 0, cycle: false },
-        { id: 'src/domain', kind: 'package', name: 'domain', path: 'src/domain', files: 1, row: 2, order: 0, cycle: false },
+        { id: 'src/app', kind: 'package', name: 'app', path: 'src/app', files: 2, row: 0, order: 0, cycle: false, ca: 0, ce: 2, i: '1.00', a: '0.00', d: '0.00', zone: 'healthy' },
+        { id: 'src/infra', kind: 'package', name: 'infra', path: 'src/infra', files: 1, row: 1, order: 0, cycle: false, ca: 2, ce: 1, i: '0.33', a: '0.00', d: '0.67', zone: 'pain' },
+        { id: 'src/domain', kind: 'package', name: 'domain', path: 'src/domain', files: 1, row: 2, order: 0, cycle: false, ca: 2, ce: 0, i: '0.00', a: '0.00', d: '1.00', zone: 'pain' },
       ],
       edges: [
         { from: 'src/app', to: 'src/domain', runtime: 0, type: 1, cycle: false },
         { from: 'src/app', to: 'src/infra', runtime: 2, type: 0, cycle: false },
         { from: 'src/infra', to: 'src/domain', runtime: 1, type: 0, cycle: false },
       ],
+      crapMax: 4,
+      coverage: 'off',
+      mutation: 'off',
     });
   });
 
@@ -196,13 +202,16 @@ describe('graphView over the layered fixture shape', () => {
         { name: 'app', at: 'src/app' },
       ],
       nodes: [
-        { id: 'src/app/a.ts', kind: 'file', name: 'a.ts', path: 'src/app/a.ts', row: 0, order: 0, cycle: true },
-        { id: 'src/app/b.ts', kind: 'file', name: 'b.ts', path: 'src/app/b.ts', row: 0, order: 1, cycle: true },
+        { id: 'src/app/a.ts', kind: 'file', name: 'a.ts', path: 'src/app/a.ts', row: 0, order: 0, cycle: true, ca: 1, ce: 3, i: '0.75', a: '0.00', d: '0.25' },
+        { id: 'src/app/b.ts', kind: 'file', name: 'b.ts', path: 'src/app/b.ts', row: 0, order: 1, cycle: true, ca: 1, ce: 2, i: '0.67', a: '0.00', d: '0.33' },
       ],
       edges: [
         { from: 'src/app/a.ts', to: 'src/app/b.ts', runtime: 1, type: 0, cycle: true, cycleText: 'a.ts → b.ts → a.ts' },
         { from: 'src/app/b.ts', to: 'src/app/a.ts', runtime: 1, type: 0, cycle: true, cycleText: 'b.ts → a.ts → b.ts' },
       ],
+      crapMax: 4,
+      coverage: 'off',
+      mutation: 'off',
     });
   });
 
@@ -264,8 +273,11 @@ describe('graphView over the layered fixture shape', () => {
     expect(view(scan, '')).toEqual({
       at: '',
       crumbs: [{ name: 'repo', at: '' }],
-      nodes: [{ id: 'src', kind: 'package', name: 'src', path: 'src', files: 1, row: 0, order: 0, cycle: false }],
+      nodes: [{ id: 'src', kind: 'package', name: 'src', path: 'src', files: 1, row: 0, order: 0, cycle: false, ca: 0, ce: 0, i: '–', a: '0.00', d: '–' }],
       edges: [],
+      crapMax: 4,
+      coverage: 'off',
+      mutation: 'off',
     });
   });
 
@@ -275,6 +287,9 @@ describe('graphView over the layered fixture shape', () => {
       crumbs: [{ name: 'repo', at: '' }],
       nodes: [],
       edges: [],
+      crapMax: 4,
+      coverage: 'off',
+      mutation: 'off',
     });
   });
 });
@@ -390,10 +405,13 @@ describe('graphView layers and ordering', () => {
       at: '',
       crumbs: [{ name: 'repo', at: '' }],
       nodes: [
-        { id: 'main.ts', kind: 'file', name: 'main.ts', path: 'main.ts', row: 0, order: 0, cycle: false },
-        { id: 'src', kind: 'package', name: 'src', path: 'src', files: 1, row: 1, order: 0, cycle: false },
+        { id: 'main.ts', kind: 'file', name: 'main.ts', path: 'main.ts', row: 0, order: 0, cycle: false, ca: 0, ce: 1, i: '1.00', a: '0.00', d: '0.00' },
+        { id: 'src', kind: 'package', name: 'src', path: 'src', files: 1, row: 1, order: 0, cycle: false, ca: 1, ce: 0, i: '0.00', a: '0.00', d: '1.00', zone: 'pain' },
       ],
       edges: [{ from: 'main.ts', to: 'src', runtime: 1, type: 0, cycle: false }],
+      crapMax: 4,
+      coverage: 'off',
+      mutation: 'off',
     });
   });
 
@@ -461,9 +479,9 @@ describe('graphView layers and ordering', () => {
     );
     const found = view(scan, '');
     expect(found.nodes).toEqual([
-      { id: 'x', kind: 'package', name: 'x', path: 'x', files: 2, row: 0, order: 0, cycle: false },
-      { id: 'y1', kind: 'package', name: 'y1', path: 'y1', files: 1, row: 1, order: 0, cycle: true },
-      { id: 'y2', kind: 'package', name: 'y2', path: 'y2', files: 1, row: 1, order: 1, cycle: true },
+      { id: 'x', kind: 'package', name: 'x', path: 'x', files: 2, row: 0, order: 0, cycle: false, ca: 0, ce: 1, i: '1.00', a: '0.00', d: '0.00', zone: 'healthy' },
+      { id: 'y1', kind: 'package', name: 'y1', path: 'y1', files: 1, row: 1, order: 0, cycle: true, ca: 2, ce: 1, i: '0.33', a: '0.00', d: '0.67', zone: 'pain' },
+      { id: 'y2', kind: 'package', name: 'y2', path: 'y2', files: 1, row: 1, order: 1, cycle: true, ca: 2, ce: 1, i: '0.33', a: '0.00', d: '0.67', zone: 'pain' },
     ]);
     expect(found.edges).toEqual([
       { from: 'x', to: 'y1', runtime: 1, type: 0, cycle: false },
@@ -510,10 +528,43 @@ describe('graphView workspaces', () => {
       at: '',
       crumbs: [{ name: 'workspace', at: '' }],
       nodes: [
-        { id: 'packages/web', kind: 'package', name: '@acme/web', path: 'packages/web', files: 1, row: 0, order: 0, cycle: false },
-        { id: 'packages/core', kind: 'package', name: '@acme/core', path: 'packages/core', files: 1, row: 1, order: 0, cycle: false },
+        {
+          id: 'packages/web',
+          kind: 'package',
+          name: '@acme/web',
+          path: 'packages/web',
+          files: 1,
+          row: 0,
+          order: 0,
+          cycle: false,
+          ca: 0,
+          ce: 1,
+          i: '1.00',
+          a: '0.00',
+          d: '0.00',
+          zone: 'healthy',
+        },
+        {
+          id: 'packages/core',
+          kind: 'package',
+          name: '@acme/core',
+          path: 'packages/core',
+          files: 1,
+          row: 1,
+          order: 0,
+          cycle: false,
+          ca: 1,
+          ce: 0,
+          i: '0.00',
+          a: '0.00',
+          d: '1.00',
+          zone: 'pain',
+        },
       ],
       edges: [{ from: 'packages/web', to: 'packages/core', runtime: 1, type: 0, cycle: false }],
+      crapMax: 4,
+      coverage: 'off',
+      mutation: 'off',
     });
   });
 

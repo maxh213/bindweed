@@ -196,6 +196,9 @@ const GRAPH_BODY = {
     { from: 'src/app', to: 'src/infra', runtime: 2, type: 0, cycle: false },
     { from: 'src/app', to: 'src/domain', runtime: 0, type: 1, cycle: true, cycleText: 'app → domain → app' },
   ],
+  crapMax: 4,
+  coverage: 'off',
+  mutation: 'off',
 };
 
 describe('fetchGraph', () => {
@@ -305,6 +308,9 @@ const RICH_GRAPH = {
     { id: 'node:fs', kind: 'external', name: 'node:fs', path: 'node:fs', row: 2, order: 0, cycle: false },
   ],
   edges: [{ from: 'src/app', to: 'src/domain', runtime: 2, type: 0, heritage: 1, cycle: false }],
+  crapMax: 4,
+  coverage: 'off',
+  mutation: 'off',
 };
 
 const RICH_DETAIL = {

@@ -1,4 +1,6 @@
-export type ScannedFile = { path: string; test: boolean; abstract?: true };
+export type RawFunction = { name: string; line: number; endLine: number; cc: number };
+
+export type ScannedFile = { path: string; test: boolean; abstract?: true; functions?: RawFunction[] };
 
 export type ScanEdge = { from: string; to: string; kind: 'runtime' | 'type'; heritage?: number };
 

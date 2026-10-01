@@ -8,11 +8,12 @@ import {
   withSettings,
   withoutView,
   type LayoutDoc,
+  type LayoutSettings,
 } from './domain/layout.ts';
 
-const SETTINGS = { tests: false, external: false };
+const SETTINGS: LayoutSettings = { tests: false, external: false };
 
-function doc(views: LayoutDoc['views'], settings = SETTINGS): LayoutDoc {
+function doc(views: LayoutDoc['views'], settings: LayoutSettings = SETTINGS): LayoutDoc {
   return { version: 1, views, settings };
 }
 
@@ -21,6 +22,11 @@ describe('parseLayout', () => {
     const saved = doc({ src: { 'src/domain': { x: 0, y: -400 }, 'src/gone': { x: 1, y: 2 } } }, { tests: true, external: false });
     expect(parseLayout(saved)).toEqual(saved);
     expect(parseLayout(emptyLayout())).toEqual(emptyLayout());
+    const withOverlays = doc({}, { tests: false, external: false, overlay: 'crap' });
+    expect(parseLayout(withOverlays)).toEqual(withOverlays);
+    const withNone = doc({}, { tests: false, external: false, overlay: 'none' });
+    expect(parseLayout(withNone)).toEqual(withNone);
+
     const refused = [
       null,
       [],
@@ -40,6 +46,8 @@ describe('parseLayout', () => {
       { version: 1, views: {}, settings: { tests: false, external: false, extra: true } },
       { version: 1, views: {}, settings: { tests: 1, external: false } },
       { version: 1, views: {}, settings: null },
+      { version: 1, views: {}, settings: { tests: false, external: false, overlay: 'bad' } },
+      { version: 1, views: {}, settings: { tests: false, external: false, overlay: 123 } },
     ];
     for (const raw of refused) expect(parseLayout(raw)).toBeUndefined();
   });

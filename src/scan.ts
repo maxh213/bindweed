@@ -1,27 +1,29 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
-import type { ExternalRef, ScanEdge, ScanResult, ScannedFile, WorkspacePackage } from './domain/scan.ts';
+import type { ExternalRef, RawFunction, ScanEdge, ScanResult, ScannedFile, WorkspacePackage } from './domain/scan.ts';
 import { filesToScan } from './scanning/paths.ts';
 import { parseSource, type RawImport } from './scanning/parse.ts';
 import { specifierResolver, type Target } from './scanning/resolve.ts';
 import { workspacesOf, type WorkspaceInfo } from './scanning/workspaces.ts';
 
-type CacheEntry = { mtimeMs: number; size: number; imports: RawImport[]; abstract: boolean };
+type CacheEntry = { mtimeMs: number; size: number; imports: RawImport[]; abstract: boolean; functions: RawFunction[] };
 
 type Cache = Record<string, CacheEntry>;
 
 type ScanOut = { files: ScannedFile[]; edges: ScanEdge[]; externals: ExternalRef[] };
 
-type Parsed = { imports: RawImport[]; abstract: boolean };
+type Parsed = { imports: RawImport[]; abstract: boolean; functions: RawFunction[] };
 
 const rawImportSchema = z.object({ specifier: z.string(), typeOnly: z.boolean(), heritage: z.number().optional() });
 
+const rawFunctionSchema = z.object({ name: z.string(), line: z.number(), endLine: z.number(), cc: z.number() });
+
 const cacheSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   files: z.record(
     z.string(),
-    z.object({ mtimeMs: z.number(), size: z.number(), imports: z.array(rawImportSchema), abstract: z.boolean() }),
+    z.object({ mtimeMs: z.number(), size: z.number(), imports: z.array(rawImportSchema), abstract: z.boolean(), functions: z.array(rawFunctionSchema) }),
   ),
 });
 
@@ -40,7 +42,7 @@ function readCache(root: string): Cache {
 
 function writeCache(root: string, files: Cache): void {
   mkdirSync(dirname(cachePath(root)), { recursive: true });
-  writeFileSync(cachePath(root), JSON.stringify({ version: 1, files }));
+  writeFileSync(cachePath(root), JSON.stringify({ version: 2, files }));
 }
 
 function stampOf(root: string, path: string): { mtimeMs: number; size: number } | undefined {
@@ -53,7 +55,7 @@ function stampOf(root: string, path: string): { mtimeMs: number; size: number } 
 function cachedParsed(path: string, stamp: { mtimeMs: number; size: number }, cache: Cache): Parsed | undefined {
   const hit = cache[path];
   if (hit?.mtimeMs !== stamp.mtimeMs || hit.size !== stamp.size) return undefined;
-  return { imports: hit.imports, abstract: hit.abstract };
+  return { imports: hit.imports, abstract: hit.abstract, functions: hit.functions };
 }
 
 function parsedOf(root: string, path: string, stamp: { mtimeMs: number; size: number }, cache: Cache): Parsed {
@@ -80,9 +82,10 @@ function resolveImport(path: string, imp: RawImport, resolve: (specifier: string
   pushResolved(path, imp, resolve(imp.specifier, join(root, path)), out);
 }
 
-function fileRecord(file: ScannedFile, abstract: boolean): ScannedFile {
-  if (!abstract) return file;
-  return { ...file, abstract: true };
+function fileRecord(file: ScannedFile, parsed: Parsed): ScannedFile {
+  const record: ScannedFile = { ...file, functions: parsed.functions };
+  if (!parsed.abstract) return record;
+  return { ...record, abstract: true };
 }
 
 function collectFile(
@@ -96,8 +99,8 @@ function collectFile(
   const stamp = stampOf(root, file.path);
   if (stamp === undefined) return;
   const parsed = parsedOf(root, file.path, stamp, cache);
-  next[file.path] = { ...stamp, imports: parsed.imports, abstract: parsed.abstract };
-  out.files.push(fileRecord(file, parsed.abstract));
+  next[file.path] = { ...stamp, imports: parsed.imports, abstract: parsed.abstract, functions: parsed.functions };
+  out.files.push(fileRecord(file, parsed));
   for (const imp of parsed.imports) resolveImport(file.path, imp, resolve, root, out);
 }
 

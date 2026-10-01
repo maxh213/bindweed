@@ -1,6 +1,8 @@
 export type Pin = { x: number; y: number };
 
-export type LayoutSettings = { tests: boolean; external: boolean };
+type Overlay = 'none' | 'crap' | 'coverage' | 'mutants';
+
+export type LayoutSettings = { tests: boolean; external: boolean; overlay?: Overlay };
 
 export type LayoutDoc = {
   version: 1;
@@ -46,18 +48,41 @@ function boolField(rec: Record<string, unknown>, key: string): boolean | undefin
   return value;
 }
 
-function twoBooleans(rec: Record<string, unknown>): LayoutSettings | undefined {
-  if (Object.keys(rec).length !== 2) return undefined;
+const SETTING_KEYS = ['tests', 'external', 'overlay'];
+
+const OVERLAYS: Record<string, Overlay | undefined> = { none: 'none', crap: 'crap', coverage: 'coverage', mutants: 'mutants' };
+
+function knownKeys(rec: Record<string, unknown>): boolean {
+  for (const key of Object.keys(rec)) {
+    if (!SETTING_KEYS.includes(key)) return false;
+  }
+  return true;
+}
+
+function overlayField(value: unknown): Overlay | undefined {
+  if (typeof value !== 'string') return undefined;
+  return OVERLAYS[value];
+}
+
+function withOverlay(rec: Record<string, unknown>, settings: LayoutSettings): LayoutSettings | undefined {
+  if (!('overlay' in rec)) return settings;
+  const overlay = overlayField(rec.overlay);
+  if (overlay === undefined) return undefined;
+  return { ...settings, overlay };
+}
+
+function settingsFields(rec: Record<string, unknown>): LayoutSettings | undefined {
+  if (!knownKeys(rec)) return undefined;
   const tests = boolField(rec, 'tests');
   const external = boolField(rec, 'external');
   if (tests === undefined || external === undefined) return undefined;
-  return { tests, external };
+  return withOverlay(rec, { tests, external });
 }
 
 function settingsFrom(value: unknown): LayoutSettings | undefined {
   const rec = recordOf(value);
   if (rec === undefined) return undefined;
-  return twoBooleans(rec);
+  return settingsFields(rec);
 }
 
 function viewFrom(value: unknown): Record<string, Pin> | undefined {

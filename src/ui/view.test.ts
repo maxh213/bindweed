@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { GraphView } from '../domain/graph.ts';
 import { parentDirs, togglePath, withParentsOpen } from '../domain/tree.ts';
 import { panelFromFile } from './FilePanel.tsx';
 import {
@@ -233,7 +234,7 @@ describe('graphStateOf', () => {
     expect(graphStateOf(undefined, true)).toEqual({ kind: 'loading' });
     expect(graphStateOf(undefined, false)).toEqual({ kind: 'loading' });
     expect(graphStateOf({ error: 'no such directory' }, false)).toEqual({ kind: 'message', message: 'no such directory' });
-    const view = { at: '', crumbs: [{ name: 'r', at: '' }], nodes: [], edges: [] };
+    const view: GraphView = { at: '', crumbs: [{ name: 'r', at: '' }], nodes: [], edges: [], crapMax: 4, coverage: 'off', mutation: 'off' };
     expect(graphStateOf(view, false)).toEqual({ kind: 'ok', view });
   });
 });

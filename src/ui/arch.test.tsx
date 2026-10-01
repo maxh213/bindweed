@@ -274,9 +274,14 @@ function record(calls: Call[], url: string, init?: RequestInit): void {
   calls.push({ url, method: init?.method ?? 'GET' });
 }
 
-function graphBodyFor(url: string, graphs: Record<string, unknown>): Response {
+function graphTable(graphs: Record<string, unknown> | (() => Record<string, unknown>)): Record<string, unknown> {
+  if (typeof graphs === 'function') return graphs();
+  return graphs;
+}
+
+function graphBodyFor(url: string, graphs: Record<string, unknown> | (() => Record<string, unknown>)): Response {
   const at = new URL(url, 'http://x').searchParams.get('at') ?? '';
-  const body = graphs[at];
+  const body = graphTable(graphs)[at];
   return body === undefined ? notOk({ error: 'no such directory' }) : ok(body);
 }
 
@@ -285,13 +290,49 @@ function fileBodyFor(url: string): Response {
   return ok({ path, text: MODEL_TEXT });
 }
 
-function archFetcher(calls: Call[], graphs: Record<string, unknown>): typeof fetch {
+function namedDetail(id: string, extra: Record<string, unknown>): Record<string, unknown> {
+  return { id, name: id.split('/').pop() ?? id, path: id, imports: [], importedBy: [], ...extra };
+}
+
+function detailForId(id: string): Record<string, unknown> {
+  if (id.endsWith('green.ts')) return namedDetail(id, { kind: 'file', crap: 3, coverage: '1.00', mutants: 0, hot: [] });
+  if (id.endsWith('red.ts')) return namedDetail(id, { kind: 'file', crap: 42, coverage: '0.00', mutants: 0, hot: [{ name: 'bad', line: 1, cc: 6, coverage: '0.00', crap: 42 }] });
+  if (id.endsWith('domain')) return namedDetail(id, { kind: 'package', files: 2, ca: 3, ce: 0, i: '0.00', a: '1.00', d: '0.00', zone: 'healthy' });
+  return namedDetail(id, { kind: 'file', hot: [] });
+}
+
+function detailBodyFor(url: string): Response {
+  return ok(detailForId(new URL(url, 'http://x').searchParams.get('id') ?? ''));
+}
+
+function putLayout(body: unknown, layoutRef: { current: unknown }): void {
+  if (typeof body === 'string') layoutRef.current = JSON.parse(body);
+}
+
+function handleLayout(init: RequestInit | undefined, layoutRef: { current: unknown }): unknown {
+  if (init?.method === 'PUT') putLayout(init.body, layoutRef);
+  return ok(layoutRef.current);
+}
+
+type ApiHandler = (url: string, init?: RequestInit) => unknown;
+
+function dispatchApi(url: string, init: RequestInit | undefined, handlers: Record<string, ApiHandler>): unknown {
+  const base = url.split('?')[0];
+  const handler = handlers[base];
+  return handler ? handler(url, init) : ok({ files: 4, ms: 3 });
+}
+
+function archFetcher(calls: Call[], graphs: Record<string, unknown> | (() => Record<string, unknown>), layoutRef = { current: { version: 1, views: {}, settings: { tests: false, external: false, overlay: 'none' } } }): typeof fetch {
+  const handlers: Record<string, ApiHandler> = {
+    '/api/tree': () => ok(TREE),
+    '/api/graph': url => graphBodyFor(url, graphs),
+    '/api/file': url => fileBodyFor(url),
+    '/api/detail': url => detailBodyFor(url),
+    '/api/layout': (_url, init) => handleLayout(init, layoutRef),
+  };
   return (async (url: string, init?: RequestInit) => {
     record(calls, url, init);
-    if (url === '/api/tree') return ok(TREE);
-    if (url.startsWith('/api/graph')) return graphBodyFor(url, graphs);
-    if (url.startsWith('/api/file')) return fileBodyFor(url);
-    return ok({ files: 4, ms: 3 });
+    return dispatchApi(url, init, handlers);
   }) as typeof fetch;
 }
 
@@ -398,18 +439,30 @@ describe('ArchView with a fake flow', () => {
     });
   }
 
+  async function reopen(): Promise<void> {
+    const { act } = await import('react');
+    await act(async () => {
+      root.unmount();
+    });
+    const el = document.getElementById('root');
+    if (el === null) throw new Error('missing root');
+    root = createRoot(el);
+  }
+
   async function showArchView(
     at: string,
     graphs: Record<string, unknown>,
     onDrill: (dir: string) => void,
     onOpenFile: (path: string) => void,
+    fetcher?: typeof fetch,
   ): Promise<Call[]> {
     const { ArchView } = await import('./ArchView.tsx');
     const { waitFor } = await import('@testing-library/dom');
     const calls: Call[] = [];
+    const usedFetcher = fetcher ?? archFetcher(calls, graphs);
     await show(
       createElement(QueryClientProvider, { client: newQueryClient() },
-        createElement(ArchView, { token: 'tok', at, fetcher: archFetcher(calls, graphs), onDrill, onOpenFile })),
+        createElement(ArchView, { token: 'tok', at, fetcher: usedFetcher, onDrill, onOpenFile })),
     );
     await waitFor(() => {
       expect(document.querySelector('.fake-flow')).not.toBeNull();
@@ -618,6 +671,320 @@ describe('ArchView with a fake flow', () => {
     });
     expect(document.querySelector('nav[aria-label="breadcrumb"]')?.textContent).toBe('');
     expect(document.querySelectorAll('nav[aria-label="breadcrumb"] button')).toHaveLength(0);
+  });
+
+const HEALTH_GRAPHS = {
+  src: {
+    at: 'src',
+    crumbs: [
+      { name: 'layered', at: '' },
+      { name: 'src', at: 'src' },
+    ],
+    nodes: [
+      { id: 'src/green.ts', kind: 'file', name: 'green.ts', path: 'src/green.ts', row: 0, order: 0, cycle: false, crap: 3, coverage: '1.00', mutants: 0 },
+      { id: 'src/amber.ts', kind: 'file', name: 'amber.ts', path: 'src/amber.ts', row: 1, order: 0, cycle: false, crap: 6, coverage: '0.50', mutants: 0 },
+      { id: 'src/red.ts', kind: 'file', name: 'red.ts', path: 'src/red.ts', row: 2, order: 0, cycle: false, crap: 42, coverage: '0.00', mutants: 0 },
+      { id: 'src/plain.ts', kind: 'file', name: 'plain.ts', path: 'src/plain.ts', row: 3, order: 0, cycle: false, coverage: '1.00', mutants: 3 },
+      { id: 'src/clean.ts', kind: 'file', name: 'clean.ts', path: 'src/clean.ts', row: 4, order: 0, cycle: false, coverage: '1.00', mutants: 0 },
+      { id: 'src/app', kind: 'package', name: 'app', path: 'src/app', files: 2, row: 5, order: 0, cycle: false, ca: 0, ce: 2, i: '1.00', a: '0.00', d: '0.00', zone: 'healthy', crap: 6, coverage: '0.50', mutants: 0 },
+      { id: 'src/infra', kind: 'package', name: 'infra', path: 'src/infra', files: 2, row: 6, order: 0, cycle: false, ca: 2, ce: 2, i: '0.50', a: '0.00', d: '0.50', zone: 'healthy', crap: 6, coverage: '0.50', mutants: 0 },
+      { id: 'src/domain', kind: 'package', name: 'domain', path: 'src/domain', files: 2, row: 7, order: 0, cycle: false, ca: 3, ce: 0, i: '0.00', a: '1.00', d: '0.00', zone: 'healthy', crap: 6, coverage: '0.50', mutants: 0 },
+    ],
+    edges: [],
+    crapMax: 4,
+    coverage: 'stale',
+    mutation: 'on',
+  },
+};
+
+const LAYERED_VIEW = {
+  src: {
+    at: 'src',
+    crumbs: [
+      { name: 'layered', at: '' },
+      { name: 'src', at: 'src' },
+    ],
+    nodes: [
+      { id: 'src/infra', kind: 'package', name: 'infra', path: 'src/infra', files: 2, row: 0, order: 0, cycle: false, ca: 2, ce: 2, i: '0.50', a: '0.00', d: '0.50', zone: 'healthy' },
+      { id: 'src/app', kind: 'package', name: 'app', path: 'src/app', files: 2, row: 1, order: 0, cycle: false, ca: 0, ce: 2, i: '1.00', a: '0.00', d: '0.00', zone: 'healthy' },
+      { id: 'src/domain', kind: 'package', name: 'domain', path: 'src/domain', files: 2, row: 2, order: 0, cycle: false, ca: 3, ce: 0, i: '0.00', a: '1.00', d: '0.00', zone: 'healthy' },
+    ],
+    edges: [],
+    crapMax: 4,
+    coverage: 'off',
+    mutation: 'off',
+  },
+};
+
+const ROOT_VIEW = {
+  '': {
+    at: '',
+    crumbs: [{ name: 'healthy', at: '' }],
+    nodes: [{ id: 'src', kind: 'package', name: 'src', path: 'src', files: 5, row: 0, order: 0, cycle: false, ca: 0, ce: 0, i: '–', a: '0.00', d: '–', crap: 42, coverage: '0.54', mutants: 3 }],
+    edges: [],
+    crapMax: 4,
+    coverage: 'on',
+    mutation: 'on',
+  },
+};
+
+const FRESH_VIEW = {
+  src: { ...HEALTH_GRAPHS.src, coverage: 'on', mutation: 'stale' },
+};
+
+function badgeText(id: string): string | null {
+  return nodeById(id).querySelector('.box-badge')?.textContent ?? null;
+}
+
+function badgeHealth(id: string): string | null {
+  return nodeById(id).querySelector('.box-badge')?.getAttribute('data-health') ?? null;
+}
+
+function tdText(tr: Element): string | null {
+  return tr.querySelector('td')?.textContent ?? null;
+}
+
+function rowCells(tr: Element): string[] {
+  return Array.from(tr.querySelectorAll('td')).map(cell => cell.textContent ?? '');
+}
+
+function optionOf(value: string): HTMLOptionElement {
+  const option = document.querySelector(`select[aria-label="Overlay"] option[value="${value}"]`);
+  if (option === null) throw new Error(value);
+  return option as HTMLOptionElement;
+}
+
+function hotLines(): string[] {
+  const heading = Array.from(document.querySelectorAll('aside[aria-label="details"] h3')).find(item => item.textContent === 'Hot functions');
+  const items = heading?.parentElement?.querySelectorAll('li');
+  return Array.from(items ?? []).map(item => item.textContent ?? '');
+}
+
+function graphFetches(calls: Call[]): number {
+  return calls.filter(call => call.url.startsWith('/api/graph')).length;
+}
+
+function textOf(selector: string): string | null {
+  return document.querySelector(selector)?.textContent ?? null;
+}
+
+function metricsButton(): HTMLButtonElement {
+  const button = Array.from(document.querySelectorAll('button')).find(el => el.textContent === 'Metrics');
+  if (button === undefined) throw new Error('metrics');
+  return button as HTMLButtonElement;
+}
+
+function drawerRows(): HTMLElement[] {
+  return Array.from(document.querySelectorAll('aside[aria-label="metrics"] tbody tr'));
+}
+
+function headerOf(label: string): HTMLTableCellElement {
+  const cell = Array.from(document.querySelectorAll('aside[aria-label="metrics"] th')).find(th => th.textContent === label);
+  if (cell === undefined) throw new Error(label);
+  return cell as HTMLTableCellElement;
+}
+
+function rowNamed(name: string): HTMLElement {
+  const row = drawerRows().find(tr => tdText(tr) === name);
+  if (row === undefined) throw new Error(name);
+  return row;
+}
+
+function panelText(): string {
+  return document.querySelector('aside[aria-label="details"]')?.textContent ?? '';
+}
+
+function overlaySelect(): HTMLSelectElement {
+  const select = document.querySelector('select[aria-label="Overlay"]');
+  if (select === null) throw new Error('overlay');
+  return select as HTMLSelectElement;
+}
+
+  it('controls overlays and stale indicators', async () => {
+    const { act } = await import('react');
+    const { fireEvent, waitFor } = await import('@testing-library/dom');
+    const layoutRef = { current: { version: 1 as const, views: {}, settings: { tests: false, external: false, overlay: 'none' as const } } };
+    const fetcher = archFetcher([], HEALTH_GRAPHS, layoutRef);
+    await showArchView('src', HEALTH_GRAPHS, noopDir, noopPath, fetcher);
+
+    expect(overlaySelect().value).toBe('none');
+    expect(document.querySelector('[aria-label="health"]')).toBeNull();
+    expect(document.querySelector('span[aria-label="stale"]')).toBeNull();
+
+    await act(async () => {
+      fireEvent.change(overlaySelect(), { target: { value: 'crap' } });
+    });
+    await waitFor(() => {
+      expect(document.querySelector('span[aria-label="stale"]')).not.toBeNull();
+    });
+    expect(badgeText('src/green.ts')).toBe('3');
+    expect(badgeHealth('src/green.ts')).toBe('green');
+    expect(badgeText('src/amber.ts')).toBe('6');
+    expect(badgeHealth('src/amber.ts')).toBe('amber');
+    expect(badgeText('src/red.ts')).toBe('42');
+    expect(badgeHealth('src/red.ts')).toBe('red');
+    expect(badgeText('src/plain.ts')).toBe('–');
+    expect(badgeHealth('src/plain.ts')).toBeNull();
+    expect(badgeText('src/clean.ts')).toBe('–');
+    expect(badgeHealth('src/clean.ts')).toBeNull();
+    expect(layoutRef.current.settings.overlay).toBe('crap');
+
+    await reopen();
+    await showArchView('src', HEALTH_GRAPHS, noopDir, noopPath, fetcher);
+    expect(overlaySelect().value).toBe('crap');
+    expect(badgeText('src/red.ts')).toBe('42');
+
+    await act(async () => {
+      fireEvent.change(overlaySelect(), { target: { value: 'coverage' } });
+    });
+    await waitFor(() => {
+      expect(badgeText('src/green.ts')).toBe('1.00');
+    });
+    expect(badgeHealth('src/green.ts')).toBe('green');
+    expect(badgeText('src/amber.ts')).toBe('0.50');
+    expect(badgeHealth('src/amber.ts')).toBe('red');
+    expect(badgeText('src/red.ts')).toBe('0.00');
+    expect(badgeHealth('src/red.ts')).toBe('red');
+
+    await act(async () => {
+      fireEvent.change(overlaySelect(), { target: { value: 'mutants' } });
+    });
+    await waitFor(() => {
+      expect(badgeText('src/plain.ts')).toBe('3');
+    });
+    expect(badgeHealth('src/plain.ts')).toBe('red');
+    expect(badgeText('src/clean.ts')).toBe('0');
+    expect(badgeHealth('src/clean.ts')).toBe('green');
+    expect(badgeText('src/green.ts')).toBe('0');
+    expect(badgeHealth('src/green.ts')).toBe('green');
+    expect(document.querySelector('span[aria-label="stale"]')).toBeNull();
+  });
+
+  it('A missing report disables its option and names the command to run', async () => {
+    const { act } = await import('react');
+    const layoutRef = { current: { version: 1 as const, views: {}, settings: { tests: false, external: false, overlay: 'none' as const } } };
+    await showArchView('src', LAYERED_VIEW, noopDir, noopPath, archFetcher([], LAYERED_VIEW, layoutRef));
+    expect(optionOf('crap').disabled).toBe(true);
+    expect(optionOf('crap').title).toBe('no coverage data: run marestail gate');
+    expect(optionOf('coverage').disabled).toBe(true);
+    expect(optionOf('coverage').title).toBe('no coverage data: run marestail gate');
+    expect(optionOf('mutants').disabled).toBe(true);
+    expect(optionOf('mutants').title).toBe('no mutation report: run marestail gate --tier full');
+    expect(optionOf('none').disabled).toBe(false);
+    const { fireEvent } = await import('@testing-library/dom');
+    await act(async () => {
+      fireEvent.change(overlaySelect(), { target: { value: 'crap' } });
+    });
+    expect(overlaySelect().value).toBe('none');
+    expect(document.querySelector('[aria-label="health"]')).toBeNull();
+  });
+
+  it('A reload re-reads the reports and choosing an overlay does not', async () => {
+    const { act } = await import('react');
+    const { fireEvent, waitFor } = await import('@testing-library/dom');
+    let phase: 'held' | 'fresh' = 'held';
+    const calls: Call[] = [];
+    const layoutRef = { current: { version: 1 as const, views: {}, settings: { tests: false, external: false, overlay: 'none' as const } } };
+    const fetcher = archFetcher(calls, () => (phase === 'held' ? HEALTH_GRAPHS : FRESH_VIEW), layoutRef);
+    await showArchView('src', HEALTH_GRAPHS, noopDir, noopPath, fetcher);
+    expect(graphFetches(calls)).toBe(1);
+    await act(async () => {
+      fireEvent.change(overlaySelect(), { target: { value: 'crap' } });
+    });
+    await waitFor(() => {
+      expect(document.querySelector('span[aria-label="stale"]')).not.toBeNull();
+    });
+    expect(badgeText('src/red.ts')).toBe('42');
+    phase = 'fresh';
+    await act(async () => {
+      fireEvent.change(overlaySelect(), { target: { value: 'coverage' } });
+    });
+    await waitFor(() => {
+      expect(overlaySelect().value).toBe('coverage');
+    });
+    expect(graphFetches(calls)).toBe(1);
+    expect(document.querySelector('span[aria-label="stale"]')).not.toBeNull();
+    await reopen();
+    await showArchView('src', FRESH_VIEW, noopDir, noopPath, fetcher);
+    expect(overlaySelect().value).toBe('coverage');
+    expect(document.querySelector('span[aria-label="stale"]')).toBeNull();
+    expect(graphFetches(calls)).toBe(2);
+  });
+
+  it('The Metrics table shows the real CRAP, coverage and mutant numbers', async () => {
+    const { act } = await import('react');
+    const { waitFor } = await import('@testing-library/dom');
+    await showArchView('', ROOT_VIEW, noopDir, noopPath);
+    await act(async () => {
+      click(metricsButton());
+    });
+    await waitFor(() => {
+      expect(document.querySelector('aside[aria-label="metrics"]')).not.toBeNull();
+    });
+    expect(drawerRows().map(tdText)).toEqual(['src']);
+    expect(rowCells(rowNamed('src'))).toEqual(['src', '5', '0', '0', '–', '0.00', '–', '–', '42', '0.54', '3']);
+  });
+
+  it('The Metrics table sorts by D and selecting a row selects the box', async () => {
+    const { act } = await import('react');
+    const { waitFor } = await import('@testing-library/dom');
+    await showArchView('src', LAYERED_VIEW, noopDir, noopPath);
+    await act(async () => {
+      click(metricsButton());
+    });
+    await waitFor(() => {
+      expect(document.querySelector('aside[aria-label="metrics"]')).not.toBeNull();
+    });
+    expect(drawerRows().map(tdText)).toEqual(['infra', 'app', 'domain']);
+    expect(rowCells(rowNamed('infra'))).toEqual(['infra', '2', '2', '2', '0.50', '0.00', '0.50', 'healthy', '–', '–', '–']);
+    expect(rowCells(rowNamed('app'))).toEqual(['app', '2', '0', '2', '1.00', '0.00', '0.00', 'healthy', '–', '–', '–']);
+    expect(rowCells(rowNamed('domain'))).toEqual(['domain', '2', '3', '0', '0.00', '1.00', '0.00', 'healthy', '–', '–', '–']);
+    expect(headerOf('D').getAttribute('aria-sort')).toBe('descending');
+    await act(async () => {
+      click(headerOf('I'));
+    });
+    expect(drawerRows().map(tdText)).toEqual(['app', 'infra', 'domain']);
+    expect(headerOf('I').getAttribute('aria-sort')).toBe('descending');
+    await act(async () => {
+      click(rowNamed('domain'));
+    });
+    await waitFor(() => {
+      expect(textOf('aside[aria-label="details"] h2')).toBe('domain');
+    });
+    expect(nodeById('src/domain').querySelector('.box')?.getAttribute('data-selected')).toBe('true');
+    expect(panelText()).toContain('I 0.00');
+    expect(panelText()).toContain('A 1.00');
+    expect(panelText()).toContain('D 0.00');
+    expect(panelText()).toContain('Zone healthy');
+    await act(async () => {
+      click(metricsButton());
+    });
+    expect(document.querySelector('aside[aria-label="metrics"]')).toBeNull();
+  });
+
+  it("A file's panel lists the functions over the limit", async () => {
+    const { act } = await import('react');
+    const { waitFor } = await import('@testing-library/dom');
+    await showArchView('src', HEALTH_GRAPHS, noopDir, noopPath);
+    await act(async () => {
+      click(nodeById('src/red.ts'));
+    });
+    await waitFor(() => {
+      expect(textOf('aside[aria-label="details"] h2')).toBe('red.ts');
+    });
+    expect(panelText()).toContain('CRAP 42');
+    expect(panelText()).toContain('Coverage 0.00');
+    expect(panelText()).toContain('Mutants 0');
+    expect(hotLines()).toEqual(['bad · line 1 · cc 6 · coverage 0.00']);
+    await act(async () => {
+      click(nodeById('src/green.ts'));
+    });
+    await waitFor(() => {
+      expect(textOf('aside[aria-label="details"] h2')).toBe('green.ts');
+    });
+    expect(hotLines()).toEqual([]);
+    expect(panelText()).toContain('CRAP 3');
+    expect(panelText()).toContain('Coverage 1.00');
   });
 });
 
@@ -875,3 +1242,4 @@ describe('App with the Architecture tab', () => {
     expect(calls.map(call => call.url)).toContain('/api/file?path=src%2Fdomain%2Fmodel.ts');
   });
 });
+

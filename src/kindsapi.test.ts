@@ -84,9 +84,18 @@ type Node = {
   cycle?: boolean;
   abstract?: true;
   test?: true;
+  ca?: number;
+  ce?: number;
+  i?: string;
+  a?: string;
+  d?: string;
+  zone?: string;
+  crap?: number | string;
+  coverage?: string;
+  mutants?: number;
 };
 type Edge = { from: string; to: string; runtime: number; type: number; heritage?: number; cycle: boolean; cycleText?: string };
-type View = { at: string; crumbs: { name: string; at: string }[]; nodes: Node[]; edges: Edge[] };
+type View = { at: string; crumbs: { name: string; at: string }[]; nodes: Node[]; edges: Edge[]; crapMax: number; coverage: string; mutation: string };
 type Entry = { id: string; name: string; kind: string; runtime: number; type: number; heritage: number };
 type Detail = { imports: Entry[]; importedBy: Entry[] };
 
@@ -97,15 +106,64 @@ const SRC: View = {
     { name: 'src', at: 'src' },
   ],
   nodes: [
-    { id: 'src/app', kind: 'package', name: 'app', path: 'src/app', files: 2, row: 0, order: 0, cycle: false },
-    { id: 'src/infra', kind: 'package', name: 'infra', path: 'src/infra', files: 2, row: 1, order: 0, cycle: false },
-    { id: 'src/domain', kind: 'package', name: 'domain', path: 'src/domain', files: 2, row: 2, order: 0, cycle: false, abstract: true },
+    {
+      id: 'src/app',
+      kind: 'package',
+      name: 'app',
+      path: 'src/app',
+      files: 2,
+      row: 0,
+      order: 0,
+      cycle: false,
+      ca: 0,
+      ce: 2,
+      i: '1.00',
+      a: '0.00',
+      d: '0.00',
+      zone: 'healthy',
+    },
+    {
+      id: 'src/infra',
+      kind: 'package',
+      name: 'infra',
+      path: 'src/infra',
+      files: 2,
+      row: 1,
+      order: 0,
+      cycle: false,
+      ca: 2,
+      ce: 2,
+      i: '0.50',
+      a: '0.00',
+      d: '0.50',
+      zone: 'healthy',
+    },
+    {
+      id: 'src/domain',
+      kind: 'package',
+      name: 'domain',
+      path: 'src/domain',
+      files: 2,
+      row: 2,
+      order: 0,
+      cycle: false,
+      abstract: true,
+      ca: 3,
+      ce: 0,
+      i: '0.00',
+      a: '1.00',
+      d: '0.00',
+      zone: 'healthy',
+    },
   ],
   edges: [
     { from: 'src/app', to: 'src/infra', runtime: 2, type: 1, cycle: false },
     { from: 'src/app', to: 'src/domain', runtime: 0, type: 1, cycle: false },
     { from: 'src/infra', to: 'src/domain', runtime: 2, type: 0, heritage: 1, cycle: false },
   ],
+  crapMax: 4,
+  coverage: 'off',
+  mutation: 'off',
 } as View;
 
 const APP: View = {
@@ -116,13 +174,16 @@ const APP: View = {
     { name: 'app', at: 'src/app' },
   ],
   nodes: [
-    { id: 'src/app/a.ts', kind: 'file', name: 'a.ts', path: 'src/app/a.ts', row: 0, order: 0, cycle: true },
-    { id: 'src/app/b.ts', kind: 'file', name: 'b.ts', path: 'src/app/b.ts', row: 0, order: 1, cycle: true },
+    { id: 'src/app/a.ts', kind: 'file', name: 'a.ts', path: 'src/app/a.ts', row: 0, order: 0, cycle: true, ca: 1, ce: 4, i: '0.80', a: '0.00', d: '0.20' },
+    { id: 'src/app/b.ts', kind: 'file', name: 'b.ts', path: 'src/app/b.ts', row: 0, order: 1, cycle: true, ca: 1, ce: 2, i: '0.67', a: '0.00', d: '0.33' },
   ],
   edges: [
     { from: 'src/app/a.ts', to: 'src/app/b.ts', runtime: 1, type: 0, cycle: true, cycleText: 'a.ts → b.ts → a.ts' },
     { from: 'src/app/b.ts', to: 'src/app/a.ts', runtime: 1, type: 0, cycle: true, cycleText: 'b.ts → a.ts → b.ts' },
   ],
+  crapMax: 4,
+  coverage: 'off',
+  mutation: 'off',
 } as View;
 
 const INFRA: Detail = {
@@ -233,15 +294,31 @@ describe('edge kinds over HTTP', () => {
   }
 
   it('The src view has three layers, one hollow count and one green box', async () => {
-    expect(normView(await graph('/api/graph?at=src'))).toEqual(normView(SRC));
+    const view = await graph('/api/graph?at=src');
+    expect(normView(view)).toEqual(normView(SRC));
+    expect(view.edges).toEqual([
+      { from: 'src/app', to: 'src/domain', runtime: 0, type: 1, cycle: false },
+      { from: 'src/app', to: 'src/infra', runtime: 2, type: 1, cycle: false },
+      { from: 'src/infra', to: 'src/domain', runtime: 2, type: 0, heritage: 1, cycle: false },
+    ]);
+    for (const item of view.nodes) {
+      expect(item.crap).toBeUndefined();
+      expect(item.coverage).toBeUndefined();
+      expect(item.mutants).toBeUndefined();
+    }
+    expect(view.coverage).toBe('off');
+    expect(view.mutation).toBe('off');
   });
 
   it('The root counts the six non-test files and draws nothing else', async () => {
     expect(await graph('/api/graph')).toEqual({
       at: '',
       crumbs: [{ name: 'layered', at: '' }],
-      nodes: [{ id: 'src', kind: 'package', name: 'src', path: 'src', files: 6, row: 0, order: 0, cycle: false }],
+      nodes: [{ id: 'src', kind: 'package', name: 'src', path: 'src', files: 6, row: 0, order: 0, cycle: false, ca: 0, ce: 0, i: '–', a: '0.33', d: '–' }],
       edges: [],
+      crapMax: 4,
+      coverage: 'off',
+      mutation: 'off',
     });
   });
 
@@ -258,10 +335,41 @@ describe('edge kinds over HTTP', () => {
         { name: 'domain', at: 'src/domain' },
       ],
       nodes: [
-        { id: 'src/domain/model.ts', kind: 'file', name: 'model.ts', path: 'src/domain/model.ts', row: 0, order: 0, cycle: false, abstract: true },
-        { id: 'src/domain/shape.ts', kind: 'file', name: 'shape.ts', path: 'src/domain/shape.ts', row: 0, order: 1, cycle: false, abstract: true },
+        {
+          id: 'src/domain/model.ts',
+          kind: 'file',
+          name: 'model.ts',
+          path: 'src/domain/model.ts',
+          row: 0,
+          order: 0,
+          cycle: false,
+          abstract: true,
+          ca: 2,
+          ce: 0,
+          i: '0.00',
+          a: '1.00',
+          d: '0.00',
+        },
+        {
+          id: 'src/domain/shape.ts',
+          kind: 'file',
+          name: 'shape.ts',
+          path: 'src/domain/shape.ts',
+          row: 0,
+          order: 1,
+          cycle: false,
+          abstract: true,
+          ca: 1,
+          ce: 0,
+          i: '0.00',
+          a: '1.00',
+          d: '0.00',
+        },
       ],
       edges: [],
+      crapMax: 4,
+      coverage: 'off',
+      mutation: 'off',
     });
   });
 
@@ -271,23 +379,26 @@ describe('edge kinds over HTTP', () => {
       normView({
         ...APP,
         nodes: [
-          { id: 'src/app/a.test.ts', kind: 'file', name: 'a.test.ts', path: 'src/app/a.test.ts', row: 0, order: 0, cycle: false, test: true },
-          { id: 'src/app/a.ts', kind: 'file', name: 'a.ts', path: 'src/app/a.ts', row: 1, order: 0, cycle: true },
-          { id: 'src/app/b.ts', kind: 'file', name: 'b.ts', path: 'src/app/b.ts', row: 1, order: 1, cycle: true },
+          { id: 'src/app/a.test.ts', kind: 'file', name: 'a.test.ts', path: 'src/app/a.test.ts', row: 0, order: 0, cycle: false, test: true, ca: 0, ce: 0, i: '–', a: '0.00', d: '–' },
+          { id: 'src/app/a.ts', kind: 'file', name: 'a.ts', path: 'src/app/a.ts', row: 1, order: 0, cycle: true, ca: 1, ce: 4, i: '0.80', a: '0.00', d: '0.20' },
+          { id: 'src/app/b.ts', kind: 'file', name: 'b.ts', path: 'src/app/b.ts', row: 1, order: 1, cycle: true, ca: 1, ce: 2, i: '0.67', a: '0.00', d: '0.33' },
         ],
         edges: [{ from: 'src/app/a.test.ts', to: 'src/app/a.ts', runtime: 1, type: 0, cycle: false }, ...APP.edges],
       } as View),
     );
     const src = await graph('/api/graph?at=src&tests=1');
-    expect(src.nodes.find(node => node.id === 'src/app')?.files).toBe(3);
+    expect(src.nodes.find(node => node.id === 'src/app')).toMatchObject({ files: 3, ca: 0, ce: 2, i: '1.00', a: '0.00', d: '0.00', zone: 'healthy' });
+    expect(src.nodes.find(node => node.id === 'src/domain')).toMatchObject({ ca: 3, ce: 0 });
     expect(src.nodes.map(node => node.name)).not.toEqual(expect.arrayContaining(['a.test.ts', 'node:fs', 'react']));
+    expect(await detail('/api/detail?id=src/app&at=src&tests=1')).toMatchObject({ files: 3, ca: 0, ce: 2, i: '1.00', a: '0.00', d: '0.00', zone: 'healthy' });
+    expect((await graph('/api/graph?at=src/app&tests=1')).nodes.find(node => node.id === 'src/app/a.ts')).toMatchObject({ ca: 1, ce: 4, i: '0.80', a: '0.00', d: '0.20' });
   });
 
   it('Turning externals on adds node:fs and react on one row under the layers', async () => {
     const src = await graph('/api/graph?at=src&external=1');
     expect(sortBy(src.nodes, node => node.id).map(node => node.id)).toEqual(['node:fs', 'react', 'src/app', 'src/domain', 'src/infra']);
     expect(src.nodes.find(node => node.id === 'src/app')).toMatchObject({ files: 2, row: 0 });
-    expect(src.nodes.find(node => node.id === 'src/infra')).toMatchObject({ files: 2, row: 1 });
+    expect(src.nodes.find(node => node.id === 'src/infra')).toMatchObject({ files: 2, row: 1, ca: 2, ce: 2, i: '0.50', a: '0.00', d: '0.50', zone: 'healthy' });
     expect(src.nodes.find(node => node.id === 'src/domain')).toMatchObject({ files: 2, row: 2, abstract: true });
     expect(normView(src).edges).toEqual(
       normView({
@@ -300,6 +411,14 @@ describe('edge kinds over HTTP', () => {
       } as View).edges,
     );
     expect(src.nodes.find(node => node.id === 'node:fs')).toEqual({ id: 'node:fs', kind: 'external', name: 'node:fs', path: 'node:fs', row: 3, order: 0, cycle: false });
+    expect(await detail('/api/detail?id=node:fs&at=src&external=1')).toEqual({
+      id: 'node:fs',
+      name: 'node:fs',
+      path: 'node:fs',
+      kind: 'external',
+      imports: [],
+      importedBy: [{ id: 'src/infra', name: 'infra', kind: 'package', runtime: 1, type: 0, heritage: 0 }],
+    });
     expect(src.nodes.find(node => node.id === 'react')).toEqual({ id: 'react', kind: 'external', name: 'react', path: 'react', row: 3, order: 1, cycle: false });
     const infra = await graph('/api/graph?at=src/infra&external=1');
     expect(infra.nodes.find(node => node.name === 'db.ts')?.row).toBe(0);
@@ -440,12 +559,43 @@ describe('edge kinds over HTTP', () => {
         { name: 'half', at: 'half' },
       ],
       nodes: [
-        { id: 'half/__tests__', kind: 'package', name: '__tests__', path: 'half/__tests__', files: 1, row: 0, order: 0, cycle: false },
-        { id: 'half/iface.ts', kind: 'file', name: 'iface.ts', path: 'half/iface.ts', row: 0, order: 1, cycle: false, abstract: true },
-        { id: 'half/value.spec.ts', kind: 'file', name: 'value.spec.ts', path: 'half/value.spec.ts', row: 0, order: 2, cycle: false, test: true },
-        { id: 'half/value.test.ts', kind: 'file', name: 'value.test.ts', path: 'half/value.test.ts', row: 0, order: 3, cycle: false, test: true },
+        {
+          id: 'half/__tests__',
+          kind: 'package',
+          name: '__tests__',
+          path: 'half/__tests__',
+          files: 1,
+          row: 0,
+          order: 0,
+          cycle: false,
+          ca: 0,
+          ce: 0,
+          i: '–',
+          a: '0.00',
+          d: '–',
+        },
+        {
+          id: 'half/iface.ts',
+          kind: 'file',
+          name: 'iface.ts',
+          path: 'half/iface.ts',
+          row: 0,
+          order: 1,
+          cycle: false,
+          abstract: true,
+          ca: 0,
+          ce: 0,
+          i: '–',
+          a: '1.00',
+          d: '–',
+        },
+        { id: 'half/value.spec.ts', kind: 'file', name: 'value.spec.ts', path: 'half/value.spec.ts', row: 0, order: 2, cycle: false, test: true, ca: 0, ce: 0, i: '–', a: '0.00', d: '–' },
+        { id: 'half/value.test.ts', kind: 'file', name: 'value.test.ts', path: 'half/value.test.ts', row: 0, order: 3, cycle: false, test: true, ca: 0, ce: 0, i: '–', a: '0.00', d: '–' },
       ],
       edges: [],
+      crapMax: 4,
+      coverage: 'off',
+      mutation: 'off',
     });
     const inside = await graph('/api/graph?at=half/__tests__&tests=1', kinds, kindAuth);
     expect(inside.nodes.map(node => node.name)).toEqual(['n.ts']);
@@ -479,6 +629,12 @@ describe('edge kinds over HTTP', () => {
       path: 'src/infra',
       kind: 'package',
       files: 2,
+      ca: 2,
+      ce: 2,
+      i: '0.50',
+      a: '0.00',
+      d: '0.50',
+      zone: 'healthy',
       ...normDetail(INFRA),
     });
     const testsOn = { ...externalOn, settings: { tests: true, external: false } };
@@ -595,6 +751,12 @@ describe('edge kinds over HTTP', () => {
       path: 'src/infra',
       kind: 'package',
       files: 2,
+      ca: 2,
+      ce: 2,
+      i: '0.50',
+      a: '0.00',
+      d: '0.50',
+      zone: 'healthy',
       ...normDetail(INFRA),
     });
   });
@@ -635,6 +797,12 @@ describe('edge kinds over HTTP', () => {
       path: 'src/domain/shape.ts',
       kind: 'file',
       abstract: true,
+      ca: 1,
+      ce: 0,
+      i: '0.00',
+      a: '1.00',
+      d: '0.00',
+      hot: [],
       imports: [],
       importedBy: [{ id: 'src/infra/repo.ts', name: 'repo.ts', kind: 'file', runtime: 1, type: 0, heritage: 1 }],
     });
@@ -644,6 +812,12 @@ describe('edge kinds over HTTP', () => {
         name: 'db.ts',
         path: 'src/infra/db.ts',
         kind: 'file',
+        ca: 2,
+        ce: 1,
+        i: '0.33',
+        a: '0.00',
+        d: '0.67',
+        hot: [],
         imports: [{ id: 'src/domain/model.ts', name: 'model.ts', kind: 'file', runtime: 1, type: 0, heritage: 0 }],
         importedBy: [
           { id: 'src/app/a.ts', name: 'a.ts', kind: 'file', runtime: 1, type: 0, heritage: 0 },
@@ -690,6 +864,12 @@ describe('edge kinds over HTTP', () => {
       name: 'a.test.ts',
       path: 'src/app/a.test.ts',
       kind: 'file',
+      ca: 0,
+      ce: 0,
+      i: '–',
+      a: '0.00',
+      d: '–',
+      hot: [],
       imports: [{ id: 'src/app/a.ts', name: 'a.ts', kind: 'file', runtime: 1, type: 0, heritage: 0 }],
       importedBy: [],
     });

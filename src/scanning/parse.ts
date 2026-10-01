@@ -2,7 +2,9 @@ import * as ts from 'typescript';
 
 export type RawImport = { specifier: string; typeOnly: boolean; heritage?: number };
 
-export type ParsedFile = { imports: RawImport[]; abstract: boolean };
+type RawFunction = { name: string; line: number; endLine: number; cc: number };
+
+export type ParsedFile = { imports: RawImport[]; abstract: boolean; functions: RawFunction[] };
 
 type ImportDraft = { specifier: string; typeOnly: boolean; heritage: number };
 
@@ -240,11 +242,92 @@ function toRawImport(draft: ImportDraft): RawImport {
   return { specifier: draft.specifier, typeOnly: draft.typeOnly, heritage: draft.heritage };
 }
 
+const BRANCH_KINDS = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.IfStatement,
+  ts.SyntaxKind.ConditionalExpression,
+  ts.SyntaxKind.ForStatement,
+  ts.SyntaxKind.ForInStatement,
+  ts.SyntaxKind.ForOfStatement,
+  ts.SyntaxKind.WhileStatement,
+  ts.SyntaxKind.DoStatement,
+  ts.SyntaxKind.CaseClause,
+  ts.SyntaxKind.CatchClause,
+]);
+
+const SHORT_CIRCUIT = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.AmpersandAmpersandToken,
+  ts.SyntaxKind.BarBarToken,
+  ts.SyntaxKind.QuestionQuestionToken,
+]);
+
+const FUNCTION_KINDS = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.FunctionDeclaration,
+  ts.SyntaxKind.FunctionExpression,
+  ts.SyntaxKind.ArrowFunction,
+  ts.SyntaxKind.MethodDeclaration,
+  ts.SyntaxKind.Constructor,
+  ts.SyntaxKind.GetAccessor,
+  ts.SyntaxKind.SetAccessor,
+]);
+
+type Cc = { value: number };
+
+function isFunctionNode(node: ts.Node): boolean {
+  return FUNCTION_KINDS.has(node.kind);
+}
+
+function isShortCircuit(node: ts.Node): boolean {
+  if (node.kind !== ts.SyntaxKind.BinaryExpression) return false;
+  return SHORT_CIRCUIT.has((node as ts.BinaryExpression).operatorToken.kind);
+}
+
+function bumpCc(node: ts.Node, cc: Cc): void {
+  if (BRANCH_KINDS.has(node.kind)) cc.value += 1;
+  if (isShortCircuit(node)) cc.value += 1;
+}
+
+function countBranches(node: ts.Node, cc: Cc): void {
+  node.forEachChild(child => {
+    if (isFunctionNode(child)) return;
+    bumpCc(child, cc);
+    countBranches(child, cc);
+  });
+}
+
+function parentName(parent: ts.Node): string {
+  if (ts.isVariableDeclaration(parent) || ts.isPropertyAssignment(parent)) return parent.name.getText();
+  return '<anonymous>';
+}
+
+function functionName(fn: ts.Node): string {
+  const name = (fn as { name?: ts.Node }).name;
+  if (name === undefined) return parentName(fn.parent);
+  return name.getText();
+}
+
+function measureFunction(fn: ts.Node, source: ts.SourceFile): RawFunction {
+  const cc: Cc = { value: 1 };
+  countBranches(fn, cc);
+  return {
+    name: functionName(fn),
+    line: source.getLineAndCharacterOfPosition(fn.getStart(source)).line + 1,
+    endLine: source.getLineAndCharacterOfPosition(fn.getEnd()).line + 1,
+    cc: cc.value,
+  };
+}
+
+function collectFunctions(node: ts.Node, source: ts.SourceFile, found: RawFunction[]): void {
+  if (isFunctionNode(node)) found.push(measureFunction(node, source));
+  node.forEachChild(child => collectFunctions(child, source, found));
+}
+
 export function parseSource(path: string, text: string): ParsedFile {
-  const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest);
+  const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
   const drafts = blank<ImportDraft>();
   const bindings = blank<ImportBinding>();
+  const functions = blank<RawFunction>();
   collectImports(source, drafts, bindings);
   markHeritage(source, drafts, bindings);
-  return { imports: drafts.map(toRawImport), abstract: fileIsAbstract(source) };
+  collectFunctions(source, source, functions);
+  return { imports: drafts.map(toRawImport), abstract: fileIsAbstract(source), functions };
 }
