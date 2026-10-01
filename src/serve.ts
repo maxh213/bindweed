@@ -1,10 +1,11 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { once } from 'node:events';
-import { readFile, stat } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { basename, extname, join } from 'node:path';
+import { basename, dirname, extname, join } from 'node:path';
 import { z } from 'zod';
-import { graphView } from './domain/graph.ts';
+import { graphView, nodeDetail, type GraphFlags } from './domain/graph.ts';
+import { emptyLayout, parseLayout, type LayoutDoc } from './domain/layout.ts';
 import type { ScanResult } from './domain/scan.ts';
 import { buildTree, filePathSet, type TreeRoot } from './domain/tree.ts';
 import { listedRegularFiles } from './repo.ts';
@@ -23,7 +24,7 @@ type FileBody = { path: string; text: string } | { path: string; binary: true };
 
 type FileResult = { status: 200; body: FileBody } | { status: 404 | 413; body: { error: string } };
 
-type Handler = (res: ServerResponse, url: URL) => Promise<void>;
+type Handler = (req: IncomingMessage, res: ServerResponse, url: URL) => Promise<void>;
 
 type Routes = Map<string, Handler>;
 
@@ -177,14 +178,91 @@ async function scanFor(app: App): Promise<ScanResult> {
   return scanRepo(app.repoRoot, await listedRegularFiles(app.repoRoot));
 }
 
+function queryFlag(url: URL, name: string): boolean {
+  return url.searchParams.get(name) === '1';
+}
+
+function graphFlags(url: URL): GraphFlags {
+  return { tests: queryFlag(url, 'tests'), external: queryFlag(url, 'external') };
+}
+
+async function readyScan(app: App, graphs: GraphHolder): Promise<ScanResult> {
+  if (graphs.scan !== undefined) return graphs.scan;
+  graphs.scan = await scanFor(app);
+  return graphs.scan;
+}
+
 async function serveGraph(app: App, graphs: GraphHolder, res: ServerResponse, url: URL): Promise<void> {
-  graphs.scan ??= await scanFor(app);
-  const view = graphView(graphs.scan, url.searchParams.get('at') ?? '', basename(app.repoRoot));
+  const view = graphView(await readyScan(app, graphs), url.searchParams.get('at') ?? '', basename(app.repoRoot), graphFlags(url));
   if (view === null) {
     sendJson(res, 404, { error: 'no such directory' });
     return;
   }
   sendJson(res, 200, view);
+}
+
+function layoutFile(root: string): string {
+  return join(root, '.bindweed', 'layout.json');
+}
+
+async function readLayout(root: string): Promise<LayoutDoc> {
+  try {
+    return parseLayout(JSON.parse(await readFile(layoutFile(root), 'utf8'))) ?? emptyLayout();
+  } catch {
+    return emptyLayout();
+  }
+}
+
+async function serveLayout(app: App, res: ServerResponse): Promise<void> {
+  sendJson(res, 200, await readLayout(app.repoRoot));
+}
+
+async function readBody(req: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks).toString();
+}
+
+async function layoutFrom(req: IncomingMessage): Promise<LayoutDoc | undefined> {
+  try {
+    return parseLayout(JSON.parse(await readBody(req)));
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeLayout(root: string, doc: LayoutDoc): Promise<void> {
+  await mkdir(dirname(layoutFile(root)), { recursive: true });
+  await writeFile(layoutFile(root), JSON.stringify(doc));
+}
+
+async function putLayout(app: App, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const doc = await layoutFrom(req);
+  if (doc === undefined) {
+    sendJson(res, 400, { error: 'bad layout' });
+    return;
+  }
+  await writeLayout(app.repoRoot, doc);
+  sendJson(res, 200, doc);
+}
+
+function detailFor(scan: ScanResult, url: URL, rootName: string): ReturnType<typeof nodeDetail> {
+  const id = url.searchParams.get('id');
+  if (id === null) return null;
+  return nodeDetail(scan, id, url.searchParams.get('at') ?? '', rootName, graphFlags(url));
+}
+
+function sendDetail(res: ServerResponse, detail: ReturnType<typeof nodeDetail>): void {
+  if (detail === null) {
+    sendJson(res, 404, { error: 'no such node' });
+    return;
+  }
+  sendJson(res, 200, detail);
+}
+
+async function serveDetail(app: App, graphs: GraphHolder, res: ServerResponse, url: URL): Promise<void> {
+  const scan = await readyScan(app, graphs);
+  sendDetail(res, detailFor(scan, url, basename(app.repoRoot)));
 }
 
 async function serveRescan(app: App, graphs: GraphHolder, res: ServerResponse): Promise<void> {
@@ -202,13 +280,19 @@ function routesFor(app: App, graphs: GraphHolder): Routes {
     post(path: string, handler: Handler) {
       table.set(`POST ${path}`, handler);
     },
+    put(path: string, handler: Handler) {
+      table.set(`PUT ${path}`, handler);
+    },
   };
-  router.get('/', (res, url) => serveIndex(app, res, url));
-  router.get('/assets/', (res, url) => serveAsset(app, res, url));
-  router.get('/api/tree', res => serveTree(app, res));
-  router.get('/api/file', (res, url) => serveFile(app, res, url));
-  router.get('/api/graph', (res, url) => serveGraph(app, graphs, res, url));
-  router.post('/api/rescan', res => serveRescan(app, graphs, res));
+  router.get('/', (_req, res, url) => serveIndex(app, res, url));
+  router.get('/assets/', (_req, res, url) => serveAsset(app, res, url));
+  router.get('/api/tree', (_req, res) => serveTree(app, res));
+  router.get('/api/file', (_req, res, url) => serveFile(app, res, url));
+  router.get('/api/graph', (_req, res, url) => serveGraph(app, graphs, res, url));
+  router.get('/api/layout', (_req, res) => serveLayout(app, res));
+  router.put('/api/layout', (req, res) => putLayout(app, req, res));
+  router.get('/api/detail', (_req, res, url) => serveDetail(app, graphs, res, url));
+  router.post('/api/rescan', (_req, res) => serveRescan(app, graphs, res));
   return table;
 }
 
@@ -232,7 +316,7 @@ async function dispatch(app: App, routes: Routes, req: IncomingMessage, res: Ser
     sendJson(res, 404, NOT_FOUND);
     return;
   }
-  await handler(res, url);
+  await handler(req, res, url);
 }
 
 function createAppServer(app: App): Server {

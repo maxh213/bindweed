@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { fetchFile, fetchGraph, fetchTree, postRescan, takeToken } from './client.ts';
+import type { LayoutDoc } from '../domain/layout.ts';
+import { fetchDetail, fetchFile, fetchGraph, fetchLayout, fetchTree, postRescan, putLayout, takeToken } from './client.ts';
 
 describe('fetchTree', () => {
   it('returns the tree with a bearer header and no token in the address', async () => {
@@ -289,5 +290,106 @@ describe('tree schema edge', () => {
         }),
       }) as Response) as typeof fetch;
     expect(await fetchTree('tok', fetcher)).toEqual({ error: 'cannot reach bindweed' });
+  });
+});
+
+const EMPTY_LAYOUT: LayoutDoc = { version: 1, views: {}, settings: { tests: false, external: false } };
+
+const RICH_GRAPH = {
+  at: 'src',
+  crumbs: [{ name: 'layered', at: '' }],
+  nodes: [
+    { id: 'src/app', kind: 'package', name: 'app', path: 'src/app', files: 3, row: 0, order: 0, cycle: false },
+    { id: 'src/domain', kind: 'package', name: 'domain', path: 'src/domain', files: 2, row: 1, order: 0, cycle: false, abstract: true },
+    { id: 'src/app/a.test.ts', kind: 'file', name: 'a.test.ts', path: 'src/app/a.test.ts', row: 0, order: 0, cycle: false, test: true },
+    { id: 'node:fs', kind: 'external', name: 'node:fs', path: 'node:fs', row: 2, order: 0, cycle: false },
+  ],
+  edges: [{ from: 'src/app', to: 'src/domain', runtime: 2, type: 0, heritage: 1, cycle: false }],
+};
+
+const RICH_DETAIL = {
+  id: 'src/infra',
+  name: 'infra',
+  path: 'src/infra',
+  kind: 'package',
+  files: 2,
+  imports: [{ id: 'node:fs', name: 'node:fs', kind: 'external', runtime: 1, type: 0, heritage: 0 }],
+  importedBy: [],
+};
+
+function jsonResponse(ok: boolean, body: unknown): Response {
+  return { ok, json: async () => body } as Response;
+}
+
+describe('fetchLayout', () => {
+  it('returns the document the server stored', async () => {
+    const calls: { url: string; headers: HeadersInit | undefined }[] = [];
+    const fetcher = (async (url: string, init?: RequestInit) => {
+      calls.push({ url, headers: init?.headers });
+      return jsonResponse(true, EMPTY_LAYOUT);
+    }) as typeof fetch;
+    expect(await fetchLayout('tok', fetcher)).toEqual(EMPTY_LAYOUT);
+    expect(calls).toEqual([{ url: '/api/layout', headers: { Authorization: 'Bearer tok' } }]);
+  });
+
+  it('uses the empty document when the body is refused or the network fails', async () => {
+    const denied = (async () => jsonResponse(false, { error: 'missing or wrong token' })) as typeof fetch;
+    expect(await fetchLayout('tok', denied)).toEqual(EMPTY_LAYOUT);
+    const odd = (async () => jsonResponse(true, { version: 2 })) as typeof fetch;
+    expect(await fetchLayout('tok', odd)).toEqual(EMPTY_LAYOUT);
+    const down = (async () => {
+      throw new Error('down');
+    }) as typeof fetch;
+    expect(await fetchLayout('tok', down)).toEqual(EMPTY_LAYOUT);
+  });
+});
+
+describe('putLayout', () => {
+  it('puts the document and reads the saved copy', async () => {
+    const calls: { url: string; method: string | undefined; body: BodyInit | null | undefined }[] = [];
+    const fetcher = (async (url: string, init?: RequestInit) => {
+      calls.push({ url, method: init?.method, body: init?.body });
+      return jsonResponse(true, EMPTY_LAYOUT);
+    }) as typeof fetch;
+    expect(await putLayout('tok', EMPTY_LAYOUT, fetcher)).toEqual(EMPTY_LAYOUT);
+    expect(calls[0]).toMatchObject({ url: '/api/layout', method: 'PUT', body: JSON.stringify(EMPTY_LAYOUT) });
+  });
+
+  it('maps a refusal, a bad copy and a network failure', async () => {
+    const denied = (async () => jsonResponse(false, { error: 'bad layout' })) as typeof fetch;
+    expect(await putLayout('tok', EMPTY_LAYOUT, denied)).toEqual({ error: 'bad layout' });
+    const odd = (async () => jsonResponse(true, { version: 2 })) as typeof fetch;
+    expect(await putLayout('tok', EMPTY_LAYOUT, odd)).toEqual({ error: 'cannot reach bindweed' });
+    const bare = (async () => jsonResponse(false, null)) as typeof fetch;
+    expect(await putLayout('tok', EMPTY_LAYOUT, bare)).toEqual({ error: 'cannot reach bindweed' });
+    const down = (async () => {
+      throw new Error('down');
+    }) as typeof fetch;
+    expect(await putLayout('tok', EMPTY_LAYOUT, down)).toEqual({ error: 'cannot reach bindweed' });
+  });
+});
+
+describe('fetchDetail', () => {
+  it('requests the node with the flags that are on', async () => {
+    const calls: string[] = [];
+    const fetcher = (async (url: string) => {
+      calls.push(url);
+      return jsonResponse(true, url.startsWith('/api/graph') ? RICH_GRAPH : RICH_DETAIL);
+    }) as typeof fetch;
+    expect(await fetchDetail('tok', 'src/infra', 'src', fetcher, { tests: true, external: true })).toEqual(RICH_DETAIL);
+    expect(calls).toEqual(['/api/detail?id=src%2Finfra&at=src&tests=1&external=1']);
+    expect(await fetchGraph('tok', 'src', fetcher, { tests: true, external: true })).toEqual(RICH_GRAPH);
+    expect(calls[1]).toBe('/api/graph?at=src&tests=1&external=1');
+  });
+
+  it('maps a missing node, a bad body and a network failure', async () => {
+    const missing = (async () => jsonResponse(false, { error: 'no such node' })) as typeof fetch;
+    expect(await fetchDetail('tok', 'gone', 'src', missing)).toEqual({ error: 'no such node' });
+    const odd = (async () => jsonResponse(true, { id: 1 })) as typeof fetch;
+    expect(await fetchDetail('tok', 'src', 'src', odd)).toEqual({ error: 'cannot reach bindweed' });
+    const down = (async () => {
+      throw new Error('down');
+    }) as typeof fetch;
+    expect(await fetchDetail('tok', 'src', 'src', down)).toEqual({ error: 'cannot reach bindweed' });
   });
 });

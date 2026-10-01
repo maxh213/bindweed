@@ -102,7 +102,31 @@ describe('scanRepo over the layered fixture', () => {
       join(root, '.bindweed/cache/scan.json'),
       JSON.stringify({
         version: 1,
-        files: { 'src/a.ts': { mtimeMs: stamp.mtimeMs, size: stamp.size + 1, imports: [{ specifier: './gone', typeOnly: false }] } },
+        files: {
+          'src/a.ts': { mtimeMs: stamp.mtimeMs, size: stamp.size + 1, imports: [{ specifier: './gone', typeOnly: false }], abstract: false },
+        },
+      }),
+    );
+    expect(edgeList(root, scanRepo(root, ['src/a.ts', 'src/b.ts']))).toEqual(['src/a.ts>src/b.ts:runtime']);
+  });
+
+  it('re-parses when only the cached mtime differs', async () => {
+    const root = await makeRepo({ 'src/a.ts': "import { b } from './b';\nexport const a = b;\n", 'src/b.ts': 'export const b = 1;\n' });
+    utimesSync(join(root, 'src/a.ts'), new Date(1000), new Date(1000));
+    const stamp = statSync(join(root, 'src/a.ts'));
+    await mkdir(join(root, '.bindweed/cache'), { recursive: true });
+    await writeFile(
+      join(root, '.bindweed/cache/scan.json'),
+      JSON.stringify({
+        version: 1,
+        files: {
+          'src/a.ts': {
+            mtimeMs: stamp.mtimeMs + 5,
+            size: stamp.size,
+            imports: [{ specifier: './gone', typeOnly: false, heritage: 2 }],
+            abstract: false,
+          },
+        },
       }),
     );
     expect(edgeList(root, scanRepo(root, ['src/a.ts', 'src/b.ts']))).toEqual(['src/a.ts>src/b.ts:runtime']);

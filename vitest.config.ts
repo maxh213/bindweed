@@ -6,6 +6,7 @@ export default defineConfig({
   test: {
     include: ['src/**/*.test.{ts,tsx}'],
     environment: 'node',
+    css: { include: [/\.css\?raw$/] },
     coverage: {
       provider: 'v8',
       include: ['src/**/*.{ts,tsx}'],

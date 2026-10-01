@@ -3,21 +3,26 @@ import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import type { ExternalRef, ScanEdge, ScanResult, ScannedFile, WorkspacePackage } from './domain/scan.ts';
 import { filesToScan } from './scanning/paths.ts';
-import { importsOfText, type RawImport } from './scanning/parse.ts';
+import { parseSource, type RawImport } from './scanning/parse.ts';
 import { specifierResolver, type Target } from './scanning/resolve.ts';
 import { workspacesOf, type WorkspaceInfo } from './scanning/workspaces.ts';
 
-type CacheEntry = { mtimeMs: number; size: number; imports: RawImport[] };
+type CacheEntry = { mtimeMs: number; size: number; imports: RawImport[]; abstract: boolean };
 
 type Cache = Record<string, CacheEntry>;
 
 type ScanOut = { files: ScannedFile[]; edges: ScanEdge[]; externals: ExternalRef[] };
 
-const rawImportSchema = z.object({ specifier: z.string(), typeOnly: z.boolean() });
+type Parsed = { imports: RawImport[]; abstract: boolean };
+
+const rawImportSchema = z.object({ specifier: z.string(), typeOnly: z.boolean(), heritage: z.number().optional() });
 
 const cacheSchema = z.object({
   version: z.literal(1),
-  files: z.record(z.string(), z.object({ mtimeMs: z.number(), size: z.number(), imports: z.array(rawImportSchema) })),
+  files: z.record(
+    z.string(),
+    z.object({ mtimeMs: z.number(), size: z.number(), imports: z.array(rawImportSchema), abstract: z.boolean() }),
+  ),
 });
 
 function cachePath(root: string): string {
@@ -45,20 +50,39 @@ function stampOf(root: string, path: string): { mtimeMs: number; size: number } 
   return { mtimeMs: stat.mtimeMs, size: stat.size };
 }
 
-function importsFor(root: string, path: string, stamp: { mtimeMs: number; size: number }, cache: Cache): RawImport[] {
+function cachedParsed(path: string, stamp: { mtimeMs: number; size: number }, cache: Cache): Parsed | undefined {
   const hit = cache[path];
-  if (hit?.mtimeMs === stamp.mtimeMs && hit.size === stamp.size) return hit.imports;
-  return importsOfText(path, readFileSync(join(root, path), 'utf8'));
+  if (hit?.mtimeMs !== stamp.mtimeMs || hit.size !== stamp.size) return undefined;
+  return { imports: hit.imports, abstract: hit.abstract };
+}
+
+function parsedOf(root: string, path: string, stamp: { mtimeMs: number; size: number }, cache: Cache): Parsed {
+  const cached = cachedParsed(path, stamp, cache);
+  if (cached !== undefined) return cached;
+  return parseSource(path, readFileSync(join(root, path), 'utf8'));
+}
+
+function withHeritage<T extends { kind: 'runtime' | 'type' }>(base: T, heritage: number | undefined): T {
+  if (heritage === undefined) return base;
+  return { ...base, heritage };
+}
+
+function pushResolved(path: string, imp: RawImport, target: Target, out: ScanOut): void {
+  const kind = imp.typeOnly ? 'type' : 'runtime';
+  if ('external' in target) {
+    out.externals.push(withHeritage({ from: path, name: target.external, kind }, imp.heritage));
+    return;
+  }
+  out.edges.push(withHeritage({ from: path, to: target.path, kind }, imp.heritage));
 }
 
 function resolveImport(path: string, imp: RawImport, resolve: (specifier: string, file: string) => Target, root: string, out: ScanOut): void {
-  const target = resolve(imp.specifier, join(root, path));
-  const kind = imp.typeOnly ? 'type' : 'runtime';
-  if ('external' in target) {
-    out.externals.push({ from: path, name: target.external, kind });
-    return;
-  }
-  out.edges.push({ from: path, to: target.path, kind });
+  pushResolved(path, imp, resolve(imp.specifier, join(root, path)), out);
+}
+
+function fileRecord(file: ScannedFile, abstract: boolean): ScannedFile {
+  if (!abstract) return file;
+  return { ...file, abstract: true };
 }
 
 function collectFile(
@@ -71,10 +95,10 @@ function collectFile(
 ): void {
   const stamp = stampOf(root, file.path);
   if (stamp === undefined) return;
-  const imports = importsFor(root, file.path, stamp, cache);
-  next[file.path] = { ...stamp, imports };
-  out.files.push(file);
-  for (const imp of imports) resolveImport(file.path, imp, resolve, root, out);
+  const parsed = parsedOf(root, file.path, stamp, cache);
+  next[file.path] = { ...stamp, imports: parsed.imports, abstract: parsed.abstract };
+  out.files.push(fileRecord(file, parsed.abstract));
+  for (const imp of parsed.imports) resolveImport(file.path, imp, resolve, root, out);
 }
 
 function toWorkspacePackage(ws: WorkspaceInfo): WorkspacePackage {

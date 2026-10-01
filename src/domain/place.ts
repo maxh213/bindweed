@@ -1,8 +1,10 @@
-export type RawNode =
-  | { id: string; kind: 'package'; name: string; path: string; files: number }
-  | { id: string; kind: 'file'; name: string; path: string };
+type Mark = { abstract?: true; test?: true };
 
-export type RawEdge = { from: string; to: string; runtime: number; type: number };
+export type RawNode =
+  | ({ id: string; kind: 'package'; name: string; path: string; files: number } & Mark)
+  | ({ id: string; kind: 'file'; name: string; path: string } & Mark);
+
+export type RawEdge = { from: string; to: string; runtime: number; type: number; heritage?: number };
 
 type NodeBase = {
   id: string;
@@ -14,14 +16,15 @@ type NodeBase = {
 };
 
 export type ViewNode =
-  | (NodeBase & { kind: 'package'; files: number })
-  | (NodeBase & { kind: 'file' });
+  | (NodeBase & { kind: 'package'; files: number } & Mark)
+  | (NodeBase & { kind: 'file' } & Mark);
 
 export type ViewEdge = {
   from: string;
   to: string;
   runtime: number;
   type: number;
+  heritage?: number;
   cycle: boolean;
   cycleText?: string;
 };
@@ -299,9 +302,15 @@ function cycleTextFor(edge: RawEdge, edges: RawEdge[], comp: Record<string, numb
   return [edge.from, ...path].map(id => names[id]).join(' → ');
 }
 
+function withCycle(edge: RawEdge, cycle: boolean): ViewEdge {
+  const counts = { from: edge.from, to: edge.to, runtime: edge.runtime, type: edge.type };
+  const marked = edge.heritage === undefined || edge.heritage === 0 ? counts : { ...counts, heritage: edge.heritage };
+  return { ...marked, cycle };
+}
+
 function finishEdge(edge: RawEdge, edges: RawEdge[], comp: Record<string, number>, sizes: number[], names: Record<string, string>): ViewEdge {
   const cycle = inSameCycle(edge, comp, sizes);
-  const base: ViewEdge = { from: edge.from, to: edge.to, runtime: edge.runtime, type: edge.type, cycle };
+  const base = withCycle(edge, cycle);
   if (!cycle) return base;
   return { ...base, cycleText: cycleTextFor(edge, edges, comp, names) };
 }

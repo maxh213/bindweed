@@ -150,6 +150,20 @@ nav[aria-label='breadcrumb'] button {
   border-radius: 3px 3px 0 0;
 }
 
+.box.abstract {
+  background: rgb(220, 252, 231);
+  border-color: rgb(21, 128, 61);
+}
+
+.box.abstract.package::before {
+  background: rgb(220, 252, 231);
+  border-color: rgb(21, 128, 61);
+}
+
+.box.external {
+  border-style: dashed;
+}
+
 .box.cycle {
   border-color: #dc2626;
   background: #fee2e2;
@@ -176,7 +190,50 @@ nav[aria-label='breadcrumb'] button {
   fill: #334155;
 }
 
-.arrow.cycle .arrow-label {
+.arrow.cycle .arrow-label,
+.arrow.up .arrow-label {
   fill: #dc2626;
   font-weight: 700;
+}
+
+.box-tag {
+  display: block;
+  font-size: 0.65rem;
+  color: #64748b;
+}
+
+.dim {
+  opacity: 0.25;
+}
+
+.marker-defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+
+.arch-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+aside[aria-label='details'] {
+  width: 22rem;
+  overflow: auto;
+  border-left: 1px solid #e5e7eb;
+  padding: 0.75rem 1rem;
+}
+
+aside[aria-label='details'] ul {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+aside[aria-label='details'] button {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }

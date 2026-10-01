@@ -47,6 +47,27 @@ describe('isTestPath', () => {
   });
 });
 
+describe('graphView heritage', () => {
+  it('drops a zero heritage count and keeps a positive one', () => {
+    const files = [
+      { path: 'a.ts', test: false },
+      { path: 'b.ts', test: false },
+    ];
+    const zero = graphView(
+      { files, edges: [{ from: 'a.ts', to: 'b.ts', kind: 'runtime', heritage: 0 }], externals: [], workspaces: [] },
+      '',
+      'repo',
+    );
+    expect(zero?.edges).toEqual([{ from: 'a.ts', to: 'b.ts', runtime: 1, type: 0, cycle: false }]);
+    const kept = graphView(
+      { files, edges: [{ from: 'a.ts', to: 'b.ts', kind: 'type', heritage: 1 }], externals: [], workspaces: [] },
+      '',
+      'repo',
+    );
+    expect(kept?.edges).toEqual([{ from: 'a.ts', to: 'b.ts', runtime: 0, type: 1, heritage: 1, cycle: false }]);
+  });
+});
+
 describe('graphView over the layered fixture shape', () => {
   it('lays out the root as one package box', () => {
     expect(graphView(LAYERED, '', 'layered')).toEqual({

@@ -1,8 +1,8 @@
-export type ScannedFile = { path: string; test: boolean };
+export type ScannedFile = { path: string; test: boolean; abstract?: true };
 
-export type ScanEdge = { from: string; to: string; kind: 'runtime' | 'type' };
+export type ScanEdge = { from: string; to: string; kind: 'runtime' | 'type'; heritage?: number };
 
-export type ExternalRef = { from: string; name: string; kind: 'runtime' | 'type' };
+export type ExternalRef = { from: string; name: string; kind: 'runtime' | 'type'; heritage?: number };
 
 export type WorkspacePackage = { dir: string; name: string };
 

@@ -27,10 +27,23 @@ vi.mock('@xyflow/react', async () => {
     panOnDrag?: boolean;
     zoomOnScroll?: boolean;
     zoomOnDoubleClick?: boolean;
+    onNodeClick?: (event: unknown, node: FakeNode) => void;
     onNodeDoubleClick?: (event: unknown, node: FakeNode) => void;
+    onNodeDragStop?: (event: unknown, node: FakeNode) => void;
   };
 
   let flowMounts = 0;
+  let dropAt: { x: number; y: number } | null = null;
+  const centers: { x: number; y: number }[] = [];
+
+  function dropPosition(node: FakeNode): { x: number; y: number } {
+    return dropAt ?? node.position;
+  }
+
+  function onDrop(props: FakeFlowProps, node: FakeNode, event: { altKey: boolean }): void {
+    if (!event.altKey) return;
+    props.onNodeDragStop?.({}, { ...node, position: dropPosition(node) });
+  }
 
   function fakeNodeView(props: FakeFlowProps, node: FakeNode) {
     const Box = props.nodeTypes[node.type];
@@ -43,9 +56,11 @@ vi.mock('@xyflow/react', async () => {
         'data-x': node.position.x,
         'data-y': node.position.y,
         'data-draggable': String(node.draggable),
+        onClick: () => props.onNodeClick?.({}, node),
         onDoubleClick: (event: unknown) => props.onNodeDoubleClick?.(event, node),
+        onMouseUp: (event: { altKey: boolean }) => onDrop(props, node, event),
       },
-      ce(Box as (props: { data: Record<string, unknown> }) => ReactElement | null, { data: node.data }),
+      ce(Box as (props: { id: string; data: Record<string, unknown> }) => ReactElement | null, { id: node.id, data: node.data }),
     );
   }
 
@@ -88,17 +103,59 @@ vi.mock('@xyflow/react', async () => {
     );
   }
 
+  function dashText(style: { strokeDasharray?: string } | undefined): string {
+    if (style === undefined) return '';
+    if (style.strokeDasharray === undefined) return '';
+    return style.strokeDasharray;
+  }
+
+  function strokeText(style: { stroke?: string } | undefined): string | undefined {
+    if (style === undefined) return undefined;
+    return style.stroke;
+  }
+
+  function widthText(style: { strokeWidth?: number } | undefined): string {
+    if (style === undefined) return String(undefined);
+    return String(style.strokeWidth);
+  }
+
+  function baseEdge(props: { id: string; path: string; style?: { stroke?: string; strokeWidth?: number; strokeDasharray?: string }; markerEnd?: unknown }) {
+    return ce('path', {
+      className: 'fake-edge-path',
+      'data-edge': props.id,
+      d: props.path,
+      'data-stroke': strokeText(props.style),
+      'data-stroke-width': widthText(props.style),
+      'data-dash': dashText(props.style),
+      'data-marker': JSON.stringify(props.markerEnd),
+    });
+  }
+
+  function ReactFlowProvider(props: { children: ReactElement }) {
+    return props.children;
+  }
+
+  function useReactFlow() {
+    return {
+      setCenter: (x: number, y: number) => {
+        centers.push({ x, y });
+        return Promise.resolve(true);
+      },
+    };
+  }
+
+  Object.assign(globalThis, {
+    armDrop: (shift: { x: number; y: number } | null) => {
+      dropAt = shift;
+    },
+    flowCenters: centers,
+  });
+
   return {
     ReactFlow,
-    BaseEdge: (props: { id: string; path: string; style?: { stroke?: string; strokeWidth?: number }; markerEnd?: unknown }) =>
-      ce('path', {
-        className: 'fake-edge-path',
-        'data-edge': props.id,
-        d: props.path,
-        'data-stroke': props.style?.stroke,
-        'data-stroke-width': String(props.style?.strokeWidth),
-        'data-marker': JSON.stringify(props.markerEnd),
-      }),
+    ReactFlowProvider,
+    useReactFlow,
+    BaseEdge: baseEdge,
     Handle: () => null,
     Position: { Top: 'top', Bottom: 'bottom' },
     MarkerType: { ArrowClosed: 'arrowclosed', Arrow: 'arrow' },
@@ -371,14 +428,14 @@ describe('ArchView with a fake flow', () => {
   it('draws the root view as one package box with its count and no arrows', async () => {
     await showArchView('', GRAPHS, noopDir, noopPath);
     expect(nodeEls().map(node => node.textContent)).toEqual(['src4 files']);
-    expect(nodeById('src').dataset).toMatchObject({ x: '0', y: '0', draggable: 'false' });
-    expect(boxClasses('src').contains('nodrag')).toBe(true);
+    expect(nodeById('src').dataset).toMatchObject({ x: '0', y: '0', draggable: 'true' });
+    expect(boxClasses('src').contains('nodrag')).toBe(false);
     expect(boxClasses('src').contains('nopan')).toBe(true);
     expect(boxClasses('src').contains('package')).toBe(true);
     expect(boxClasses('src').contains('file')).toBe(false);
     expect(boxCycleFlag(nodeById('src'))).toBe('false');
     expect(edgeEls()).toEqual([]);
-    expect(attrOf('.fake-flow', 'data-draggable-nodes')).toBe('false');
+    expect(attrOf('.fake-flow', 'data-draggable-nodes')).toBe('true');
     expect(attrOf('.fake-flow', 'data-nodes-connectable')).toBe('false');
     expect(attrOf('.fake-flow', 'data-edges-focusable')).toBe('false');
     expect(attrOf('.fake-flow', 'data-fit-view')).toBe('true');
@@ -420,7 +477,7 @@ describe('ArchView with a fake flow', () => {
     expect(labelled.classList.contains('arrow')).toBe(true);
     expect(labelled.classList.contains('cycle')).toBe(false);
     expect(labelTextOf(labelled)).toBe('2');
-    expect(titleTextOf(labelled)).toBeNull();
+    expect(titleTextOf(labelled)).toBe('1 runtime · 1 type-only · 0 extends/implements');
     expect(labelTextOf(edgeBetween('src/app', 'src/domain'))).toBeNull();
     expect(labelTextOf(edgeBetween('src/infra', 'src/domain'))).toBeNull();
     expect(edgeEls().map(edge => `${edge.dataset.from}->${edge.dataset.to}`).sort()).toEqual([
@@ -546,7 +603,12 @@ describe('ArchView with a fake flow', () => {
     );
     expect(document.querySelector('.arch-canvas')?.textContent).toBe('loading…');
     const calls: Call[] = [];
+    const { act } = await import('react');
     const { waitFor } = await import('@testing-library/dom');
+    await act(async () => {
+      root.unmount();
+    });
+    root = createRoot(document.getElementById('root') as HTMLElement);
     await show(
       createElement(QueryClientProvider, { client: newQueryClient() },
         createElement(ArchView, { token: 'tok', at: 'notes', fetcher: archFetcher(calls, GRAPHS), onDrill: () => undefined, onOpenFile: () => undefined })),
