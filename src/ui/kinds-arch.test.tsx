@@ -3,7 +3,8 @@ import { JSDOM } from 'jsdom';
 import { act, createElement, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import sheet from './app.css?raw';
+
+const sheet = process.getBuiltinModule('node:fs').readFileSync(new URL('./app.css', import.meta.url), 'utf8');
 
 vi.mock('@xyflow/react', async () => {
   const { createElement: ce, useState } = await import('react');
