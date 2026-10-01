@@ -1,0 +1,454 @@
+#!/usr/bin/env node
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  VALUES,
+  WARMUP,
+  absent,
+  cleanup,
+  emit,
+  fixtureUi,
+  gitFixture,
+  hit,
+  keepAliveAgent,
+  loadExport,
+  loadModule,
+  sample,
+} from './harness.mjs';
+
+const FLAGS = { tests: false, external: false };
+const PACKAGES = 20;
+const PER_PACKAGE = 200;
+const DEEP_FILES = 100;
+const WORKSPACES = 8;
+const DRAW_COUNT = 500;
+const PARSE_COUNT = 200;
+const CLIENT_NODES = 500;
+
+const GRAPH_TARGETS = ['graphView root 4100 files with health', 'graphView deep 100 files with health'];
+const DETAIL_TARGETS = ['nodeDetail root 4100 files with health', 'nodeDetail deep 100 files with health'];
+const PARSE_TARGET = 'parseSource 200 files';
+const READ_TARGET = 'readHealth 4100 files';
+const HTTP_TARGETS = ['GET /api/graph with reports', 'GET /api/detail with reports'];
+const CLIENT_TARGETS = ['fetchGraph 500 nodes', 'fetchDetail file'];
+const DRAW_TARGET = 'health draw 500 packages';
+
+const FUNCTIONS = [
+  { name: 'keep', line: 1, endLine: 5, cc: 3 },
+  { name: 'mid', line: 6, endLine: 11, cc: 6 },
+];
+
+const STATEMENTS = [
+  { line: 1, hits: 1 },
+  { line: 2, hits: 0 },
+  { line: 3, hits: 1 },
+  { line: 4, hits: 0 },
+];
+
+const graphView = await loadExport('src/domain/graph.ts', 'graphView');
+const nodeDetail = await loadExport('src/domain/graph.ts', 'nodeDetail');
+const parseSource = await loadExport('src/scanning/parse.ts', 'parseSource');
+const readHealth = await loadExport('src/reports.ts', 'readHealth');
+const parseLayout = await loadExport('src/domain/layout.ts', 'parseLayout');
+const serve = await loadModule('src/serve.ts');
+const prepareBindweed = await loadExport('src/repo.ts', 'prepareBindweed');
+const client = await loadModule('src/ui/client.ts');
+const draw = await loadModule('src/ui/healthdraw.ts');
+
+function packageEdges(files, edges) {
+  for (let i = 0; i < PACKAGES; i += 1) {
+    for (let j = 0; j < PER_PACKAGE; j += 1) {
+      const from = `pkg${i}/f${j}.ts`;
+      files.push({ path: from, test: j % 50 === 0, functions: FUNCTIONS });
+      for (let k = 1; k <= 5; k += 1) {
+        const to =
+          k <= 3
+            ? `pkg${i}/f${(j + k * 7) % PER_PACKAGE}.ts`
+            : `pkg${(i + k) % PACKAGES}/f${(j + k * 3) % PER_PACKAGE}.ts`;
+        edges.push({ from, to, kind: k === 5 ? 'type' : 'runtime' });
+      }
+    }
+  }
+}
+
+function deepEdges(files, edges) {
+  for (let j = 0; j < DEEP_FILES; j += 1) {
+    const from = `deep/f${j}.ts`;
+    files.push({ path: from, test: false, functions: FUNCTIONS });
+    for (let k = 1; k <= 5; k += 1) {
+      edges.push({ from, to: `deep/f${(j + k * 7) % DEEP_FILES}.ts`, kind: k === 5 ? 'type' : 'runtime' });
+    }
+  }
+}
+
+function buildScan() {
+  const files = [];
+  const edges = [];
+  packageEdges(files, edges);
+  deepEdges(files, edges);
+  const workspaces = [];
+  for (let i = 0; i < WORKSPACES; i += 1) workspaces.push({ dir: `pkg${i}`, name: `@acme/pkg${i}` });
+  return { files, edges, externals: [], workspaces };
+}
+
+function healthFor(files) {
+  const entry = { statements: STATEMENTS };
+  const coverageEntries = new Map();
+  const mutantCounts = new Map();
+  for (const file of files) {
+    coverageEntries.set(file.path, entry);
+    mutantCounts.set(file.path, 3);
+  }
+  return { crapMax: 4, coverage: 'on', mutation: 'on', coverageEntries, mutantCounts };
+}
+
+function requireView(view, count, label) {
+  if (view === null || view === undefined || view.nodes.length < count) throw new Error(`${label} did not draw`);
+  return view.nodes.length;
+}
+
+function functionTail(n) {
+  return [
+    'export function keep(n: number): number {',
+    '  if (n > 0) return 1;',
+    '  if (n < 0) return -1;',
+    `  return ${n};`,
+    '}',
+    'export function mid(n: number): number {',
+    '  if (n > 0 && n < 10) return 1;',
+    '  if (n < 0 || n === 0) return -1;',
+    '  const spare = 0;',
+    '  return spare;',
+    '}',
+  ];
+}
+
+function sourceText(p, f) {
+  const lines = [];
+  for (let k = 1; k <= 5; k += 1) {
+    const file = (f + k) % PER_PACKAGE;
+    lines.push(`import { v${file} } from '../pkg${(p + k) % PACKAGES}/f${file}';`);
+  }
+  lines.push(...functionTail(f));
+  return `${lines.join('\n')}\n`;
+}
+
+function deepText(j) {
+  const lines = [];
+  for (let k = 1; k <= 5; k += 1) {
+    const file = (j + k) % DEEP_FILES;
+    lines.push(`import { v${file} } from './f${file}';`);
+  }
+  lines.push(...functionTail(j));
+  return `${lines.join('\n')}\n`;
+}
+
+function parseTexts() {
+  const texts = [];
+  for (let i = 0; i < PARSE_COUNT; i += 1) texts.push(sourceText(i % PACKAGES, i));
+  return texts;
+}
+
+async function writeSources(root) {
+  const paths = [];
+  const writes = [];
+  for (let p = 0; p < PACKAGES; p += 1) {
+    await mkdir(join(root, `pkg${p}`), { recursive: true });
+    for (let f = 0; f < PER_PACKAGE; f += 1) {
+      const rel = `pkg${p}/f${f}.ts`;
+      paths.push(rel);
+      writes.push(writeFile(join(root, rel), sourceText(p, f)));
+    }
+  }
+  await mkdir(join(root, 'deep'), { recursive: true });
+  for (let j = 0; j < DEEP_FILES; j += 1) {
+    const rel = `deep/f${j}.ts`;
+    paths.push(rel);
+    writes.push(writeFile(join(root, rel), deepText(j)));
+  }
+  await Promise.all(writes);
+  return paths;
+}
+
+async function writeReports(root, paths) {
+  const statementMap = {
+    0: { start: { line: 1 } },
+    1: { start: { line: 2 } },
+    2: { start: { line: 3 } },
+    3: { start: { line: 4 } },
+  };
+  const hits = { 0: 1, 1: 0, 2: 1, 3: 0 };
+  const mutants = [{ status: 'Survived' }, { status: 'Killed' }, { status: 'NoCoverage' }];
+  const coverage = {};
+  const files = {};
+  for (const path of paths) {
+    coverage[path] = { statementMap, s: hits };
+    files[path] = { mutants };
+  }
+  await mkdir(join(root, '.marestail', 'ts-coverage'), { recursive: true });
+  await mkdir(join(root, 'reports', 'mutation'), { recursive: true });
+  await writeFile(join(root, '.marestail', 'ts-coverage', 'coverage-final.json'), JSON.stringify(coverage));
+  await writeFile(join(root, 'reports', 'mutation', 'mutation.json'), JSON.stringify({ files }));
+  await writeFile(join(root, 'marestail.toml'), '[ts]\ncrap_max = 4\n');
+}
+
+function reportsLoaded(health, count) {
+  if (health.coverage === 'off' || health.mutation === 'off') return false;
+  return health.coverageEntries.size === count && health.mutantCounts.size === count;
+}
+
+function graphBody() {
+  const nodes = [];
+  const edges = [];
+  for (let i = 0; i < CLIENT_NODES; i += 1) {
+    nodes.push({
+      id: `pkg${i}`,
+      kind: 'package',
+      name: `pkg${i}`,
+      path: `pkg${i}`,
+      files: 8,
+      row: 0,
+      order: i,
+      cycle: false,
+      ca: i % 7,
+      ce: i % 5,
+      i: (i % 100 / 100).toFixed(2),
+      a: '0.00',
+      d: (i % 50 / 100).toFixed(2),
+      zone: i % 3 === 0 ? 'pain' : 'healthy',
+      crap: i % 13,
+      coverage: (i % 100 / 100).toFixed(2),
+      mutants: i % 4,
+    });
+    if (i > 0) edges.push({ from: `pkg${i - 1}`, to: `pkg${i}`, runtime: 1, type: 0, cycle: false });
+  }
+  return {
+    at: '',
+    crumbs: [{ name: 'perf-repo', at: '' }],
+    nodes,
+    edges,
+    crapMax: 4,
+    coverage: 'on',
+    mutation: 'on',
+  };
+}
+
+function detailBody() {
+  const imports = [];
+  for (let i = 0; i < 20; i += 1) {
+    imports.push({ id: `pkg${i}`, name: `pkg${i}`, kind: 'package', runtime: 1, type: 0, heritage: 0 });
+  }
+  return {
+    id: 'pkg0/f1.ts',
+    name: 'f1.ts',
+    path: 'pkg0/f1.ts',
+    kind: 'file',
+    ca: 1,
+    ce: 4,
+    i: '0.80',
+    a: '0.00',
+    d: '0.20',
+    crap: 42,
+    coverage: '0.00',
+    mutants: 3,
+    hot: [{ name: 'mid', line: 6, cc: 6, coverage: '0.00', crap: 42 }],
+    imports,
+    importedBy: imports,
+  };
+}
+
+function jsonFetcher(body) {
+  return async () => ({ ok: true, json: async () => body });
+}
+
+function parsedOk(value, label) {
+  if (value === null || typeof value !== 'object' || 'error' in value) throw new Error(`${label} rejected the body`);
+}
+
+function drawBoxes() {
+  const boxes = [];
+  for (let i = 0; i < DRAW_COUNT; i += 1) {
+    const missing = i % 11 === 0;
+    boxes.push({
+      id: `pkg${i}`,
+      name: `pkg${String(i).padStart(3, '0')}`,
+      kind: 'package',
+      files: 8 + (i % 5),
+      ca: i % 7,
+      ce: i % 5,
+      i: missing ? '–' : (i % 100 / 100).toFixed(2),
+      a: ((i % 10) / 10).toFixed(2),
+      d: missing ? '–' : (i % 50 / 100).toFixed(2),
+      zone: missing ? undefined : i % 3 === 0 ? 'pain' : i % 3 === 1 ? 'useless' : 'healthy',
+      crap: i % 4 === 0 ? '–' : i % 17,
+      coverage: (i % 100 / 100).toFixed(2),
+      mutants: i % 5,
+    });
+  }
+  return boxes;
+}
+
+const scan = graphView === undefined ? undefined : buildScan();
+const health = scan === undefined ? undefined : healthFor(scan.files);
+
+if (graphView === undefined) absent(...GRAPH_TARGETS, ...DETAIL_TARGETS);
+else {
+  emit(
+    GRAPH_TARGETS[0],
+    await sample(() => {
+      requireView(graphView(scan, '', 'perf-repo', FLAGS, health), 20, GRAPH_TARGETS[0]);
+    }, VALUES, WARMUP),
+  );
+  emit(
+    GRAPH_TARGETS[1],
+    await sample(() => {
+      requireView(graphView(scan, 'deep', 'perf-repo', FLAGS, health), DEEP_FILES, GRAPH_TARGETS[1]);
+    }, VALUES, WARMUP),
+  );
+  if (nodeDetail === undefined) absent(...DETAIL_TARGETS);
+  else {
+    emit(
+      DETAIL_TARGETS[0],
+      await sample(() => {
+        const detail = nodeDetail(scan, 'pkg0', '', 'perf-repo', FLAGS, health);
+        if (detail === null) throw new Error(`${DETAIL_TARGETS[0]} missed pkg0`);
+      }, VALUES, WARMUP),
+    );
+    emit(
+      DETAIL_TARGETS[1],
+      await sample(() => {
+        const detail = nodeDetail(scan, 'deep/f0.ts', 'deep', 'perf-repo', FLAGS, health);
+        if (detail === null) throw new Error(`${DETAIL_TARGETS[1]} missed deep/f0.ts`);
+      }, VALUES, WARMUP),
+    );
+  }
+}
+
+if (parseSource === undefined) absent(PARSE_TARGET);
+else {
+  const texts = parseTexts();
+  emit(
+    PARSE_TARGET,
+    await sample(() => {
+      let imports = 0;
+      for (const text of texts) imports += parseSource('src/f.ts', text).imports.length;
+      if (imports === 0) throw new Error(`${PARSE_TARGET} parsed no imports`);
+    }, VALUES, WARMUP),
+  );
+}
+
+if (client === undefined || typeof client.fetchGraph !== 'function' || typeof client.fetchDetail !== 'function') {
+  absent(...CLIENT_TARGETS);
+} else {
+  const graphFetcher = jsonFetcher(graphBody());
+  const detailFetcher = jsonFetcher(detailBody());
+  emit(
+    CLIENT_TARGETS[0],
+    await sample(async () => {
+      parsedOk(await client.fetchGraph('token', '', graphFetcher), CLIENT_TARGETS[0]);
+    }, VALUES, WARMUP),
+  );
+  emit(
+    CLIENT_TARGETS[1],
+    await sample(async () => {
+      parsedOk(await client.fetchDetail('token', 'pkg0/f1.ts', 'pkg0', detailFetcher), CLIENT_TARGETS[1]);
+    }, VALUES, WARMUP),
+  );
+}
+
+if (
+  draw === undefined ||
+  typeof draw.metricRows !== 'function' ||
+  typeof draw.sortRows !== 'function' ||
+  typeof draw.badgeText !== 'function' ||
+  typeof draw.badgeLevel !== 'function' ||
+  typeof draw.detailLines !== 'function'
+) {
+  absent(DRAW_TARGET);
+} else {
+  const boxes = drawBoxes();
+  emit(
+    DRAW_TARGET,
+    await sample(() => {
+      const rows = draw.metricRows(boxes);
+      if (!Array.isArray(rows) || rows.length !== boxes.length) throw new Error(`${DRAW_TARGET} dropped rows`);
+      const sorted = draw.sortRows(rows, { key: 'd', direction: 'descending' });
+      let marks = sorted.length;
+      for (const box of boxes) {
+        marks += (draw.badgeText('crap', box) ?? '').length;
+        marks += draw.badgeLevel('coverage', box, 4) === null ? 0 : 1;
+        marks += draw.detailLines(box).length;
+      }
+      if (marks === 0) throw new Error(`${DRAW_TARGET} drew nothing`);
+    }, VALUES, WARMUP),
+  );
+}
+
+if (parseLayout !== undefined) {
+  const overlayDoc = {
+    version: 1,
+    views: { src: { 'src/a.ts': { x: 10, y: 20 } } },
+    settings: { tests: false, external: true, overlay: 'crap' },
+  };
+  emit(
+    'parseLayout overlay',
+    await sample(() => {
+      parseLayout(overlayDoc);
+    }, VALUES, WARMUP),
+  );
+} else absent('parseLayout overlay');
+
+const repo = await mkdtemp(join(tmpdir(), 'bw-perf-health-'));
+const ui = serve === undefined ? undefined : await fixtureUi();
+const agent = keepAliveAgent();
+let server;
+
+try {
+  const paths = await writeSources(repo);
+  await gitFixture(repo);
+  await writeReports(repo, paths);
+  if (readHealth === undefined) absent(READ_TARGET);
+  else {
+    const probe = readHealth(repo, paths);
+    if (!reportsLoaded(probe, paths.length)) throw new Error(`${READ_TARGET} did not index ${paths.length} files`);
+    emit(
+      READ_TARGET,
+      await sample(() => {
+        const loaded = readHealth(repo, paths);
+        if (!reportsLoaded(loaded, paths.length)) throw new Error(`${READ_TARGET} dropped a report`);
+      }, VALUES, WARMUP),
+    );
+  }
+
+  if (serve === undefined || typeof serve.bindApp !== 'function') absent(...HTTP_TARGETS);
+  else {
+    if (prepareBindweed !== undefined) await prepareBindweed(repo);
+    const bound = await serve.bindApp({ repoRoot: repo, uiDir: ui }, { mode: 'fixed', port: 0 });
+    if ('error' in bound) throw new Error(`bindApp failed: ${JSON.stringify(bound.error)}`);
+    server = bound.server;
+    const addr = server.address();
+    if (addr === null || typeof addr === 'string') throw new Error('no port');
+    const port = addr.port;
+    const auth = { Authorization: `Bearer ${bound.token}` };
+
+    async function getGraph() {
+      const res = await hit(agent, port, 'GET', '/api/graph', auth);
+      if (res.status !== 200) throw new Error(`${HTTP_TARGETS[0]} -> ${res.status}`);
+    }
+
+    async function getDetail() {
+      const res = await hit(agent, port, 'GET', '/api/detail?id=pkg0', auth);
+      if (res.status !== 200) throw new Error(`${HTTP_TARGETS[1]} -> ${res.status} ${res.body.subarray(0, 180).toString('utf8')}`);
+    }
+
+    await getGraph();
+    await getDetail();
+    emit(HTTP_TARGETS[0], await sample(getGraph, VALUES, WARMUP));
+    emit(HTTP_TARGETS[1], await sample(getDetail, VALUES, WARMUP));
+  }
+} finally {
+  agent.destroy();
+  if (server) await new Promise(resolve => server.close(() => resolve()));
+  await cleanup(repo, ui);
+}
