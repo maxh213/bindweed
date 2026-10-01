@@ -188,7 +188,16 @@ vi.mock('@xyflow/react', async () => {
 
 type Pin = { x: number; y: number };
 type LayoutDoc = { version: 1; views: Record<string, Record<string, Pin>>; settings: { tests: boolean; external: boolean } };
-type World = { layout: LayoutDoc; main: boolean; armMain: boolean; puts: number; gate: Promise<void> | null; details: string[]; graphs: string[] };
+type World = {
+  layout: LayoutDoc;
+  main: boolean;
+  armMain: boolean;
+  puts: number;
+  gate: Promise<void> | null;
+  detailGate: Promise<void> | null;
+  details: string[];
+  graphs: string[];
+};
 type GNode = {
   id: string;
   kind: string;
@@ -487,7 +496,16 @@ const DETAILS: Record<string, unknown> = {
 };
 
 function freshWorld(): World {
-  return { layout: { version: 1, views: {}, settings: { tests: false, external: false } }, main: false, armMain: false, puts: 0, gate: null, details: [], graphs: [] };
+  return {
+    layout: { version: 1, views: {}, settings: { tests: false, external: false } },
+    main: false,
+    armMain: false,
+    puts: 0,
+    gate: null,
+    detailGate: null,
+    details: [],
+    graphs: [],
+  };
 }
 
 let world = freshWorld();
@@ -656,6 +674,17 @@ async function releaseLayout(current: World, path: string, method: string): Prom
   if (pending !== null) await pending;
 }
 
+function heldDetail(current: World, path: string): Promise<void> | null {
+  if (current.detailGate === null) return null;
+  if (path !== '/api/detail') return null;
+  return current.detailGate;
+}
+
+async function releaseDetail(current: World, path: string): Promise<void> {
+  const pending = heldDetail(current, path);
+  if (pending !== null) await pending;
+}
+
 function pageFetcher(): typeof fetch {
   return (async (url: string, init?: RequestInit) => {
     const text = String(url);
@@ -663,6 +692,7 @@ function pageFetcher(): typeof fetch {
     if (path === '/api/detail') world.details.push(text);
     if (path === '/api/graph') world.graphs.push(text);
     await releaseLayout(world, path, methodOf(init));
+    await releaseDetail(world, path);
     return answer(world, text, init);
   }) as typeof fetch;
 }
@@ -1016,7 +1046,16 @@ describe('Architecture kinds, pins and toggles', () => {
   it('Clicking infra opens the panel, and domain in the panel selects that box', async () => {
     await openHash('#at=src');
     const href = window.location.href;
+    let releaseDetailGate: () => void = () => undefined;
+    world.detailGate = new Promise(resolve => {
+      releaseDetailGate = resolve;
+    });
     await press(nodeById(idNamed('infra')));
+    await waitFor(() => {
+      expect(world.details.some(url => new URL(url, 'http://x').searchParams.get('id') === 'src/infra')).toBe(true);
+    });
+    expect(document.querySelector('aside[aria-label="details"]')).toBeNull();
+    releaseDetailGate();
     await seeHeading('infra');
     expect(window.location.href).toBe(href);
     expect(hasWord('src/infra')).toBe(true);
@@ -1025,7 +1064,15 @@ describe('Architecture kinds, pins and toggles', () => {
     expect(hasWord('abstract')).toBe(false);
     expect(entryButton('Imports', 'domain').textContent).toBe('domain 2 runtime · 0 type-only · 1 extends/implements');
     expect(entryButton('Imported by', 'app').textContent).toBe('app 2 runtime · 1 type-only · 0 extends/implements');
+    world.detailGate = new Promise(resolve => {
+      releaseDetailGate = resolve;
+    });
     await press(entryButton('Imports', 'domain'));
+    await waitFor(() => {
+      expect(world.details.some(url => new URL(url, 'http://x').searchParams.get('id') === 'src/domain')).toBe(true);
+    });
+    expect(panel().querySelector('h2')?.textContent).toBe('infra');
+    releaseDetailGate();
     await seeHeading('domain');
     expect(namedBox('domain').dataset.selected).toBe('true');
     expect(nodeEls().filter(node => node.querySelector('.box')?.getAttribute('data-selected') === 'true')).toHaveLength(1);

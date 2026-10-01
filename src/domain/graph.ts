@@ -242,7 +242,7 @@ function noteExternal(agg: Map<string, RawEdge>, ext: ExternalRef, at: string, n
 function externalEdges(scan: ScanResult, at: string, nodeIds: Set<string>, includeTests: boolean, ws: WorkspaceOrder): RawEdge[] {
   const agg = new Map<string, RawEdge>();
   for (const ext of shownExternals(scan, includeTests)) noteExternal(agg, ext, at, nodeIds, ws);
-  return [...agg.values()].sort(byEndpoints);
+  return [...agg.values()];
 }
 
 function externalNames(edges: RawEdge[]): string[] {

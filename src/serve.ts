@@ -243,7 +243,7 @@ function layoutFromText(text: string): AcceptedLayout {
 
 async function putLayout(app: App, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const read = layoutFromText(await readBody(req));
-  if (!read.ok) {
+  if (read.ok === false) {
     sendJson(res, 400, { error: 'bad layout' });
     return;
   }
