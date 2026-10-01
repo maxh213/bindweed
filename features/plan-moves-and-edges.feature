@@ -20,7 +20,9 @@ Feature: plan a refactor on the canvas by moving files, cutting and drawing arro
   boxes, and dragging one onto a breadcrumb entry records a move; dropping it on
   its own directory's crumb does not. The new path is the target directory plus
   "/" plus the file name, or the file name alone when the target is the repository
-  root. A ghost is drawn where that graph does not contain the file: a dashed row
+  root. A drop on the root crumb records "to" as ".", and "." is the root wherever
+  a rule here names it. A ghost is drawn where that graph does not contain the
+  file: a dashed row
   in the other package, and a dashed box in the drilled view at the other graph's
   data-x and data-y. Ghosts are faint (opacity 0.35), carry data-ghost "true", and
   are not drag sources. Stale edits draw nothing. A response with no plan query
@@ -47,8 +49,8 @@ Feature: plan a refactor on the canvas by moving files, cutting and drawing arro
   view the same edit is only a marker: dashed #2563eb, data-cycle "false",
   data-up "false", tooltip "0 runtime · 0 type-only · 0 extends/implements", and
   it does not turn a box red. A cut marker is a thin dashed #94a3b8 line with a
-  "✂" (U+2702) labelled "cut" and data-cut "true"; it is never red. In Now the
-  real arrow remains beside that marker.
+  "✂" (U+2702) labelled "cut", data-cut "true", and the cut's data-from and
+  data-to; it is never red. In Now the real arrow remains beside that marker.
 
   Background:
     Given bindweed's ui was built with "npm run build"
@@ -269,7 +271,7 @@ Feature: plan a refactor on the canvas by moving files, cutting and drawing arro
     and not an ancestor of a scanned file is "no such directory <to>" even when
     the tree lists it; "notes" is one.
     A move is stale when its file is not in the scan ("no such file <file>"), when "to" is
-    not the root and not an ancestor of a scanned file ("no such directory <to>"),
+    not "." and not an ancestor of a scanned file ("no such directory <to>"),
     or when the destination path is already a scanned file ("<dest> already exists").
     A move onto the file's own directory is not stale and changes nothing.
     A cut or an add or a note is stale when a named box is gone ("no such box <path>",
@@ -383,8 +385,12 @@ Feature: plan a refactor on the canvas by moving files, cutting and drawing arro
     Switching Now / Planned updates the rows of the open table and does not close it.
     Clicking the sentence selects and centres the target, drilling to the parent
     view when the target is not a box here. A move's target is the file's path
-    after the non-stale moves up to and including itself. A stale sentence whose
-    target is gone does not navigate, and the notice shows the reason. The "×"
+    after the non-stale moves up to and including itself. A cut's or an added
+    edge's target is its arrow: the click drills to the view that holds both
+    boxes, selects the arrow — the cut marker for a cut — and centres the canvas
+    on the point halfway between the two boxes' centres. A note's target is its
+    node or its arrow. A stale sentence whose target is gone does not navigate,
+    and the notice shows the reason. The "×"
     button is named "Remove" and removes that edit only. It does not push redo
     and does not clear redo. Later edits that no longer apply stay, marked stale.
     Undo (the button or Ctrl+Z) moves the last edit onto the end of redo. Redo
@@ -393,13 +399,18 @@ Feature: plan a refactor on the canvas by moving files, cutting and drawing arro
     edit clears redo. Every one of these saves the whole plan at once.
     The Menu button is on the selected box or arrow, and only while a plan is
     open. A box menu has "Add note". An arrow menu has "Cut" and "Add note".
-    Delete on a selected arrow cuts it; Delete on a box does nothing. Cut and
-    Delete store one cut-edge whose files are every underlying file pair of that
-    arrow, one entry per importer and imported however many kinds that import
-    has, tests and externals included only while their checkbox is on, pairs
-    sorted by importer then imported. Cutting an arrow that is not in the
-    planned graph shows the notice "no such arrow <from> → <to>" and stores
-    nothing. A draw handle labelled "Draw dependency" sits on each box only
+    Delete on a selected arrow is that menu's Cut; Delete on a box does nothing.
+    Cut and Delete store one cut-edge whose files are every underlying file pair
+    of that arrow, one entry per importer and imported however many kinds that
+    import has, tests and externals included only while their checkbox is on,
+    pairs sorted by importer then imported. A planned arrow has no underlying
+    pairs, and a cut-edge with no pairs is not a legal edit, so on a planned
+    arrow Cut and Delete instead remove the one non-stale add-edge edit that
+    draws it, exactly as that entry's Remove button would: no cut-edge is
+    stored, the notice clears, redo is neither pushed nor cleared, the arrow and
+    any red it caused are gone, and the plan saves at once. Cutting an arrow
+    that is not in the planned graph shows the notice "no such arrow <from> →
+    <to>" and stores nothing. A draw handle labelled "Draw dependency" sits on each box only
     while a plan is open. Dropping it on the same box shows "a box cannot depend
     on itself". Dropping it on a box the planned graph already joins shows
     "<from> already imports <to>". Neither stores an edit, and neither clears
@@ -457,13 +468,22 @@ Feature: plan a refactor on the canvas by moving files, cutting and drawing arro
       When I open the "src/app" view
       Then the "a.ts" box has data-x 0 and data-y 0, the "b.ts" box has data-x 260 and data-y 0, and a ghost box "save.ts" has data-x 520 and data-y 0
 
-    Scenario: A breadcrumb drop moves the file to that directory, and Undo takes it back
+    Scenario: A breadcrumb drop moves the file to that directory, the root is ".", and Undo takes it back
       Given the plan "Split app" is open on the "src/app" view and the change list is empty
       When I drag the "save.ts" box onto the "src" breadcrumb
       Then the only entry reads "Move src/app/save.ts to src"
       And "GET /api/plans/split-app" has the edit {"kind":"move-file","file":"src/app/save.ts","to":"src"}
       When I click "Undo"
       Then the changes region has no entry and the "save.ts" box is back in the "src/app" view
+      When I drag the "save.ts" box onto the "layered" breadcrumb
+      Then the only entry reads "Move src/app/save.ts to ."
+      And "GET /api/plans/split-app" has the edit {"kind":"move-file","file":"src/app/save.ts","to":"."}
+      And "GET /api/graph?at=&plan=split-app" has "stale" [null]
+      When I click that entry
+      Then the address bar shows "http://127.0.0.1:5000/#at=&plan=split-app"
+      And the box with data-id "save.ts" carries data-selected "true" and the "src" box reads "6 files"
+      When I click "Undo"
+      Then the changes region has no entry
 
     Scenario: Cutting app to domain records the one file pair and draws a scissors
       Given the plan "Split app" is open on the "src" view and save.ts has been moved onto infra
@@ -490,6 +510,21 @@ Feature: plan a refactor on the canvas by moving files, cutting and drawing arro
       When I drag the "Draw dependency" handle of "app" onto the "app" box
       Then the notice reads "a box cannot depend on itself" and the changes region still has three entries
 
+    Scenario: Delete or Cut on a planned arrow removes its edit and keeps the redo stack
+      Given the plan "Split app" is open on the "src" view with the move, the cut, the added edge and the domain note saved
+      And Ctrl+Z has been pressed
+      When I click the arrow from "infra" to "app" and press Delete
+      Then the notice is empty
+      And the changes region has two entries and ends with "src/app must not import src/domain (1 import)"
+      And no box carries data-cycle "true" and no arrow is #dc2626
+      And "GET /api/plans/split-app" has the two edits move-file and cut-edge in order, no add-edge, and redo holding the note
+      When I press Ctrl+Shift+Z
+      Then the changes region ends with "Note on src/domain: \"pull an interface out here\""
+      When I drag the "Draw dependency" handle of "infra" onto the "app" box
+      And I click the arrow from "infra" to "app" and choose "Cut" from its menu
+      Then the entry "src/infra should use src/app" is gone and no box carries data-cycle "true"
+      And "GET /api/plans/split-app" has three edits, no cut-edge naming "src/infra", and redo []
+
     Scenario: Undo and Redo move the cycle, and a new edit clears the redo stack
       Given the plan "Split app" is open on the "src" view with the move of save.ts, the cut of app to domain, and the added edge from infra to app saved
       When I press Ctrl+Z
@@ -515,6 +550,21 @@ Feature: plan a refactor on the canvas by moving files, cutting and drawing arro
       When I choose "Add note" on the arrow from "app" to "infra" and type "keep this"
       Then that arrow has a marker labelled "note" whose title is "keep this"
       And the last entry reads "Note on src/app → src/infra: \"keep this\""
+
+    Scenario: Clicking a cut, an added edge or a note entry selects and centres its target
+      Given the plan "Split app" is open on the "src/app" view with the move, the cut, the added edge and the domain note saved
+      When I click the entry "src/app must not import src/domain (1 import)"
+      Then the address bar shows "http://127.0.0.1:5000/#at=src&plan=split-app"
+      And the cut marker from "src/app" to "src/domain" carries data-selected "true"
+      And the point halfway between the centres of the "app" and "domain" boxes is at the centre of the canvas
+      When I open the "src/app" view and click the entry "src/infra should use src/app"
+      Then the address bar shows "http://127.0.0.1:5000/#at=src&plan=split-app"
+      And the arrow from "infra" to "app" carries data-selected "true"
+      And the point halfway between the centres of the "infra" and "app" boxes is at the centre of the canvas
+      When I open the "src/app" view and click the entry "Note on src/domain: \"pull an interface out here\""
+      Then the address bar shows "http://127.0.0.1:5000/#at=src&plan=split-app"
+      And the "domain" box carries data-selected "true"
+      And the centre of the "domain" box is at the centre of the canvas
 
     Scenario: Now shows the current graph with the markers, and the metrics follow
       Given the plan "Split app" is open on the "src" view with the move, the cut, the added edge and the domain note saved

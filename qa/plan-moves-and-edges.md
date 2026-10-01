@@ -65,8 +65,8 @@ Paste the `export` line into the second terminal. `app` imports `domain` once, t
 7. In the second terminal run `curl -s -H "Authorization: Bearer $TOKEN" $U/api/plans/split-app; echo` and `git -C $QA/layered status --porcelain && echo clean`.
    **Expect:** the document has `"name":"Split app"`, `"slug":"split-app"`, `"version":1`, `"edits":[]`, `"redo":[]`, `"baseCommit"` equal to `$HEAD`, and `"createdAt"` matching `YYYY-MM-DDTHH:MM:SS.mmmZ`. `git status` prints `clean`.
 
-8. Double-click `app`. Drag the `save.ts` box onto the `src` breadcrumb, then click `Undo`, then click `src` in the breadcrumb.
-   **Expect:** the entry reads `Move src/app/save.ts to src`. Undo clears the list and `save.ts` is back in `app`. On `src` the change list is empty and `app` still lists `a.ts`, `b.ts` and `save.ts`.
+8. Double-click `app`. Drag the `save.ts` box onto the `src` breadcrumb, then click `Undo`. Drag the `save.ts` box onto the `layered` breadcrumb and click the new entry. In the second terminal run `curl -s -H "Authorization: Bearer $TOKEN" $U/api/plans/split-app; echo` and `curl -s -H "Authorization: Bearer $TOKEN" "$U/api/graph?at=&plan=split-app"; echo`. Back in the browser click `Undo`, then double-click the `src` box.
+   **Expect:** the first drop's entry reads `Move src/app/save.ts to src`, and Undo clears the list with `save.ts` back in `app`. The root drop's entry reads `Move src/app/save.ts to .`, and clicking it opens the root view at `http://127.0.0.1:5000/#at=&plan=split-app` with the `save.ts` box selected beside the `src` box, which reads `6 files`. The plan document holds the edit `{"kind":"move-file","file":"src/app/save.ts","to":"."}` and the graph body has `"stale":[null]`. After the last Undo the list is empty, and on `src` the `app` box still lists `a.ts`, `b.ts` and `save.ts`.
 
 9. Drag the `save.ts` row of `app` onto the `app` box. Then drag it onto the `infra` box.
    **Expect:** the first drop adds no entry. After the second, the only entry is `Move src/app/save.ts to src/infra`. `infra` reads `3 files` and lists `db.ts`, `repo.ts` and `save.ts`. `app` reads `2 files`, lists `a.ts` and `b.ts`, and shows a faint dashed ghost row `save.ts`. `test -f $QA/layered/src/app/save.ts && test ! -e $QA/layered/src/infra/save.ts && echo 'still on disk'` prints `still on disk`.
@@ -83,19 +83,22 @@ Paste the `export` line into the second terminal. `app` imports `domain` once, t
 13. Click the empty canvas, then press Ctrl+Z. Press Ctrl+Shift+Z.
     **Expect:** after Ctrl+Z the `should use` entry is gone, nothing is red, and `app` is above `infra` and `infra` is above `domain`. The ✂ line remains. After Ctrl+Shift+Z the entry is back and `app` and `infra` are red again on one row.
 
-14. Click `domain`, open its menu, choose `Add note`, click `Add` with no text, then type `pull an interface out here` and click `Add`.
-    **Expect:** the empty note shows `write a note` and adds no entry. Afterwards `domain` has a small note marker, and hovering it shows `pull an interface out here`. The list ends with `Note on src/domain: "pull an interface out here"`. The `should use` entry is still there.
+14. Click the dashed arrow from `infra` to `app` and press `Delete`. In the second terminal run `curl -s -H "Authorization: Bearer $TOKEN" $U/api/plans/split-app; echo`. Drag the draw handle on `infra` onto `app`. Click that arrow, open its menu, and choose `Cut`. Run the curl again. Drag the handle onto `app` once more.
+    **Expect:** after `Delete` the `should use` entry is gone, nothing is red, and the document holds exactly the move and the cut with `"redo":[]` — no `cut-edge` naming `src/infra` was stored. The first re-drag restores the entry and the red row. The menu's `Cut` removes it the same way, and the second curl shows the same two edits. After the last drag the list again ends with `src/infra should use src/app`, and `app` and `infra` are red.
 
-15. Reload the page.
+15. Click `domain`, open its menu, choose `Add note`, click `Add` with no text, then type `pull an interface out here` and click `Add`. Double-click `app` and click the entry `src/app must not import src/domain (1 import)`. Double-click `app` again and click the entry `Note on src/domain: "pull an interface out here"`.
+    **Expect:** the empty note shows `write a note` and adds no entry. Afterwards `domain` has a small note marker, and hovering it shows `pull an interface out here`. The list ends with `Note on src/domain: "pull an interface out here"`. The `should use` entry is still there. Clicking the cut entry from the `app` view opens `http://127.0.0.1:5000/#at=src&plan=split-app` with the ✂ marker selected and the canvas centred halfway between the `app` and `domain` boxes. Clicking the note entry from the `app` view opens the same address with the `domain` box selected and centred in the canvas.
+
+16. Reload the page.
     **Expect:** the address bar reads `http://127.0.0.1:5000/#at=src&plan=split-app`. `Planned` is selected. The four entries are there. `app` and `infra` are red. The ghost row is in `app`, `save.ts` is listed in `infra`, the ✂ line is there, and the note marker still shows `pull an interface out here` on hover.
 
-16. In the first terminal press Ctrl-C. Run `node $BW/src/cli.ts --port 5000` again, set `TOKEN` from the new first line, and open the new printed link with `#at=src&plan=split-app`.
+17. In the first terminal press Ctrl-C. Run `node $BW/src/cli.ts --port 5000` again, set `TOKEN` from the new first line, and open the new printed link with `#at=src&plan=split-app`.
     **Expect:** the token differs from step 1. The same four entries, the red row, the ghost, the ✂ and the note are all there. Double-click the `save.ts` row in `infra`. The Files tab shows the header `src/app/save.ts` and line 1 `export const save = 1;`. Click `Architecture`. The address bar reads `http://127.0.0.1:5000/#at=src&plan=split-app` and the plan is back.
 
-17. Choose `Now`. Click `Metrics` once. Choose `Planned`. Click the `domain` box.
+18. Choose `Now`. Click `Metrics` once. Choose `Planned`. Click the `domain` box.
     **Expect:** on Now, `app` is above `infra` and `infra` is above `domain`, nothing is red, `app` reads `3 files` and lists `save.ts`, and `infra` shows a ghost row `save.ts`. The ordinary dashed arrow from `app` to `domain` is back, with the ✂ as well. A dashed blue arrow runs from `infra` up to `app` and is not red. The Metrics table is open and its rows are `infra`, `app`, `domain`. `app` reads Files 3 and `domain` reads Ca 3. After choosing Planned the table stays open: `app` reads Files 2, `infra` reads Files 3, and `domain` reads Ca 2. The details panel is headed `domain` and under Imported by the only button is `infra`.
 
-18. In the second terminal run `rm $QA/layered/src/app/save.ts`. In the browser click `Rescan`. Then restore the file and rescan again:
+19. In the second terminal run `rm $QA/layered/src/app/save.ts`. In the browser click `Rescan`. Then restore the file and rescan again:
 
     ```sh
     printf 'export const save = 1;\n' > $QA/layered/src/app/save.ts
@@ -104,14 +107,14 @@ Paste the `export` line into the second terminal. `app` imports `domain` once, t
     Click `Rescan` again. Then `git -C $QA/layered status --porcelain && echo clean`.
     **Expect:** after the first Rescan the move entry is yellow and shows `no such file src/app/save.ts`, and the other three entries are not yellow. After the restore and the second Rescan the move entry is not yellow. `git status` prints `clean`.
 
-19. Double-click `infra`, click `save.ts`, and add the note `keep the writer here`. Click `src` in the breadcrumb. Click `×` on `Move src/app/save.ts to src/infra`.
+20. Double-click `infra`, click `save.ts`, and add the note `keep the writer here`. Click `src` in the breadcrumb. Click `×` on `Move src/app/save.ts to src/infra`.
     **Expect:** the new entry is `Note on src/infra/save.ts: "keep the writer here"`. After the `×`, that move entry is gone, and the new note's entry is yellow and shows `no such box src/infra/save.ts`. The cut, the `should use` entry and the domain note are not yellow. `app` and `infra` are still red.
 
-20. Click `Delete plan`, then `Cancel`. Click `Delete plan`, then `Delete`.
+21. Click `Delete plan`, then `Cancel`. Click `Delete plan`, then `Delete`.
     **Expect:** Cancel leaves `Split app` in the combobox and `plan=split-app` in the address. Delete clears it. The combobox shows `No plan`, the address bar reads `http://127.0.0.1:5000/#at=src`, `app` reads `3 files`, and no box lists file names. `curl -si -H "Authorization: Bearer $TOKEN" $U/api/plans/split-app` is status 404 and body `{"error":"no such plan"}`.
 
-21. Create a plan named `Split app`, then another named `Split app`. Choose the second. Delete the open plan, choose the remaining `Split app`, and delete that too.
+22. Create a plan named `Split app`, then another named `Split app`. Choose the second. Delete the open plan, choose the remaining `Split app`, and delete that too.
     **Expect:** the combobox offers `Split app` and `Split app (split-app-2)`. Choosing the second puts `plan=split-app-2` in the address. After both deletes the combobox shows `No plan`.
 
-22. In the first terminal press Ctrl-C, then run `sed -n '/## Routes/,/## Environment/p' $BW/README.md`, `git -C $QA/layered status --porcelain && echo clean`, and `rm -rf $QA`.
+23. In the first terminal press Ctrl-C, then run `sed -n '/## Routes/,/## Environment/p' $BW/README.md`, `git -C $QA/layered status --porcelain && echo clean`, and `rm -rf $QA`.
     **Expect:** the Routes table has a live row for `/api/plans`, and the live rows for `/`, `/assets/`, `/api/tree`, `/api/file`, `/api/graph`, `/api/rescan`, `/api/layout` and `/api/detail` are still there. `git status` prints `clean`. The playground is gone.
