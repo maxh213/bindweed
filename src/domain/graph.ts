@@ -1,15 +1,12 @@
+import { martinFields, martinIndex, type MartinFields, type MartinIndex } from './coupling.ts';
 import {
   emptyHealth,
   fileFields,
   fileStats,
-  martinFields,
-  martinIndex,
   packageFields,
   type Health,
   type HealthFields,
   type HotFunction,
-  type MartinFields,
-  type MartinIndex,
   type ReportFlag,
 } from './health.ts';
 import { byStrings, placeView, toViewEdge, type RawEdge, type RawNode, type ViewEdge, type ViewNode } from './place.ts';

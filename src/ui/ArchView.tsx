@@ -16,30 +16,9 @@ import {
 import { ArchCanvas, CanvasProvider, useCenterOn } from './ArchCanvas.tsx';
 import { fetchDetail, fetchGraph, fetchLayout, postRescan, putLayout } from './client.ts';
 import { DetailSlot } from './DetailPanel.tsx';
-import {
-  ariaSort,
-  chosenId,
-  COLUMN_LABELS,
-  COLUMNS,
-  DEFAULT_LIMIT,
-  DEFAULT_SORT,
-  detailId,
-  detailOn,
-  metricRows,
-  nextSort,
-  optionHint,
-  OVERLAY_OPTIONS,
-  overlayChoice,
-  parentDir,
-  sortRows,
-  staleShown,
-  type MetricBox,
-  type MetricsRow,
-  type OverlayName,
-  type ReportFacts,
-  type SortKey,
-  type SortState,
-} from './draw.ts';
+import { chosenId, detailId, detailOn, parentDir } from './draw.ts';
+import { MetricsDrawer, OverlayBox } from './HealthControls.tsx';
+import { DEFAULT_LIMIT, type MetricBox, type OverlayName, type ReportFacts } from './healthdraw.ts';
 import { graphStateOf, type GraphState } from './view.ts';
 
 export type ArchViewProps = {
@@ -191,71 +170,6 @@ function packageBoxes(state: GraphState): MetricBox[] {
   return state.view.nodes;
 }
 
-function OverlayOption(props: Readonly<{ value: OverlayName; label: string; flags: ReportFacts }>) {
-  const hint = optionHint(props.value, props.flags);
-  if (hint === null) return <option value={props.value}>{props.label}</option>;
-  return (
-    <option value={props.value} disabled title={hint}>
-      {props.label}
-    </option>
-  );
-}
-
-function OverlayBox(props: Readonly<{ overlay: OverlayName; flags: ReportFacts; onChoose: (value: string) => void }>) {
-  return (
-    <span className="overlay-box">
-      <label>
-        Overlay{' '}
-        <select aria-label="Overlay" value={props.overlay} onChange={event => props.onChoose(event.currentTarget.value)}>
-          {OVERLAY_OPTIONS.map(option => (
-            <OverlayOption key={option.value} value={option.value} label={option.label} flags={props.flags} />
-          ))}
-        </select>
-      </label>
-      {staleShown(props.overlay, props.flags) ? <span aria-label="stale">stale</span> : null}
-    </span>
-  );
-}
-
-function MetricsHead(props: Readonly<{ sort: SortState; onSort: (key: SortKey) => void }>) {
-  return (
-    <thead>
-      <tr>
-        {COLUMNS.map(column => (
-          <th key={column} aria-sort={ariaSort(props.sort, column)} onClick={() => props.onSort(column)}>
-            {COLUMN_LABELS[column]}
-          </th>
-        ))}
-      </tr>
-    </thead>
-  );
-}
-
-function MetricsBody(props: Readonly<{ rows: MetricsRow[]; onPick: (id: string) => void }>) {
-  return (
-    <tbody>
-      {props.rows.map(row => (
-        <tr key={row.id} onClick={() => props.onPick(row.id)}>
-          {COLUMNS.map(column => (
-            <td key={column}>{row.cells[column]}</td>
-          ))}
-        </tr>
-      ))}
-    </tbody>
-  );
-}
-
-function MetricsDrawer(props: Readonly<{ rows: MetricsRow[]; sort: SortState; onSort: (key: SortKey) => void; onPick: (id: string) => void }>) {
-  return (
-    <aside aria-label="metrics">
-      <table>
-        <MetricsHead sort={props.sort} onSort={props.onSort} />
-        <MetricsBody rows={props.rows} onPick={props.onPick} />
-      </table>
-    </aside>
-  );
-}
-
 function ArchPane(props: Readonly<ArchViewProps>) {
   const queryClient = useQueryClient();
   const layoutQuery = useQuery({
@@ -272,7 +186,6 @@ function ArchPane(props: Readonly<ArchViewProps>) {
   const [armed, setArmed] = useState<string | null>(null);
   const [hover, setHover] = useState<string | null>(null);
   const [metricsOpen, setMetricsOpen] = useState(false);
-  const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
   const state = graphStateOf(graphQuery.data, graphQuery.isPending);
   const ids = idsOf(state);
   const chosen = chosenId(picked, armed, ids);
@@ -312,7 +225,6 @@ function ArchPane(props: Readonly<ArchViewProps>) {
   };
   const overlay = settings.overlay ?? 'none';
   const flags = reportFlags(state);
-  const rows = sortRows(metricRows(packageBoxes(state)), sort);
   return (
     <div className="arch-pane">
       <div className="arch-toolbar">
@@ -326,7 +238,7 @@ function ArchPane(props: Readonly<ArchViewProps>) {
         <OverlayBox
           overlay={overlay}
           flags={flags}
-          onChoose={value => commitLayout(layoutQuery.data, settingsDoc({ overlay: overlayChoice(value, overlay, flags) }), store)}
+          onChoose={next => commitLayout(layoutQuery.data, settingsDoc({ overlay: next }), store)}
         />
         <FlagBox label="Tests" checked={settings.tests} onCheck={checked => commitLayout(layoutQuery.data, settingsDoc({ tests: checked }), store)} />
         <FlagBox
@@ -344,14 +256,7 @@ function ArchPane(props: Readonly<ArchViewProps>) {
           Rescan
         </button>
       </div>
-      {metricsOpen ? (
-        <MetricsDrawer
-          rows={rows}
-          sort={sort}
-          onSort={key => setSort(current => nextSort(current, key))}
-          onPick={pickEntry}
-        />
-      ) : null}
+      <MetricsDrawer open={metricsOpen} boxes={packageBoxes(state)} onPick={pickEntry} />
       <div className="arch-body">
         <CanvasArea
           state={state}

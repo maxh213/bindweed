@@ -5,7 +5,6 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { basename, dirname, extname, join } from 'node:path';
 import { z } from 'zod';
 import { graphView, nodeDetail, type GraphFlags } from './domain/graph.ts';
-import type { Health } from './domain/health.ts';
 import { emptyLayout, parseLayout, type LayoutDoc } from './domain/layout.ts';
 import type { ScanResult } from './domain/scan.ts';
 import { buildTree, filePathSet, type TreeRoot } from './domain/tree.ts';
@@ -194,7 +193,7 @@ async function readyScan(app: App, graphs: GraphHolder): Promise<ScanResult> {
   return graphs.scan;
 }
 
-function healthOf(root: string, scan: ScanResult): Health {
+function healthOf(root: string, scan: ScanResult) {
   return readHealth(root, scan.files.map(file => file.path));
 }
 
@@ -258,7 +257,7 @@ async function putLayout(app: App, req: IncomingMessage, res: ServerResponse): P
   sendJson(res, 200, read.doc);
 }
 
-function detailFor(scan: ScanResult, url: URL, rootName: string, health: Health): ReturnType<typeof nodeDetail> {
+function detailFor(scan: ScanResult, url: URL, rootName: string, health: ReturnType<typeof healthOf>): ReturnType<typeof nodeDetail> {
   const id = url.searchParams.get('id');
   if (typeof id !== 'string') return null;
   return nodeDetail(scan, id, url.searchParams.get('at') ?? '', rootName, graphFlags(url), health);

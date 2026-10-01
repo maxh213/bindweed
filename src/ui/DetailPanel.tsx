@@ -1,5 +1,6 @@
 import type { NodeDetail } from '../domain/graph.ts';
-import { countLine, detailLines, filesLabel, hotRow } from './draw.ts';
+import { countLine, filesLabel } from './draw.ts';
+import { detailLines, hotRow } from './healthdraw.ts';
 
 type Entry = NodeDetail['imports'][number];
 

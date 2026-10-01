@@ -16,19 +16,8 @@ import '@xyflow/react/dist/style.css';
 import { useMemo, useSyncExternalStore, type ReactNode } from 'react';
 import type { GraphNode, GraphView, ViewEdge } from '../domain/graph.ts';
 import { pointsUp, type PlacedBox } from '../domain/layout.ts';
-import {
-  arrowColor,
-  badgeLevel,
-  badgeText,
-  boxCenter,
-  edgeLabel,
-  edgeTitle,
-  filesLabel,
-  headOf,
-  lineOf,
-  type Level,
-  type OverlayName,
-} from './draw.ts';
+import { arrowColor, boxCenter, edgeLabel, edgeTitle, filesLabel, headOf, lineOf } from './draw.ts';
+import { badgeLevel, badgeText, type Level, type OverlayName } from './healthdraw.ts';
 
 type BoxData = {
   name: string;

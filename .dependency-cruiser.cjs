@@ -174,7 +174,7 @@ module.exports = {
       severity: 'error',
       comment: 'The canvas is handed a view and draws it; it does not fetch, own page state or open panels',
       from: { path: '^src/ui/ArchCanvas\\.tsx$' },
-      to: { path: ['^src/ui/(client|view|App|DetailPanel)\\.tsx?$', '^src/domain/(tree|scan)\\.ts$', 'node_modules/@tanstack'] }
+      to: { path: ['^src/ui/(client|view|App|DetailPanel|HealthControls)\\.tsx?$', '^src/domain/(tree|scan)\\.ts$', 'node_modules/@tanstack'] }
     },
     {
       name: 'arch-view-does-not-import-xyflow',
@@ -193,9 +193,9 @@ module.exports = {
     {
       name: 'drawing-helpers-are-a-leaf',
       severity: 'error',
-      comment: 'The drawing helpers turn graph facts into strings; they import nothing under src',
+      comment: 'The drawing helpers turn edge and selection facts into strings; they import nothing',
       from: { path: '^src/ui/draw\\.ts$' },
-      to: { path: '^src/' }
+      to: { path: '.' }
     },
     {
       name: 'layout-is-a-leaf',
@@ -203,6 +203,76 @@ module.exports = {
       comment: 'The layout document and its box placement depend on nothing else under src',
       from: { path: '^src/domain/layout\\.ts$' },
       to: { path: '^src/' }
+    },
+    {
+      name: 'health-depends-only-on-the-scan-record',
+      severity: 'error',
+      comment: 'CRAP, coverage and mutants are pure; the only src dependency is the function shape on the scan record',
+      from: { path: '^src/domain/health\\.ts$' },
+      to: { path: '^src/', pathNot: '^src/domain/scan\\.ts$' }
+    },
+    {
+      name: 'coupling-depends-only-on-the-scan-record',
+      severity: 'error',
+      comment: 'Martin Ca, Ce, I, A, D and zone are pure; the only src dependency is the scan record',
+      from: { path: '^src/domain/coupling\\.ts$' },
+      to: { path: '^src/', pathNot: '^src/domain/scan\\.ts$' }
+    },
+    {
+      name: 'only-the-view-and-reports-import-health',
+      severity: 'error',
+      comment: 'The view applies CRAP, coverage and mutants; only reports build that value. The server passes the value through and does not import the module',
+      from: { pathNot: '^src/(domain/graph\\.ts|domain/health\\.ts|reports\\.ts|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/domain/health\\.ts$' }
+    },
+    {
+      name: 'only-the-view-imports-coupling',
+      severity: 'error',
+      comment: 'The view applies Martin package metrics; nothing else reaches into the formulas',
+      from: { pathNot: '^src/(domain/graph\\.ts|domain/coupling\\.ts|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/domain/coupling\\.ts$' }
+    },
+    {
+      name: 'reports-read-health-only',
+      severity: 'error',
+      comment: 'Report IO maps files into the health value; it does not know the view or the coupling formulas',
+      from: { path: '^src/reports\\.ts$' },
+      to: { path: '^src/', pathNot: '^src/domain/health\\.ts$' }
+    },
+    {
+      name: 'only-serve-imports-reports',
+      severity: 'error',
+      comment: 'Reading coverage and mutation reports is server IO; only serve composes it among production files',
+      from: { pathNot: '^src/(serve\\.ts|reports\\.ts|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/reports\\.ts$' }
+    },
+    {
+      name: 'health-presentation-imports-nothing',
+      severity: 'error',
+      comment: 'Badges, overlay rules and the metrics table are pure string rules; they import nothing',
+      from: { path: '^src/ui/healthdraw\\.ts$' },
+      to: { path: '.' }
+    },
+    {
+      name: 'only-the-picture-imports-health-presentation',
+      severity: 'error',
+      comment: 'Only the architecture page, its canvas, its detail panel and its health controls read the health presentation rules',
+      from: { pathNot: '^src/ui/(ArchView\\.tsx|ArchCanvas\\.tsx|DetailPanel\\.tsx|HealthControls\\.tsx|healthdraw\\.ts|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/ui/healthdraw\\.ts$' }
+    },
+    {
+      name: 'only-the-page-imports-health-controls',
+      severity: 'error',
+      comment: 'The overlay selector and the metrics drawer belong to the architecture page',
+      from: { pathNot: '^src/ui/(ArchView\\.tsx|HealthControls\\.tsx|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/ui/HealthControls\\.tsx$' }
+    },
+    {
+      name: 'health-controls-do-not-fetch',
+      severity: 'error',
+      comment: 'The overlay selector and metrics drawer render numbers they are handed; they do not fetch, own the page, or draw the canvas',
+      from: { path: '^src/ui/HealthControls\\.tsx$' },
+      to: { path: ['^src/ui/(client|view|ArchCanvas|App|draw|boot|main|TreeView|FilePanel)\\.tsx?$', '^src/domain/', 'node_modules/(@tanstack|@xyflow|zod)'] }
     }
   ],
   options: {
