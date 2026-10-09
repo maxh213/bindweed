@@ -173,6 +173,8 @@ describe('parsePlan', () => {
       { ...base, slug: 3 },
       { ...base, createdAt: 'yesterday' },
       { ...base, createdAt: [STAMP] },
+      { ...base, createdAt: `x${STAMP}` },
+      { ...base, createdAt: `${STAMP}x` },
       { ...base, baseCommit: 'abc' },
       { ...base, baseCommit: [HEAD] },
       { ...base, baseCommit: `x${HEAD}` },

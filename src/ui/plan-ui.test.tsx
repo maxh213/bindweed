@@ -1138,6 +1138,7 @@ describe('the plan canvas over a real server', () => {
     expect(entries()).toHaveLength(0);
     expect(await dropPrevented(boxOf('src/domain'), '')).toBe(true);
     expect(await serverDoc()).toEqual({ edits: [], redo: [{ kind: 'move-file', file: 'src/app/save.ts', to: 'src' }] });
+    const layoutBefore = layoutCalls;
     await dropRow(boxOf('src/infra'), 'src/app/save.ts');
     await waitForText(() => {
       expect(entrySentences()).toEqual(['Move src/app/save.ts to src/infra']);
@@ -1147,7 +1148,6 @@ describe('the plan canvas over a real server', () => {
     expect(boxOf('src/app').textContent).toContain('2 files');
     expect(rowPathsOf('src/app')).toEqual(['src/app/a.ts', 'src/app/b.ts']);
     expect(ghostRowsOf('src/app')).toEqual(['src/app/save.ts']);
-    const layoutBefore = layoutCalls;
     await waitForDoc([MOVE]);
     expect(layoutCalls).toBe(layoutBefore);
     const ghostRow = mustQuery(boxOf('src/app'), '.box-row[data-ghost="true"]', 'missing ghost row');
