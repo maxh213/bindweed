@@ -373,6 +373,20 @@ module.exports = {
       to: { path: '^src/ui/plangesture\\.ts$' }
     },
     {
+      name: 'reshape-rules-read-the-document-only',
+      severity: 'error',
+      comment: 'Turning a create, rename, merge or split answer into an edit or a refusal is pure. It reads the plan document and nothing else',
+      from: { path: '^src/ui/reshape\\.ts$' },
+      to: { path: ['^src/', 'node_modules'], pathNot: '^src/domain/plan\\.ts$' }
+    },
+    {
+      name: 'only-the-session-reads-the-reshape-rules',
+      severity: 'error',
+      comment: 'The session hands a dialog answer to the reshape rules and stores what comes back. Nothing else decides what an answer means',
+      from: { pathNot: '^src/ui/(plansession\\.tsx|reshape\\.ts|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/ui/reshape\\.ts$' }
+    },
+    {
       name: 'only-the-session-imports-the-plan-chrome',
       severity: 'error',
       comment: 'The selector, dialogs, notice and change list are the session chrome',

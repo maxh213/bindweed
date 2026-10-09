@@ -4,8 +4,6 @@ import type { GraphNode, GraphView, ViewEdge } from '../domain/graph.ts';
 import {
   addEdgeIndex,
   byStrings,
-  childPath,
-  parentOf,
   withEdit,
   withRedo,
   withUndo,
@@ -33,7 +31,7 @@ import {
 import { FILE_DRAG_MIME, fieldTarget, keyActionOf, planDropTarget } from './plangesture.ts';
 import { arrowViewAt, entryTarget, planPicture, type Planning, type PlanInk, type ShownGraph } from './planpicture.ts';
 import { planRoster } from './planroster.ts';
-import { fileRenameName, mergeTarget, nameProblem, relativeTo, siblingPath, splitParts, splitProblem, takenProblem } from './reshape.ts';
+import { nameEdit, splitEdit, splitRows, type NameAsk, type Reshaped } from './reshape.ts';
 
 type Picture = ReturnType<typeof planPicture>;
 
@@ -78,8 +76,6 @@ type PlanSessionView = {
   dropOnCrumb: (event: { preventDefault(): void; dataTransfer: { getData(mime: string): string } }, at: string) => void;
   pickFile: (id: string) => boolean;
 };
-
-type NameAsk = { mode: 'create' } | { mode: 'rename'; id: string; kind: 'package' | 'file' } | { mode: 'merge' };
 
 type SplitAsk = { pkg: string; files: string[] };
 
@@ -258,7 +254,7 @@ function ReshapeDialogs(
       {nameAsk === null ? null : <NameSlot ask={nameAsk} error={props.error} onSubmit={name => props.onName(nameAsk, name)} onCancel={props.onCancel} />}
       {splitAsk === null ? null : (
         <SplitDialog
-          files={splitAsk.files.map(path => ({ path, label: relativeTo(splitAsk.pkg, path) }))}
+          files={splitRows(splitAsk.pkg, splitAsk.files)}
           error={props.error}
           onSplit={(names, assigned) => props.onSplit(splitAsk, names, assigned)}
           onCancel={props.onCancel}
@@ -280,10 +276,6 @@ function selectedPackages(nodes: GraphNode[], selection: string[]): GraphNode[] 
   return nodes.filter(node => node.kind === 'package' && selection.includes(node.id)).sort((a, b) => a.id.localeCompare(b.id));
 }
 
-function idsIn(nodes: GraphNode[]): string[] {
-  return nodes.map(node => node.id);
-}
-
 async function filesUnder(token: string, dir: string, slug: string, fetcher: typeof fetch): Promise<string[]> {
   const view = await fetchGraph(token, dir, fetcher, { tests: true, external: false, plan: slug });
   if ('error' in view) return [];
@@ -292,7 +284,7 @@ async function filesUnder(token: string, dir: string, slug: string, fetcher: typ
 }
 
 async function boxShown(token: string, id: string, query: { tests: boolean; external: boolean; plan: string | null }, fetcher: typeof fetch): Promise<boolean> {
-  const view = await fetchGraph(token, parentOf(id), fetcher, query);
+  const view = await fetchGraph(token, parentDir(id), fetcher, query);
   return !('error' in view) && view.nodes.some(node => node.id === id);
 }
 
@@ -493,48 +485,20 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     closeAsk();
     setNameAsk(next);
   };
-  const storeOr = (problem: string | null, edit: PlanEdit): void => {
-    if (problem !== null) {
-      setAskError(problem);
+  const settle = (outcome: Reshaped): void => {
+    if ('problem' in outcome) {
+      setAskError(outcome.problem);
       return;
     }
-    editPlan(edit);
+    if (outcome.edit !== null) editPlan(outcome.edit);
     closeAsk();
   };
   const taken = (): Set<string> => nodeIdsOf(props.planned);
-  const freshNameProblem = (name: string, path: string): string | null => nameProblem(name) ?? takenProblem(path, taken());
-  const createPackage = (name: string): void => {
-    const path = childPath(props.at, name);
-    storeOr(freshNameProblem(name, path), { kind: 'create-package', path });
-  };
-  const storeRename = (id: string, name: string, edit: PlanEdit): void => {
-    const dest = siblingPath(id, name);
-    if (dest === id) closeAsk();
-    else storeOr(freshNameProblem(name, dest), edit);
-  };
-  const renamePackage = (id: string, name: string): void => {
-    storeRename(id, name, { kind: 'rename-package', from: id, to: siblingPath(id, name) });
-  };
-  const renameFile = (id: string, typed: string): void => {
-    const name = fileRenameName(id, typed);
-    storeRename(id, name, { kind: 'rename-file', from: id, to: name });
-  };
-  const mergeSelected = (name: string): void => {
-    const chosen = selectedPackages(props.nodes, props.selection);
-    const into = mergeTarget(name, props.at, chosen);
-    const packages = idsIn(chosen);
-    const clash = packages.includes(into) ? null : takenProblem(into, taken());
-    storeOr(nameProblem(name) ?? clash, { kind: 'merge-packages', packages, into });
-  };
   const submitName = (current: NameAsk, name: string): void => {
-    if (current.mode === 'create') createPackage(name);
-    else if (current.mode === 'merge') mergeSelected(name);
-    else if (current.kind === 'package') renamePackage(current.id, name);
-    else renameFile(current.id, name);
+    settle(nameEdit(current, name, { at: props.at, taken: taken(), selected: selectedPackages(props.nodes, props.selection) }));
   };
   const submitSplit = (current: SplitAsk, names: string[], assigned: Record<string, string>): void => {
-    const form = { pkg: current.pkg, names, files: current.files, assigned, taken: taken() };
-    storeOr(splitProblem(form), { kind: 'split-package', package: current.pkg, parts: splitParts(form) });
+    settle(splitEdit({ pkg: current.pkg, names, files: current.files, assigned, taken: taken() }));
   };
   const openSplit = async (pkg: string): Promise<void> => {
     const files = await filesUnder(props.token, pkg, String(slug), props.fetcher);

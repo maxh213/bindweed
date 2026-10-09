@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fileRenameName, mergeTarget, nameProblem, relativeTo, siblingPath, splitParts, splitProblem, takenProblem, type SplitForm } from './reshape.ts';
+import { nameEdit, splitEdit, splitRows, type NameAsk, type Scene, type SplitForm } from './reshape.ts';
 
 const FILES = ['src/app/a.test.ts', 'src/app/a.ts', 'src/app/b.ts', 'src/app/save.ts'];
 
@@ -7,60 +7,98 @@ function form(names: string[], assigned: Record<string, string>, taken: string[]
   return { pkg: 'src/app', names, files: FILES, assigned, taken: new Set(taken) };
 }
 
+function scene(at: string, taken: string[] = [], selected: Scene['selected'] = []): Scene {
+  return { at, taken: new Set(taken), selected };
+}
+
+const CREATE: NameAsk = { mode: 'create' };
+
+const MERGE: NameAsk = { mode: 'merge' };
+
+function renameFile(id: string): NameAsk {
+  return { mode: 'rename', id, kind: 'file' };
+}
+
+function renamePackage(id: string): NameAsk {
+  return { mode: 'rename', id, kind: 'package' };
+}
+
+const SELECTED = [
+  { id: 'src/app/read', name: 'read' },
+  { id: 'src/app/write', name: 'write' },
+];
+
 const ALL_READ_WRITE = { 'src/app/a.test.ts': 'read', 'src/app/a.ts': 'read', 'src/app/b.ts': 'write', 'src/app/save.ts': 'write' };
 
 describe('the reshape dialog rules', () => {
-  it('names a bad name and passes a legal one', () => {
-    expect(nameProblem('ports')).toBeNull();
-    expect(nameProblem('has space')).toBe('bad name');
-    expect(nameProblem('..')).toBe('bad name');
+  it('creates a package in the view and names a bad name', () => {
+    expect(nameEdit(CREATE, 'ports', scene('src'))).toEqual({ edit: { kind: 'create-package', path: 'src/ports' } });
+    expect(nameEdit(CREATE, 'top', scene(''))).toEqual({ edit: { kind: 'create-package', path: 'top' } });
+    expect(nameEdit(CREATE, 'has space', scene('src'))).toEqual({ problem: 'bad name' });
+    expect(nameEdit(CREATE, '..', scene('src'))).toEqual({ problem: 'bad name' });
   });
 
   it('keeps the old extension when the typed file name has no dot', () => {
-    expect(fileRenameName('src/app/save.ts', 'writer')).toBe('writer.ts');
-    expect(fileRenameName('src/app/save.ts', 'writer.tsx')).toBe('writer.tsx');
-    expect(fileRenameName('src/app/Makefile', 'Build')).toBe('Build');
-    expect(fileRenameName('src/app/.env', 'local')).toBe('local');
+    expect(nameEdit(renameFile('src/app/save.ts'), 'writer', scene('src/app'))).toEqual({ edit: { kind: 'rename-file', from: 'src/app/save.ts', to: 'writer.ts' } });
+    expect(nameEdit(renameFile('src/app/save.ts'), 'writer.tsx', scene('src/app'))).toEqual({ edit: { kind: 'rename-file', from: 'src/app/save.ts', to: 'writer.tsx' } });
+    expect(nameEdit(renameFile('src/app/Makefile'), 'Build', scene('src/app'))).toEqual({ edit: { kind: 'rename-file', from: 'src/app/Makefile', to: 'Build' } });
+    expect(nameEdit(renameFile('src/app/.env'), 'local', scene('src/app'))).toEqual({ edit: { kind: 'rename-file', from: 'src/app/.env', to: 'local' } });
   });
 
-  it('places a renamed box beside the old one and a merge in the view or on a selected box', () => {
-    expect(siblingPath('src/infra', 'adapters')).toBe('src/adapters');
-    expect(siblingPath('infra', 'adapters')).toBe('adapters');
-    const selected = [
-      { id: 'src/app/read', name: 'read' },
-      { id: 'src/app/write', name: 'write' },
-    ];
-    expect(mergeTarget('read', 'src', selected)).toBe('src/app/read');
-    expect(mergeTarget('app', 'src', selected)).toBe('src/app');
-    expect(mergeTarget('app', '', selected)).toBe('app');
+  it('renames a box beside the old one, and keeping the name is no edit', () => {
+    expect(nameEdit(renamePackage('src/infra'), 'adapters', scene('src'))).toEqual({ edit: { kind: 'rename-package', from: 'src/infra', to: 'src/adapters' } });
+    expect(nameEdit(renamePackage('infra'), 'adapters', scene(''))).toEqual({ edit: { kind: 'rename-package', from: 'infra', to: 'adapters' } });
+    expect(nameEdit(renamePackage('src/infra'), 'infra', scene('src', ['src/infra']))).toEqual({ edit: null });
+    expect(nameEdit(renameFile('src/app/save.ts'), 'save', scene('src/app', ['src/app/save.ts']))).toEqual({ edit: null });
+    expect(nameEdit(renamePackage('src/infra'), 'has space', scene('src'))).toEqual({ problem: 'bad name' });
+  });
+
+  it('merges into the view or onto a selected box', () => {
+    expect(nameEdit(MERGE, 'read', scene('src', ['src/app/read'], SELECTED))).toEqual({
+      edit: { kind: 'merge-packages', packages: ['src/app/read', 'src/app/write'], into: 'src/app/read' },
+    });
+    expect(nameEdit(MERGE, 'app', scene('src', [], SELECTED))).toEqual({ edit: { kind: 'merge-packages', packages: ['src/app/read', 'src/app/write'], into: 'src/app' } });
+    expect(nameEdit(MERGE, 'app', scene('', [], SELECTED))).toEqual({ edit: { kind: 'merge-packages', packages: ['src/app/read', 'src/app/write'], into: 'app' } });
+    expect(nameEdit(MERGE, 'has space', scene('src', [], SELECTED))).toEqual({ problem: 'bad name' });
+    expect(nameEdit(MERGE, 'adapters', scene('src', ['src/adapters'], SELECTED))).toEqual({ problem: 'src/adapters already exists' });
   });
 
   it('names a taken path', () => {
-    expect(takenProblem('src/infra', new Set(['src/infra']))).toBe('src/infra already exists');
-    expect(takenProblem('src/ports', new Set(['src/infra']))).toBeNull();
+    expect(nameEdit(CREATE, 'infra', scene('src', ['src/infra']))).toEqual({ problem: 'src/infra already exists' });
+    expect(nameEdit(CREATE, 'ports', scene('src', ['src/infra']))).toEqual({ edit: { kind: 'create-package', path: 'src/ports' } });
+    expect(nameEdit(renamePackage('src/infra'), 'app', scene('src', ['src/app']))).toEqual({ problem: 'src/app already exists' });
   });
 
   it('checks a split in the pinned order', () => {
-    expect(splitProblem(form(['', ''], {}))).toBe('name at least two parts');
-    expect(splitProblem(form(['read', '  '], ALL_READ_WRITE))).toBe('name at least two parts');
-    expect(splitProblem(form(['has space', 'write'], ALL_READ_WRITE))).toBe('bad name');
-    expect(splitProblem(form(['read', 'read'], ALL_READ_WRITE))).toBe('duplicate part');
-    expect(splitProblem(form(['read', 'write'], { ...ALL_READ_WRITE, 'src/app/a.ts': '' }))).toBe('assign every file');
-    expect(splitProblem(form(['read', 'other'], ALL_READ_WRITE))).toBe('assign every file');
-    expect(splitProblem(form(['a.ts', 'write'], { ...ALL_READ_WRITE, 'src/app/a.test.ts': 'a.ts', 'src/app/a.ts': 'a.ts' }))).toBe('src/app/a.ts already exists');
-    expect(splitProblem(form(['read', 'write'], ALL_READ_WRITE, ['src/app/write']))).toBe('src/app/write already exists');
-    expect(splitProblem(form([' read ', 'write', ''], ALL_READ_WRITE))).toBeNull();
+    expect(splitEdit(form(['', ''], {}))).toEqual({ problem: 'name at least two parts' });
+    expect(splitEdit(form(['read', '  '], ALL_READ_WRITE))).toEqual({ problem: 'name at least two parts' });
+    expect(splitEdit(form(['has space', 'write'], ALL_READ_WRITE))).toEqual({ problem: 'bad name' });
+    expect(splitEdit(form(['read', 'read'], ALL_READ_WRITE))).toEqual({ problem: 'duplicate part' });
+    expect(splitEdit(form(['read', 'write'], { ...ALL_READ_WRITE, 'src/app/a.ts': '' }))).toEqual({ problem: 'assign every file' });
+    expect(splitEdit(form(['read', 'other'], ALL_READ_WRITE))).toEqual({ problem: 'assign every file' });
+    expect(splitEdit(form(['a.ts', 'write'], { ...ALL_READ_WRITE, 'src/app/a.test.ts': 'a.ts', 'src/app/a.ts': 'a.ts' }))).toEqual({ problem: 'src/app/a.ts already exists' });
+    expect(splitEdit(form(['read', 'write'], ALL_READ_WRITE, ['src/app/write']))).toEqual({ problem: 'src/app/write already exists' });
+    expect(splitEdit(form([' read ', 'write', ''], ALL_READ_WRITE))).toHaveProperty('edit.kind', 'split-package');
   });
 
   it('builds the parts in field order with their files in list order', () => {
-    expect(splitParts(form(['read', '', 'write', 'spare'], ALL_READ_WRITE))).toEqual([
-      { name: 'read', files: ['src/app/a.test.ts', 'src/app/a.ts'] },
-      { name: 'write', files: ['src/app/b.ts', 'src/app/save.ts'] },
-      { name: 'spare', files: [] },
-    ]);
+    expect(splitEdit(form(['read', '', 'write', 'spare'], ALL_READ_WRITE))).toEqual({
+      edit: {
+        kind: 'split-package',
+        package: 'src/app',
+        parts: [
+          { name: 'read', files: ['src/app/a.test.ts', 'src/app/a.ts'] },
+          { name: 'write', files: ['src/app/b.ts', 'src/app/save.ts'] },
+          { name: 'spare', files: [] },
+        ],
+      },
+    });
   });
 
   it('labels a file by its path under the package', () => {
-    expect(relativeTo('src/app', 'src/app/sub/a.ts')).toBe('sub/a.ts');
+    expect(splitRows('src/app', ['src/app/sub/a.ts', 'src/app/b.ts'])).toEqual([
+      { path: 'src/app/sub/a.ts', label: 'sub/a.ts' },
+      { path: 'src/app/b.ts', label: 'b.ts' },
+    ]);
   });
 });

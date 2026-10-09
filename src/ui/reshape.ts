@@ -1,11 +1,29 @@
-import { childPath, lastSegment, legalName, parentOf, splitPartPath, within } from '../domain/plan.ts';
+import { childPath, lastSegment, legalName, parentOf, splitPartPath, within, type PlanEdit } from '../domain/plan.ts';
 
 type NamedBox = { id: string; name: string };
 
+export type NameAsk = { mode: 'create' } | { mode: 'rename'; id: string; kind: 'package' | 'file' } | { mode: 'merge' };
+
+export type Scene = { at: string; taken: Set<string>; selected: NamedBox[] };
+
 export type SplitForm = { pkg: string; names: string[]; files: string[]; assigned: Record<string, string>; taken: Set<string> };
 
-export function nameProblem(name: string): string | null {
+export type Reshaped = { problem: string } | { edit: PlanEdit | null };
+
+function settled(problem: string | null, edit: PlanEdit): Reshaped {
+  return problem === null ? { edit } : { problem };
+}
+
+function nameProblem(name: string): string | null {
   return legalName(name) ? null : 'bad name';
+}
+
+function takenProblem(path: string, taken: Set<string>): string | null {
+  return taken.has(path) ? `${path} already exists` : null;
+}
+
+function freshProblem(name: string, path: string, taken: Set<string>): string | null {
+  return nameProblem(name) ?? takenProblem(path, taken);
 }
 
 function extensionOf(name: string): string {
@@ -13,21 +31,47 @@ function extensionOf(name: string): string {
   return dot <= 0 ? '' : name.slice(dot);
 }
 
-export function fileRenameName(file: string, typed: string): string {
+function fileRenameName(file: string, typed: string): string {
   if (typed.includes('.')) return typed;
   return `${typed}${extensionOf(lastSegment(file))}`;
 }
 
-export function siblingPath(id: string, name: string): string {
+function siblingPath(id: string, name: string): string {
   return childPath(parentOf(id), name);
 }
 
-export function mergeTarget(name: string, at: string, selected: NamedBox[]): string {
-  return selected.find(box => box.name === name)?.id ?? childPath(at, name);
+function created(name: string, scene: Scene): Reshaped {
+  const path = childPath(scene.at, name);
+  return settled(freshProblem(name, path, scene.taken), { kind: 'create-package', path });
 }
 
-export function takenProblem(path: string, taken: Set<string>): string | null {
-  return taken.has(path) ? `${path} already exists` : null;
+function renamedTo(id: string, name: string, scene: Scene, edit: PlanEdit): Reshaped {
+  const dest = siblingPath(id, name);
+  if (dest === id) return { edit: null };
+  return settled(freshProblem(name, dest, scene.taken), edit);
+}
+
+function renamed(id: string, kind: 'package' | 'file', typed: string, scene: Scene): Reshaped {
+  if (kind === 'package') return renamedTo(id, typed, scene, { kind: 'rename-package', from: id, to: siblingPath(id, typed) });
+  const name = fileRenameName(id, typed);
+  return renamedTo(id, name, scene, { kind: 'rename-file', from: id, to: name });
+}
+
+function mergeTarget(name: string, scene: Scene): string {
+  return scene.selected.find(box => box.name === name)?.id ?? childPath(scene.at, name);
+}
+
+function merged(name: string, scene: Scene): Reshaped {
+  const into = mergeTarget(name, scene);
+  const packages = scene.selected.map(box => box.id);
+  const clash = packages.includes(into) ? null : takenProblem(into, scene.taken);
+  return settled(nameProblem(name) ?? clash, { kind: 'merge-packages', packages, into });
+}
+
+export function nameEdit(ask: NameAsk, typed: string, scene: Scene): Reshaped {
+  if (ask.mode === 'create') return created(typed, scene);
+  if (ask.mode === 'merge') return merged(typed, scene);
+  return renamed(ask.id, ask.kind, typed, scene);
 }
 
 function namedParts(names: string[]): string[] {
@@ -50,15 +94,12 @@ function partsProblem(named: string[], form: SplitForm): string | null {
   return clash === undefined ? null : `${clash} already exists`;
 }
 
-export function splitProblem(form: SplitForm): string | null {
+export function splitEdit(form: SplitForm): Reshaped {
   const named = namedParts(form.names);
-  return namesProblem(named) ?? partsProblem(named, form);
+  const parts = named.map(name => ({ name, files: form.files.filter(file => form.assigned[file] === name) }));
+  return settled(namesProblem(named) ?? partsProblem(named, form), { kind: 'split-package', package: form.pkg, parts });
 }
 
-export function splitParts(form: SplitForm): { name: string; files: string[] }[] {
-  return namedParts(form.names).map(name => ({ name, files: form.files.filter(file => form.assigned[file] === name) }));
-}
-
-export function relativeTo(pkg: string, file: string): string {
-  return file.slice(pkg.length + 1);
+export function splitRows(pkg: string, files: string[]): { path: string; label: string }[] {
+  return files.map(path => ({ path, label: path.slice(pkg.length + 1) }));
 }
