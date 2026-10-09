@@ -99,6 +99,11 @@ export function splitPartPath(pkg: string, name: string): string {
   return `${pkg}/${name}`;
 }
 
+export function byStrings(a: string, b: string): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
 export function within(dir: string, path: string): boolean {
   return path === dir || path.startsWith(`${dir}/`);
 }
@@ -108,7 +113,7 @@ function pathOk(path: string): boolean {
 }
 
 export function moveDest(file: string, to: string): string {
-  const name = file.slice(file.lastIndexOf('/') + 1);
+  const name = lastSegment(file);
   return to === '.' ? name : `${to}/${name}`;
 }
 
@@ -150,21 +155,24 @@ function stringPair(raw: unknown): [string, string] | undefined {
   return typeof first === 'string' && typeof second === 'string' ? [first, second] : undefined;
 }
 
-function nonEmptyList(raw: unknown): unknown[] | undefined {
-  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+function listOfAtLeast(raw: unknown, min: number): unknown[] | undefined {
+  if (!Array.isArray(raw) || raw.length < min) return undefined;
   return raw;
 }
 
-function pairsFrom(raw: unknown): [string, string][] | undefined {
-  const list = nonEmptyList(raw);
-  if (list === undefined) return undefined;
-  const files: [string, string][] = [];
-  for (const pair of list) {
-    const parsed = stringPair(pair);
-    if (parsed === undefined) return undefined;
-    files.push(parsed);
+function everyRead<T>(items: unknown[] | undefined, read: (item: unknown) => T | undefined): T[] | undefined {
+  if (items === undefined) return undefined;
+  const values: T[] = [];
+  for (const item of items) {
+    const value = read(item);
+    if (value === undefined) return undefined;
+    values.push(value);
   }
-  return files;
+  return values;
+}
+
+function pairsFrom(raw: unknown): [string, string][] | undefined {
+  return everyRead(listOfAtLeast(raw, 1), stringPair);
 }
 
 function endpointsOf(rec: Record<string, unknown>): { from: string; to: string } | undefined {
@@ -254,13 +262,7 @@ function renameFileFrom(rec: Record<string, unknown>): PlanEdit | undefined {
 }
 
 function stringsFrom(raw: unknown): string[] | undefined {
-  if (!Array.isArray(raw)) return undefined;
-  const list: string[] = [];
-  for (const item of raw) {
-    if (typeof item !== 'string') return undefined;
-    list.push(item);
-  }
-  return list;
+  return everyRead(listOfAtLeast(raw, 0), stringOf);
 }
 
 function nestsAny(packages: string[], pkg: string, index: number): boolean {
@@ -297,21 +299,8 @@ function partFrom(raw: unknown): SplitPart | undefined {
   return partFields(rec);
 }
 
-function twoOrMore(raw: unknown): unknown[] | undefined {
-  if (!Array.isArray(raw) || raw.length < 2) return undefined;
-  return raw;
-}
-
 function partsFrom(raw: unknown): SplitPart[] | undefined {
-  const list = twoOrMore(raw);
-  if (list === undefined) return undefined;
-  const parts: SplitPart[] = [];
-  for (const item of list) {
-    const part = partFrom(item);
-    if (part === undefined) return undefined;
-    parts.push(part);
-  }
-  return parts;
+  return everyRead(listOfAtLeast(raw, 2), partFrom);
 }
 
 function distinct(values: string[]): boolean {
@@ -372,14 +361,7 @@ export function parsePlanEdit(raw: unknown): PlanEdit | undefined {
 }
 
 function editsFrom(raw: unknown): PlanEdit[] | undefined {
-  if (!Array.isArray(raw)) return undefined;
-  const edits: PlanEdit[] = [];
-  for (const item of raw) {
-    const edit = parsePlanEdit(item);
-    if (edit === undefined) return undefined;
-    edits.push(edit);
-  }
-  return edits;
+  return everyRead(listOfAtLeast(raw, 0), parsePlanEdit);
 }
 
 function nameOk(value: unknown): boolean {
@@ -473,7 +455,7 @@ function noteSentence(target: NoteTarget, text: string): string {
 }
 
 function listed(items: string[]): string {
-  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+  return [items.slice(0, -1).join(', '), ...items.slice(-1)].join(' and ');
 }
 
 function filesCount(count: number): string {

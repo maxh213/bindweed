@@ -1,4 +1,5 @@
 import {
+  byStrings,
   moveDest,
   parentOf,
   renamedFile,
@@ -292,9 +293,16 @@ function withoutSelfEdges(state: WalkState): WalkState {
   return { ...state, scan: { ...state.scan, edges: state.scan.edges.filter(edge => edge.from !== edge.to) } };
 }
 
+function applyFold(state: WalkState, file: string, into: string): WalkState {
+  return withoutSelfEdges(relocated(withoutFile(state, file), exactly(file, into)));
+}
+
+function markDeleted(state: WalkState, file: string, index: number): WalkState {
+  return { ...state, marks: { ...state.marks, deleted: new Map([...state.marks.deleted, [file, index]]) } };
+}
+
 function applyFate(state: WalkState, edit: FateEdit, index: number): WalkState {
-  if (edit.fate === 'fold') return withoutSelfEdges(relocated(withoutFile(state, edit.file), exactly(edit.file, edit.into)));
-  return { ...state, marks: { ...state.marks, deleted: new Map([...state.marks.deleted, [edit.file, index]]) } };
+  return edit.fate === 'fold' ? applyFold(state, edit.file, edit.into) : markDeleted(state, edit.file, index);
 }
 
 function pairListed(pairs: [string, string][], from: string, to: string): boolean {
@@ -361,7 +369,7 @@ function hiddenDirs(original: ScanResult, scan: ScanResult, declared: string[]):
 }
 
 function withList(scan: ScanResult, key: 'declared' | 'deleted' | 'hidden', list: string[]): ScanResult {
-  return list.length === 0 ? scan : { ...scan, [key]: list.sort() };
+  return list.length === 0 ? scan : { ...scan, [key]: list.toSorted(byStrings) };
 }
 
 function finished(original: ScanResult, state: WalkState): ScanResult {
@@ -371,7 +379,8 @@ function finished(original: ScanResult, state: WalkState): ScanResult {
 }
 
 function lastOf<T>(items: T[]): T {
-  return items[items.length - 1];
+  const [last] = items.slice(-1);
+  return last;
 }
 
 export function applyPlan(scan: ScanResult, edits: PlanEdit[]): ScanResult {
@@ -384,16 +393,21 @@ export function staleReasons(scan: ScanResult, edits: PlanEdit[]): (string | nul
 
 type Placed = { at: number; warning: PlanWarning };
 
+function holdsFiles(scan: ScanResult, dir: string): boolean {
+  return scan.files.some(file => within(dir, file.path));
+}
+
+function byMarkedPath(a: [string, number], b: [string, number]): number {
+  return byStrings(a[0], b[0]);
+}
+
 function emptyWarnings(state: WalkState): Placed[] {
-  const placed: Placed[] = [];
-  for (const [path, at] of [...state.marks.declared].sort()) {
-    if (!state.scan.files.some(file => within(path, file.path))) placed.push({ at, warning: { kind: 'empty-package', path } });
-  }
-  return placed;
+  const empty = [...state.marks.declared].filter(([path]) => !holdsFiles(state.scan, path));
+  return empty.toSorted(byMarkedPath).map(([path, at]) => ({ at, warning: { kind: 'empty-package', path } }));
 }
 
 function importersOf(scan: ScanResult, file: string): string[] {
-  return [...new Set(scan.edges.filter(edge => edge.to === file).map(edge => edge.from))].sort();
+  return [...new Set(scan.edges.filter(edge => edge.to === file).map(edge => edge.from))].sort(byStrings);
 }
 
 function deletedWarnings(state: WalkState): Placed[] {
@@ -422,7 +436,7 @@ function cycleWarnings(scan: ScanResult, states: WalkState[], cycles: CycleTexts
   const textsOf = cachedTexts(cycles);
   const stages = states.map(state => finished(scan, state));
   const before = textsOf(stages[0]);
-  const fresh = [...textsOf(lastOf(stages))].filter(text => !before.has(text)).sort();
+  const fresh = [...textsOf(lastOf(stages))].filter(text => !before.has(text)).sort(byStrings);
   return fresh.map(cycle => ({ at: firstStage(stages, textsOf, cycle) - 1, warning: { kind: 'added-cycle', cycle } }));
 }
 

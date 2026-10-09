@@ -1,4 +1,4 @@
-import { childPath, lastSegment, legalName, parentOf, within } from '../domain/plan.ts';
+import { childPath, lastSegment, legalName, parentOf, splitPartPath, within } from '../domain/plan.ts';
 
 type NamedBox = { id: string; name: string };
 
@@ -46,7 +46,7 @@ function partTaken(path: string, form: SplitForm): boolean {
 
 function partsProblem(named: string[], form: SplitForm): string | null {
   if (!form.files.every(file => named.includes(form.assigned[file] ?? ''))) return 'assign every file';
-  const clash = named.map(name => `${form.pkg}/${name}`).find(path => partTaken(path, form));
+  const clash = named.map(name => splitPartPath(form.pkg, name)).find(path => partTaken(path, form));
   return clash === undefined ? null : `${clash} already exists`;
 }
 

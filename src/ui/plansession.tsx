@@ -3,6 +3,7 @@ import { useEffect, useEffectEvent, useState, type ReactNode } from 'react';
 import type { GraphNode, GraphView, ViewEdge } from '../domain/graph.ts';
 import {
   addEdgeIndex,
+  byStrings,
   childPath,
   parentOf,
   withEdit,
@@ -287,7 +288,7 @@ async function filesUnder(token: string, dir: string, slug: string, fetcher: typ
   const view = await fetchGraph(token, dir, fetcher, { tests: true, external: false, plan: slug });
   if ('error' in view) return [];
   const nested = await Promise.all(view.nodes.filter(node => node.kind === 'package').map(node => filesUnder(token, node.id, slug, fetcher)));
-  return [...view.nodes.filter(node => node.kind === 'file').map(node => node.id), ...nested.flat()].sort();
+  return [...view.nodes.filter(node => node.kind === 'file').map(node => node.id), ...nested.flat()].sort(byStrings);
 }
 
 async function boxShown(token: string, id: string, query: { tests: boolean; external: boolean; plan: string | null }, fetcher: typeof fetch): Promise<boolean> {
@@ -501,20 +502,22 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     closeAsk();
   };
   const taken = (): Set<string> => nodeIdsOf(props.planned);
+  const freshNameProblem = (name: string, path: string): string | null => nameProblem(name) ?? takenProblem(path, taken());
   const createPackage = (name: string): void => {
     const path = childPath(props.at, name);
-    storeOr(nameProblem(name) ?? takenProblem(path, taken()), { kind: 'create-package', path });
+    storeOr(freshNameProblem(name, path), { kind: 'create-package', path });
+  };
+  const storeRename = (id: string, name: string, edit: PlanEdit): void => {
+    const dest = siblingPath(id, name);
+    if (dest === id) closeAsk();
+    else storeOr(freshNameProblem(name, dest), edit);
   };
   const renamePackage = (id: string, name: string): void => {
-    const to = siblingPath(id, name);
-    if (to === id) closeAsk();
-    else storeOr(nameProblem(name) ?? takenProblem(to, taken()), { kind: 'rename-package', from: id, to });
+    storeRename(id, name, { kind: 'rename-package', from: id, to: siblingPath(id, name) });
   };
   const renameFile = (id: string, typed: string): void => {
     const name = fileRenameName(id, typed);
-    const dest = siblingPath(id, name);
-    if (dest === id) closeAsk();
-    else storeOr(nameProblem(name) ?? takenProblem(dest, taken()), { kind: 'rename-file', from: id, to: name });
+    storeRename(id, name, { kind: 'rename-file', from: id, to: name });
   };
   const mergeSelected = (name: string): void => {
     const chosen = selectedPackages(props.nodes, props.selection);
@@ -625,17 +628,17 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
       <>
         <ReshapeDialogs nameAsk={nameAsk} splitAsk={splitAsk} error={askError} onName={submitName} onSplit={submitSplit} onCancel={closeAsk} />
         <PlanDialogs
-        newPlanOpen={newPlanOpen}
-        newPlanError={newPlanError}
-        deleteTarget={deleteTarget}
-        deleteName={roster.deleteName}
-        noteTarget={noteTarget}
-        onCreatePlan={name => void createPlan(name)}
-        onCancelNew={() => setNewPlanOpen(false)}
-        onDeletePlan={target => void removeCurrentPlan(target)}
-        onCancelDelete={() => setDeleteTarget(null)}
-        onAddNote={addNote}
-        onCancelNote={() => setNoteTarget(null)}
+          newPlanOpen={newPlanOpen}
+          newPlanError={newPlanError}
+          deleteTarget={deleteTarget}
+          deleteName={roster.deleteName}
+          noteTarget={noteTarget}
+          onCreatePlan={name => void createPlan(name)}
+          onCancelNew={() => setNewPlanOpen(false)}
+          onDeletePlan={target => void removeCurrentPlan(target)}
+          onCancelDelete={() => setDeleteTarget(null)}
+          onAddNote={addNote}
+          onCancelNote={() => setNoteTarget(null)}
         />
       </>
     ),

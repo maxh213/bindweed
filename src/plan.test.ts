@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   addEdgeIndex,
+  byStrings,
   childPath,
   freeSlug,
   lastSegment,
@@ -249,6 +250,10 @@ describe('package edits and file fates', () => {
     expect([renamedFile('src/app/save.ts', 'writer.ts'), renamedFile('save.ts', 'writer.ts')]).toEqual(['src/app/writer.ts', 'writer.ts']);
     expect(splitPartPath('src/app', 'read')).toBe('src/app/read');
     expect([within('src/app', 'src/app'), within('src/app', 'src/app/a.ts'), within('src/app', 'src/apple.ts')]).toEqual([true, true, false]);
+  });
+
+  it('orders strings by code unit, not by locale', () => {
+    expect(['b', 'a', 'B', 'a-b', 'a.b', 'a'].sort(byStrings)).toEqual(['B', 'a', 'a', 'a-b', 'a.b', 'b']);
   });
 });
 

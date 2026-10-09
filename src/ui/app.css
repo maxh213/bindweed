@@ -386,6 +386,7 @@ aside[aria-label='changes'] ol {
 
 .change {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 0.4rem;
   padding: 0.2rem 0.3rem;
@@ -414,10 +415,6 @@ aside[aria-label='changes'] ol {
 .change-actions {
   display: flex;
   gap: 0.4rem;
-}
-
-.change {
-  flex-wrap: wrap;
 }
 
 .changes-heading {
