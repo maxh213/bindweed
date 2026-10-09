@@ -16,7 +16,7 @@ import {
   type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent, type ReactNode } from 'react';
+import { useEffect, useEffectEvent, useMemo, useState, useSyncExternalStore, type DragEvent, type ReactNode } from 'react';
 import type { GraphNode, GraphView, ViewEdge } from '../domain/graph.ts';
 import { pointsUp, type PlacedBox } from '../domain/layout.ts';
 import { arrowColor, boxCenter, edgeLabel, edgeTitle, filesLabel, headOf, lineOf, plannedColor } from './draw.ts';
@@ -686,13 +686,10 @@ export function useCenterOn(spots: PlacedBox[]): (id: string) => void {
 
 function useFocusCentre(focus: FocusRequest | null, spots: PlacedBox[], nodesKey: string): void {
   const flow = useReactFlow();
-  const spotsRef = useRef(spots);
-  useEffect(() => {
-    spotsRef.current = spots;
-  }, [spots]);
+  const spotsNow = useEffectEvent(() => spots);
   useEffect(() => {
     if (focus === null) return;
-    const point = focusPoint(focus, spotsRef.current);
+    const point = focusPoint(focus, spotsNow());
     if (point !== null) void flow.setCenter(point.x, point.y);
   }, [focus, nodesKey, flow]);
 }

@@ -156,7 +156,9 @@ function ghostBoxes(shown: GraphNode[], other: PlanView, pins: Record<string, Pi
   const spots = arrange(layers, pins);
   const ghosts: GhostBoxInk[] = [];
   others.forEach((node, index) => {
-    const ghost = fileGhost(node, spots[index] as PlacedBox, shownIds.has(node.id));
+    const spot = spots[index];
+    if (spot === undefined) return;
+    const ghost = fileGhost(node, spot, shownIds.has(node.id));
     if (ghost !== null) ghosts.push(ghost);
   });
   return ghosts;

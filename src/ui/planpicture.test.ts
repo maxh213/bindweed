@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { GraphNode, GraphView } from '../domain/graph.ts';
+import * as layout from '../domain/layout.ts';
 import type { PlanEdit } from '../domain/plan.ts';
 import { arrowViewAt, entryTarget, planPicture } from './planpicture.ts';
 
@@ -139,6 +140,10 @@ describe('ghosts, notes, cuts and added arrows', () => {
     expect(picture({ nodes: [packageNode('src/app')], other: viewOf([packageNode('src/app')]) }).ink.ghosts).toEqual([]);
     expect(picture({ nodes: [fileNode('src/app/a.ts')], other: undefined }).ink.ghosts).toEqual([]);
     expect(picture({ nodes: [fileNode('src/app/a.ts')], other: { error: 'no such directory' } }).ink.ghosts).toEqual([]);
+    const partial = viewOf([fileNode('src/app/a.ts', 0, 0), fileNode('src/app/save.ts', 0, 1)]);
+    const spy = vi.spyOn(layout, 'arrange').mockReturnValue([{ id: 'src/app/a.ts', x: 0, y: 0 }]);
+    expect(picture({ nodes: [], other: partial }).ink.ghosts).toEqual([{ id: 'src/app/a.ts', name: 'a.ts', x: 0, y: 0 }]);
+    spy.mockRestore();
   });
 
   it('collects the non-stale notes and cuts and skips stale edits', () => {

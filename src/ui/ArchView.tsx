@@ -261,7 +261,9 @@ function ArchPane(props: Readonly<ArchViewProps & { slug: string | null }>) {
   const plannedShown = showingPlanned(shown, slug);
   const state = plannedShown ? plannedState : nowState;
   const otherState = plannedShown ? nowState : plannedState;
-  const ids = useMemo(() => idsOf(state), [state]);
+  const spots = useMemo(() => spotsOf(state, pinsOf(layoutQuery.data, props.at)), [state, layoutQuery.data, props.at]);
+  const pins = pinsOf(layoutQuery.data, props.at);
+  const ids = idsOf(state);
   const chosen = chosenId(picked, armed, ids);
   const detailPlan = detailPlanOf(shown, slug);
   const detailQuery = useQuery({
@@ -273,8 +275,6 @@ function ArchPane(props: Readonly<ArchViewProps & { slug: string | null }>) {
   useEffect(() => {
     keptDetail = body;
   }, [body]);
-  const pins = pinsOf(layoutQuery.data, props.at);
-  const spots = useMemo(() => spotsOf(state, pins), [state, pins]);
   const center = useCenterOn(spots);
   const pickNode = (id: string): void => {
     setFocus({ kind: 'node', id });

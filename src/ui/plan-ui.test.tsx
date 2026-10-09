@@ -2,6 +2,7 @@ import { JSDOM } from 'jsdom';
 import { createElement, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { edgePairs, graphView, nodeDetail, type GraphView } from '../domain/graph.ts';
 import { emptyLayout, parseLayout, type LayoutDoc } from '../domain/layout.ts';
 import { freeSlug, planNameFrom, PLAN_SLUG_PATTERN, parsePlan, slugOf, summarisePlan, type PlanDoc, type PlanEdit, type PlanSummary } from '../domain/plan.ts';
@@ -220,6 +221,19 @@ const TREE = {
 };
 
 type Hit = { status: number; body: unknown };
+
+const graphFields = z.object({
+  stale: z.array(z.string().nullable()).optional(),
+  nodes: z.array(z.object({ id: z.string(), files: z.number().optional() })),
+});
+
+function readGraph(body: unknown): z.infer<typeof graphFields> {
+  return graphFields.parse(body);
+}
+
+function bodyRecord(body: unknown): Record<string, unknown> {
+  return z.record(z.string(), z.unknown()).parse(body);
+}
 
 let scan = structuredClone(BASE_SCAN);
 const plans = new Map<string, PlanDoc>();
@@ -708,7 +722,8 @@ describe('the plan canvas over a real server', () => {
 
   async function serverDoc(): Promise<{ edits: PlanEdit[]; redo: PlanEdit[] }> {
     const res = await api(token, 'GET', '/api/plans/split-app');
-    const doc = res.body as { edits: PlanEdit[]; redo: PlanEdit[] };
+    const doc = parsePlan(res.body);
+    if (doc === undefined) throw new Error('not a plan');
     return { edits: doc.edits, redo: doc.redo };
   }
 
@@ -813,10 +828,9 @@ describe('the plan canvas over a real server', () => {
   }
 
   function rootPins(body: unknown): Record<string, { x: number; y: number }> {
-    const views = (body as { views: Record<string, Record<string, { x: number; y: number }> | undefined> }).views;
-    const pins = views[''];
-    if (pins === undefined) return {};
-    return pins;
+    const doc = parseLayout(body);
+    if (doc === undefined) return {};
+    return doc.views[''] ?? {};
   }
 
   function pinNumber(pins: Record<string, { x: number; y: number }>, id: string, axis: 'x' | 'y'): unknown {
@@ -1080,7 +1094,7 @@ describe('the plan canvas over a real server', () => {
     await waitForText(() => expect(entrySentences()).toEqual(['Move src/app/save.ts to .']));
     await waitForDoc([{ kind: 'move-file', file: 'src/app/save.ts', to: '.' }]);
     const rooted = await api(token, 'GET', '/api/graph?at=&plan=split-app');
-    expect((rooted.body as { stale: unknown }).stale).toEqual([null]);
+    expect(readGraph(rooted.body).stale).toEqual([null]);
     await click(entryRow('Move src/app/save.ts to .').querySelector('.change-sentence') as Element);
     await waitForText(() => {
       expect(window.location.hash).toBe('#at=&plan=split-app');
@@ -1349,7 +1363,7 @@ describe('the plan canvas over a real server', () => {
     expect(boxOf('src/app').getAttribute('data-cycle')).toBe('true');
     expect(boxOf('src/infra').getAttribute('data-cycle')).toBe('true');
     const graph = await api(token, 'GET', '/api/graph?at=src&plan=split-app');
-    expect((graph.body as { stale: (string | null)[] }).stale).toEqual([null, null, null, 'no such box src/infra/save.ts']);
+    expect(readGraph(graph.body).stale).toEqual([null, null, null, 'no such box src/infra/save.ts']);
     await waitForDoc([CUT, ADD, NOTE, { kind: 'note', target: { node: 'src/infra/save.ts' }, text: 'keep the writer here' }]);
     await click(staleRow.querySelector('.change-sentence') as Element);
     await settle();
@@ -1405,20 +1419,19 @@ describe('the plan canvas over a real server', () => {
     await waitForText(() => expect(staleAttr(entryAt(0))).toBe('true'));
     expect(reasonText(entryAt(0))).toBe('no such file src/app/save.ts');
     const planned = await api(token, 'GET', '/api/graph?at=src&plan=split-app');
-    const plannedBody = planned.body as { stale: (string | null)[]; nodes: { id: string; files?: number }[] };
+    const plannedBody = readGraph(planned.body);
     expect(plannedBody.stale).toEqual(['no such file src/app/save.ts']);
     expect(filesOf(plannedBody.nodes, 'src/app')).toBe(2);
     expect(filesOf(plannedBody.nodes, 'src/infra')).toBe(2);
     const plain = await api(token, 'GET', '/api/graph?at=src');
-    expect('stale' in (plain.body as Record<string, unknown>)).toBe(false);
-    const nodes = (plain.body as { nodes: { id: string; files?: number }[] }).nodes;
-    expect(filesOf(nodes, 'src/app')).toBe(2);
+    expect(bodyRecord(plain.body)).not.toHaveProperty('stale');
+    expect(filesOf(readGraph(plain.body).nodes, 'src/app')).toBe(2);
     await waitForDoc([MOVE]);
     resetWorld();
     await click(button('Rescan'));
     await waitForText(() => expect(staleAttr(entryAt(0))).toBeNull());
     const restored = await api(token, 'GET', '/api/graph?at=src&plan=split-app');
-    const restoredBody = restored.body as { stale: (string | null)[]; nodes: { id: string; files?: number }[] };
+    const restoredBody = readGraph(restored.body);
     expect(restoredBody.stale).toEqual([null]);
     expect(filesOf(restoredBody.nodes, 'src/app')).toBe(2);
     expect(filesOf(restoredBody.nodes, 'src/infra')).toBe(3);

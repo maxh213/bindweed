@@ -26,7 +26,9 @@ function docOf(edits: PlanEdit[], redo: PlanEdit[] = []): PlanDoc {
 }
 
 function goodDoc(): Record<string, unknown> {
-  return JSON.parse(JSON.stringify(docOf([]))) as Record<string, unknown>;
+  const raw: unknown = JSON.parse(JSON.stringify(docOf([])));
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new Error('not a document');
+  return Object.fromEntries(Object.entries(raw));
 }
 
 describe('slugOf', () => {

@@ -5,6 +5,8 @@ import { request, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { z } from 'zod';
+import { parsePlan, type PlanDoc } from './domain/plan.ts';
 import { prepareBindweed } from './repo.ts';
 import { bindApp, listenErrorMessage } from './serve.ts';
 
@@ -83,6 +85,57 @@ function json(res: Hit): unknown {
   return JSON.parse(res.body.toString());
 }
 
+const loose = z.record(z.string(), z.unknown());
+
+const graphJson = z.object({
+  nodes: z.array(loose),
+  edges: z.array(loose),
+  stale: z.array(z.string().nullable()).optional(),
+});
+
+function graphOf(raw: unknown): z.infer<typeof graphJson> {
+  return graphJson.parse(raw);
+}
+
+function planOf(raw: unknown): PlanDoc {
+  const doc = parsePlan(raw);
+  if (doc === undefined) throw new Error('not a plan');
+  return doc;
+}
+
+function withoutStale(raw: unknown): Record<string, unknown> {
+  const rec = { ...loose.parse(raw) };
+  delete rec.stale;
+  return rec;
+}
+
+function sortedEntryPaths(raw: unknown): string[] {
+  const entries = z.object({ entries: z.array(z.object({ path: z.string() })) }).parse(raw).entries;
+  return entries.map(entry => entry.path).sort();
+}
+
+function nodeOf(nodes: Record<string, unknown>[], id: string): Record<string, unknown> {
+  const node = nodes.find(item => item.id === id);
+  if (node === undefined) throw new Error(id);
+  return node;
+}
+
+function edgeOf(edges: Record<string, unknown>[], from: string, to: string): Record<string, unknown> {
+  const edge = edges.find(item => item.from === from && item.to === to);
+  if (edge === undefined) throw new Error(`${from} ${to}`);
+  return edge;
+}
+
+function placeLabel(node: Record<string, unknown>): string {
+  return `${String(node.id)}:${String(node.row)}:${String(node.order)}`;
+}
+
+function nodeAt(nodes: Record<string, unknown>[], index: number): Record<string, unknown> {
+  const node = nodes[index];
+  if (node === undefined) throw new Error(String(index));
+  return node;
+}
+
 const NO_PLAN = { error: 'no such plan' };
 const NOT_FOUND = { error: 'not found' };
 const NO_TOKEN = { error: 'missing or wrong token' };
@@ -127,8 +180,7 @@ describe('the plans api over the layered fixture', () => {
   });
 
   it('keeps the old routes answering', async () => {
-    const tree = json(await hit(port, 'GET', '/api/tree', bearer)) as { entries: { path: string }[] };
-    expect(tree.entries.map(entry => entry.path).sort()).toEqual(['notes', 'src', 'tsconfig.json']);
+    expect(sortedEntryPaths(json(await hit(port, 'GET', '/api/tree', bearer)))).toEqual(['notes', 'src', 'tsconfig.json']);
     expect(json(await hit(port, 'GET', '/api/file?path=src/domain/model.ts', bearer))).toEqual({
       path: 'src/domain/model.ts',
       text: 'export interface Model { id: number }\n',
@@ -146,17 +198,15 @@ describe('the plans api over the layered fixture', () => {
     expect(nested.status).toBe(404);
     expect(json(nested)).toEqual(NOT_FOUND);
     expect(await planFiles(root)).toHaveLength(0);
-    const rescan = json(await hit(port, 'POST', '/api/rescan', bearer)) as { files: number; ms: number };
-    expect(rescan.files).toBe(8);
-    expect(typeof rescan.ms).toBe('number');
+    expect(json(await hit(port, 'POST', '/api/rescan', bearer))).toEqual({ files: 8, ms: expect.any(Number) });
   });
 
   it('creates a plan, reads it back, lists it, and leaves the tree clean', async () => {
     const created = await hit(port, 'POST', '/api/plans', bearer, JSON.stringify({ name: 'Split app' }));
     expect(created.status).toBe(201);
-    const doc = json(created) as Record<string, unknown>;
+    const doc = planOf(json(created));
     expect(doc).toMatchObject({ version: 1, name: 'Split app', slug: 'split-app', baseCommit: head, edits: [], redo: [] });
-    expect(String(doc.createdAt)).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    expect(doc.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
     const fetched = await hit(port, 'GET', '/api/plans/split-app', bearer);
     expect(json(fetched)).toEqual(doc);
     const listed = await hit(port, 'GET', '/api/plans', bearer);
@@ -171,36 +221,33 @@ describe('the plans api over the layered fixture', () => {
   it('clashes, truncates with a trailing dash, and frees deleted slugs', async () => {
     const second = await hit(port, 'POST', '/api/plans', bearer, JSON.stringify({ name: 'Split app' }));
     const third = await hit(port, 'POST', '/api/plans', bearer, JSON.stringify({ name: 'Split app' }));
-    expect((json(second) as { slug: string }).slug).toBe('split-app-2');
-    expect((json(third) as { slug: string }).slug).toBe('split-app-3');
-    expect((json(second) as { name: string }).name).toBe('Split app');
+    expect(json(second)).toMatchObject({ slug: 'split-app-2', name: 'Split app' });
+    expect(json(third)).toMatchObject({ slug: 'split-app-3' });
     const removed = await hit(port, 'DELETE', '/api/plans/split-app', bearer);
     expect(removed.status).toBe(200);
     expect(json(removed)).toEqual({ ok: true });
     expect(await planFiles(root)).not.toContain('split-app.json');
     const again = await hit(port, 'POST', '/api/plans', bearer, JSON.stringify({ name: 'Split app' }));
-    expect((json(again) as { slug: string }).slug).toBe('split-app');
+    expect(json(again)).toMatchObject({ slug: 'split-app' });
     const longName = { name: 'aaaaaaaaaa aaaaaaaaaa aaaaaaaaaa aaaaaa x' };
     const longOne = await hit(port, 'POST', '/api/plans', bearer, JSON.stringify(longName));
     const slugOne = 'aaaaaaaaaa-aaaaaaaaaa-aaaaaaaaaa-aaaaaa-';
-    expect((json(longOne) as { slug: string }).slug).toBe(slugOne);
+    expect(json(longOne)).toMatchObject({ slug: slugOne });
     const longDoc = await hit(port, 'GET', `/api/plans/${slugOne}`, bearer);
     expect(json(longDoc)).toEqual(json(longOne));
     const longGraph = await hit(port, 'GET', `/api/graph?at=src&plan=${slugOne}`, bearer);
     const plainGraph = await hit(port, 'GET', '/api/graph?at=src', bearer);
     expect(longGraph.status).toBe(200);
-    const { stale, ...rest } = json(longGraph) as Record<string, unknown>;
-    expect(stale).toEqual([]);
-    expect(rest).toEqual(json(plainGraph));
+    expect(loose.parse(json(longGraph)).stale).toEqual([]);
+    expect(withoutStale(json(longGraph))).toEqual(json(plainGraph));
     const longTwo = await hit(port, 'POST', '/api/plans', bearer, JSON.stringify(longName));
     const slugTwo = 'aaaaaaaaaa-aaaaaaaaaa-aaaaaaaaaa-aaaaaa--2';
-    expect((json(longTwo) as { slug: string }).slug).toBe(slugTwo);
+    expect(json(longTwo)).toMatchObject({ slug: slugTwo });
     expect(json(await hit(port, 'GET', `/api/plans/${slugTwo}`, bearer))).toEqual(json(longTwo));
     const clashGraph = await hit(port, 'GET', `/api/graph?at=src&plan=${slugTwo}`, bearer);
     expect(clashGraph.status).toBe(200);
-    const { stale: clashStale, ...clashRest } = json(clashGraph) as Record<string, unknown>;
-    expect(clashStale).toEqual([]);
-    expect(clashRest).toEqual(json(plainGraph));
+    expect(loose.parse(json(clashGraph)).stale).toEqual([]);
+    expect(withoutStale(json(clashGraph))).toEqual(json(plainGraph));
     const lodz = await hit(port, 'POST', '/api/plans', bearer, JSON.stringify({ name: 'Łódź plan' }));
     expect(json(lodz)).toMatchObject({ slug: 'd-plan', name: 'Łódź plan' });
     const hello = await hit(port, 'POST', '/api/plans', bearer, JSON.stringify({ name: 'Hello!!!' }));
@@ -258,13 +305,14 @@ describe('the plans api over the layered fixture', () => {
     };
     expect(json(await hit(port, 'GET', '/api/graph?at=src', bearer))).toEqual(expected);
     expect(json(await hit(port, 'GET', '/api/graph?at=src&plan=', bearer))).toEqual(expected);
-    const rootView = json(await hit(port, 'GET', '/api/graph', bearer)) as { nodes: Record<string, unknown>[] };
+    const rootView = graphOf(json(await hit(port, 'GET', '/api/graph', bearer)));
     expect(rootView.nodes).toHaveLength(1);
-    expect(rootView.nodes[0]).toMatchObject({ id: 'src', files: 7, ca: 0, ce: 0, i: '–', a: '0.29', d: '–' });
-    expect(rootView.nodes[0]).not.toHaveProperty('zone');
-    expect(rootView.nodes[0]).not.toHaveProperty('crap');
-    expect(rootView.nodes[0]).not.toHaveProperty('coverage');
-    expect(rootView.nodes[0]).not.toHaveProperty('mutants');
+    const rootNode = nodeAt(rootView.nodes, 0);
+    expect(rootNode).toMatchObject({ id: 'src', files: 7, ca: 0, ce: 0, i: '–', a: '0.29', d: '–' });
+    expect(rootNode).not.toHaveProperty('zone');
+    expect(rootNode).not.toHaveProperty('crap');
+    expect(rootNode).not.toHaveProperty('coverage');
+    expect(rootNode).not.toHaveProperty('mutants');
   });
 
   it('serves the saved plan after a restart with a new token', async () => {
@@ -273,9 +321,7 @@ describe('the plans api over the layered fixture', () => {
     app = await boundOn(root, port);
     bearer = { Authorization: `Bearer ${app.token}` };
     expect(app.token).not.toBe(previous);
-    const fetched = json(await hit(port, 'GET', '/api/plans/split-app', bearer)) as { slug: string; edits: unknown[] };
-    expect(fetched.slug).toBe('split-app');
-    expect(fetched.edits).toEqual([]);
+    expect(json(await hit(port, 'GET', '/api/plans/split-app', bearer))).toMatchObject({ slug: 'split-app', edits: [] });
   });
 });
 
@@ -340,87 +386,88 @@ describe('plan documents and the planned graph', () => {
       ],
       stale: [null, null, null],
     });
-    const drilled = json(await hit(port, 'GET', '/api/graph?at=src/infra&plan=split-app', bearer)) as { nodes: Record<string, unknown>[]; stale: unknown[]; edges: unknown[] };
-    expect(drilled.nodes.map(node => `${node.id}:${node.row}:${node.order}`)).toEqual(['src/infra/db.ts:0:0', 'src/infra/repo.ts:0:1', 'src/infra/save.ts:0:2']);
+    const drilled = graphOf(json(await hit(port, 'GET', '/api/graph?at=src/infra&plan=split-app', bearer)));
+    expect(drilled.nodes.map(placeLabel)).toEqual(['src/infra/db.ts:0:0', 'src/infra/repo.ts:0:1', 'src/infra/save.ts:0:2']);
     expect(drilled.edges).toEqual([]);
-    expect(drilled.nodes[2]).toMatchObject({ ca: 0, ce: 0, i: '–', a: '0.00', d: '–' });
-    expect(drilled.nodes[2]).not.toHaveProperty('zone');
+    const movedFile = nodeAt(drilled.nodes, 2);
+    expect(movedFile).toMatchObject({ ca: 0, ce: 0, i: '–', a: '0.00', d: '–' });
+    expect(movedFile).not.toHaveProperty('zone');
     expect(drilled.stale).toEqual([null, null, null]);
     const missing = await hit(port, 'GET', '/api/file?path=src/infra/save.ts', bearer);
     expect(missing.status).toBe(404);
     expect(json(missing)).toEqual({ error: 'no such file' });
-    const detail = json(await hit(port, 'GET', '/api/detail?id=src/domain&at=src&plan=split-app', bearer)) as Record<string, unknown>;
+    const detail = loose.parse(json(await hit(port, 'GET', '/api/detail?id=src/domain&at=src&plan=split-app', bearer)));
     expect(detail).toMatchObject({ files: 2, abstract: true, ca: 2, ce: 0, i: '0.00', a: '1.00', d: '0.00', zone: 'healthy', imports: [] });
     expect(detail).not.toHaveProperty('stale');
     expect(detail.importedBy).toEqual([{ id: 'src/infra', name: 'infra', kind: 'package', runtime: 2, type: 0, heritage: 1 }]);
-    const plain = json(await hit(port, 'GET', '/api/detail?id=src/domain&at=src', bearer)) as Record<string, unknown>;
-    expect(plain.ca).toBe(3);
-    expect(plain.importedBy).toEqual([
-      { id: 'src/app', name: 'app', kind: 'package', runtime: 0, type: 1, heritage: 0 },
-      { id: 'src/infra', name: 'infra', kind: 'package', runtime: 2, type: 0, heritage: 1 },
-    ]);
+    expect(loose.parse(json(await hit(port, 'GET', '/api/detail?id=src/domain&at=src', bearer)))).toMatchObject({
+      ca: 3,
+      importedBy: [
+        { id: 'src/app', name: 'app', kind: 'package', runtime: 0, type: 1, heritage: 0 },
+        { id: 'src/infra', name: 'infra', kind: 'package', runtime: 2, type: 0, heritage: 1 },
+      ],
+    });
     expect(git(root, 'status', '--porcelain')).toBe('');
   });
 
   it('keeps both directions of a moved file’s imports', async () => {
     await putDoc([{ kind: 'move-file', file: 'src/app/b.ts', to: 'src/infra' }]);
-    const detail = json(await hit(port, 'GET', '/api/detail?id=src/infra/b.ts&at=src/infra&plan=split-app', bearer)) as Record<string, unknown>;
-    expect(detail.path).toBe('src/infra/b.ts');
-    expect(detail.imports).toEqual([
-      { id: 'src/app/a.ts', name: 'a.ts', kind: 'file', runtime: 1, type: 0, heritage: 0 },
-      { id: 'src/infra/db.ts', name: 'db.ts', kind: 'file', runtime: 1, type: 0, heritage: 0 },
-    ]);
-    expect(detail.importedBy).toEqual([{ id: 'src/app/a.ts', name: 'a.ts', kind: 'file', runtime: 1, type: 0, heritage: 0 }]);
-    const graph = json(await hit(port, 'GET', '/api/graph?at=src&plan=split-app', bearer)) as { edges: Record<string, unknown>[]; nodes: Record<string, unknown>[] };
-    expect(graph.edges.find(edge => edge.from === 'src/infra' && edge.to === 'src/app')).toMatchObject({ runtime: 1, type: 0, cycle: true });
-    expect(graph.edges.find(edge => edge.from === 'src/infra' && edge.to === 'src/app')).not.toHaveProperty('planned');
-    expect(graph.edges.find(edge => edge.from === 'src/app' && edge.to === 'src/infra')).toMatchObject({ runtime: 2, type: 1, cycle: true });
-    expect(graph.nodes.find(node => node.id === 'src/app')).toMatchObject({ files: 2 });
-    expect(graph.nodes.find(node => node.id === 'src/infra')).toMatchObject({ files: 3 });
+    expect(loose.parse(json(await hit(port, 'GET', '/api/detail?id=src/infra/b.ts&at=src/infra&plan=split-app', bearer)))).toMatchObject({
+      path: 'src/infra/b.ts',
+      imports: [
+        { id: 'src/app/a.ts', name: 'a.ts', kind: 'file', runtime: 1, type: 0, heritage: 0 },
+        { id: 'src/infra/db.ts', name: 'db.ts', kind: 'file', runtime: 1, type: 0, heritage: 0 },
+      ],
+      importedBy: [{ id: 'src/app/a.ts', name: 'a.ts', kind: 'file', runtime: 1, type: 0, heritage: 0 }],
+    });
+    const graph = graphOf(json(await hit(port, 'GET', '/api/graph?at=src&plan=split-app', bearer)));
+    const back = edgeOf(graph.edges, 'src/infra', 'src/app');
+    expect(back).toMatchObject({ runtime: 1, type: 0, cycle: true });
+    expect(back).not.toHaveProperty('planned');
+    expect(edgeOf(graph.edges, 'src/app', 'src/infra')).toMatchObject({ runtime: 2, type: 1, cycle: true });
+    expect(nodeOf(graph.nodes, 'src/app')).toMatchObject({ files: 2 });
+    expect(nodeOf(graph.nodes, 'src/infra')).toMatchObject({ files: 3 });
   });
 
   it('cuts only the listed pairs', async () => {
     await putDoc([{ kind: 'cut-edge', from: 'src/app', to: 'src/infra', files: [['src/app/a.ts', 'src/infra/db.ts']] }]);
-    const graph = json(await hit(port, 'GET', '/api/graph?at=src&plan=split-app', bearer)) as { edges: Record<string, unknown>[] };
-    expect(graph.edges.find(edge => edge.from === 'src/app' && edge.to === 'src/infra')).toMatchObject({ runtime: 1, type: 1 });
-    expect(graph.edges.find(edge => edge.from === 'src/app' && edge.to === 'src/domain')).toMatchObject({ runtime: 0, type: 1 });
+    const graph = graphOf(json(await hit(port, 'GET', '/api/graph?at=src&plan=split-app', bearer)));
+    expect(edgeOf(graph.edges, 'src/app', 'src/infra')).toMatchObject({ runtime: 1, type: 1 });
+    expect(edgeOf(graph.edges, 'src/app', 'src/domain')).toMatchObject({ runtime: 0, type: 1 });
   });
 
   it('marks a stale move and keeps it in the document, across a rescan', async () => {
     await putDoc([{ kind: 'note', target: { node: 'src/domain' }, text: 'pull an interface out here' }]);
-    const noted = json(await hit(port, 'GET', '/api/graph?at=src&plan=split-app', bearer)) as Record<string, unknown>;
-    const { stale: noteStale, ...noteRest } = noted;
-    expect(noteStale).toEqual([null]);
-    expect(noteRest).toEqual(json(await hit(port, 'GET', '/api/graph?at=src', bearer)));
+    const noted = json(await hit(port, 'GET', '/api/graph?at=src&plan=split-app', bearer));
+    expect(loose.parse(noted).stale).toEqual([null]);
+    expect(withoutStale(noted)).toEqual(json(await hit(port, 'GET', '/api/graph?at=src', bearer)));
     await putDoc([{ kind: 'move-file', file: 'src/app/missing.ts', to: 'src/infra' }]);
-    const graph = json(await hit(port, 'GET', '/api/graph?at=src&plan=split-app', bearer)) as Record<string, unknown>;
-    const { stale, ...rest } = graph;
-    expect(stale).toEqual(['no such file src/app/missing.ts']);
-    expect(rest).toEqual(json(await hit(port, 'GET', '/api/graph?at=src', bearer)));
-    const doc = json(await hit(port, 'GET', '/api/plans/split-app', bearer)) as Record<string, unknown>;
+    const graph = json(await hit(port, 'GET', '/api/graph?at=src&plan=split-app', bearer));
+    expect(loose.parse(graph).stale).toEqual(['no such file src/app/missing.ts']);
+    expect(withoutStale(graph)).toEqual(json(await hit(port, 'GET', '/api/graph?at=src', bearer)));
+    const doc = loose.parse(json(await hit(port, 'GET', '/api/plans/split-app', bearer)));
     expect(doc.edits).toEqual([{ kind: 'move-file', file: 'src/app/missing.ts', to: 'src/infra' }]);
     expect(doc).not.toHaveProperty('stale');
     await hit(port, 'POST', '/api/rescan', bearer);
-    const after = json(await hit(port, 'GET', '/api/plans/split-app', bearer)) as Record<string, unknown>;
+    const after = loose.parse(json(await hit(port, 'GET', '/api/plans/split-app', bearer)));
     expect(after.edits).toEqual(doc.edits);
     expect(after).not.toHaveProperty('stale');
   });
 
   it('treats a hidden test file as present and a fileless directory as missing', async () => {
     await putDoc([{ kind: 'move-file', file: 'src/app/a.test.ts', to: 'src/infra' }]);
-    const graph = json(await hit(port, 'GET', '/api/graph?at=src&plan=split-app', bearer)) as Record<string, unknown>;
+    const graph = graphOf(json(await hit(port, 'GET', '/api/graph?at=src&plan=split-app', bearer)));
     expect(graph.stale).toEqual([null]);
-    const withTests = json(await hit(port, 'GET', '/api/graph?at=src&tests=1&plan=split-app', bearer)) as { nodes: Record<string, unknown>[]; stale: unknown[] };
+    const withTests = graphOf(json(await hit(port, 'GET', '/api/graph?at=src&tests=1&plan=split-app', bearer)));
     expect(withTests.stale).toEqual([null]);
-    expect(withTests.nodes.find(node => node.id === 'src/app')).toMatchObject({ files: 3 });
-    expect(withTests.nodes.find(node => node.id === 'src/infra')).toMatchObject({ files: 3 });
+    expect(nodeOf(withTests.nodes, 'src/app')).toMatchObject({ files: 3 });
+    expect(nodeOf(withTests.nodes, 'src/infra')).toMatchObject({ files: 3 });
     await putDoc([{ kind: 'move-file', file: 'src/app/save.ts', to: 'notes' }]);
-    const notes = json(await hit(port, 'GET', '/api/graph?at=src&plan=split-app', bearer)) as Record<string, unknown>;
+    const notes = graphOf(json(await hit(port, 'GET', '/api/graph?at=src&plan=split-app', bearer)));
     expect(notes.stale).toEqual(['no such directory notes']);
-    const nodes = (notes as { nodes: Record<string, unknown>[] }).nodes;
-    expect(nodes.find(node => node.id === 'src/app')).toMatchObject({ files: 3 });
-    expect(nodes.find(node => node.id === 'src/infra')).toMatchObject({ files: 2 });
-    const doc = json(await hit(port, 'GET', '/api/plans/split-app', bearer)) as Record<string, unknown>;
+    expect(nodeOf(notes.nodes, 'src/app')).toMatchObject({ files: 3 });
+    expect(nodeOf(notes.nodes, 'src/infra')).toMatchObject({ files: 2 });
+    const doc = loose.parse(json(await hit(port, 'GET', '/api/plans/split-app', bearer)));
     expect(doc.edits).toEqual([{ kind: 'move-file', file: 'src/app/save.ts', to: 'notes' }]);
     expect(doc).not.toHaveProperty('stale');
   });
@@ -471,21 +518,24 @@ describe('plan documents and the planned graph', () => {
 
   it('lists pairs behind an arrow for the planned graph, with flags', async () => {
     await putDoc([]);
-    const plain = json(await hit(port, 'GET', '/api/pairs?from=src/app&to=src/infra&at=src', bearer)) as { pairs: [string, string][] };
-    expect(plain.pairs).toEqual([
-      ['src/app/a.ts', 'src/infra/db.ts'],
-      ['src/app/a.ts', 'src/infra/repo.ts'],
-      ['src/app/b.ts', 'src/infra/db.ts'],
-    ]);
-    const typed = json(await hit(port, 'GET', '/api/pairs?from=src/app&to=src/domain&at=src', bearer)) as { pairs: [string, string][] };
-    expect(typed.pairs).toEqual([['src/app/a.ts', 'src/domain/model.ts']]);
-    const external = json(await hit(port, 'GET', '/api/pairs?from=src/infra&to=react&at=src&external=1', bearer)) as { pairs: [string, string][] };
-    expect(external.pairs).toEqual([['src/infra/repo.ts', 'react']]);
-    const noExternal = json(await hit(port, 'GET', '/api/pairs?from=src/infra&to=react&at=src', bearer)) as { pairs: [string, string][] };
-    expect(noExternal.pairs).toEqual([]);
+    expect(json(await hit(port, 'GET', '/api/pairs?from=src/app&to=src/infra&at=src', bearer))).toEqual({
+      pairs: [
+        ['src/app/a.ts', 'src/infra/db.ts'],
+        ['src/app/a.ts', 'src/infra/repo.ts'],
+        ['src/app/b.ts', 'src/infra/db.ts'],
+      ],
+    });
+    expect(json(await hit(port, 'GET', '/api/pairs?from=src/app&to=src/domain&at=src', bearer))).toEqual({
+      pairs: [['src/app/a.ts', 'src/domain/model.ts']],
+    });
+    expect(json(await hit(port, 'GET', '/api/pairs?from=src/infra&to=react&at=src&external=1', bearer))).toEqual({
+      pairs: [['src/infra/repo.ts', 'react']],
+    });
+    expect(json(await hit(port, 'GET', '/api/pairs?from=src/infra&to=react&at=src', bearer))).toEqual({ pairs: [] });
     await putDoc([{ kind: 'move-file', file: 'src/app/b.ts', to: 'src/infra' }]);
-    const moved = json(await hit(port, 'GET', '/api/pairs?from=src/infra&to=src/app&at=src&plan=split-app', bearer)) as { pairs: [string, string][] };
-    expect(moved.pairs).toEqual([['src/infra/b.ts', 'src/app/a.ts']]);
+    expect(json(await hit(port, 'GET', '/api/pairs?from=src/infra&to=src/app&at=src&plan=split-app', bearer))).toEqual({
+      pairs: [['src/infra/b.ts', 'src/app/a.ts']],
+    });
     expect(json(await hit(port, 'GET', '/api/pairs?from=src/infra&to=src/app&at=src', bearer))).toEqual({ pairs: [] });
     const noAt = await hit(port, 'GET', '/api/pairs?from=src/app&to=src/infra', bearer);
     expect(noAt.status).toBe(200);

@@ -1,5 +1,5 @@
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useEffectEvent, useState, type ReactNode } from 'react';
 import type { GraphNode, GraphView, ViewEdge } from '../domain/graph.ts';
 import {
   addEdgeIndex,
@@ -430,15 +430,21 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     if (file !== '') moveFile(file, at);
   };
 
+  const onUndo = useEffectEvent(undoEdit);
+  const onRedo = useEffectEvent(redoEdit);
+  const onDelete = useEffectEvent(deleteMarked);
   useEffect(() => {
-    const actions: Record<string, () => void> = { undo: undoEdit, redo: redoEdit, delete: deleteMarked };
+    const run = (action: ReturnType<typeof keyActionOf>): void => {
+      if (action === 'undo') onUndo();
+      else if (action === 'redo') onRedo();
+      else if (action === 'delete') onDelete();
+    };
     const onKey = (event: KeyboardEvent) => {
-      const action = keyActionOf(event.key, event.ctrlKey || event.metaKey, event.shiftKey, fieldTarget(event.target));
-      if (action !== null) actions[action]();
+      run(keyActionOf(event.key, event.ctrlKey || event.metaKey, event.shiftKey, fieldTarget(event.target)));
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  });
+  }, []);
 
   const planning = planningOf(slug, ink, {
     onDropFile: moveFile,
