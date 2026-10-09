@@ -16,10 +16,9 @@ Feature: reshape a plan by creating, renaming, merging and splitting packages, a
   package rename stores both full paths and only the last segment differs. A file
   rename stores the new file name only. The dialogue appends the old last
   extension, including the dot, when the typed name has no dot; the stored name
-  is what the dialogue decided. Parts of a split are <package>/<name>. A package
-  with no file directly in it is not drawn, and its child packages are drawn in
-  its place, except an empty package this plan created or split off, which is
-  drawn with files 0. Merge keeps the path of each file relative to its own
+  is what the dialogue decided. Parts of a split are <package>/<name>, drawn in
+  the original's place once the plan empties it (see the applyPlan rule). With
+  no plan, and in Now, grouping is unchanged. Merge keeps the path of each file relative to its own
   package. A deleted file stays, struck through, and its edges stay. A fold
   removes the file, points its edges and its external imports at "into", and
   drops an edge whose ends become the same file. There is no ghost for a fold.
@@ -36,7 +35,7 @@ Feature: reshape a plan by creating, renaming, merging and splitting packages, a
       | create-package  | kind, path; every segment is a name                                    |
       | rename-package  | kind, from, to; same parent; both last segments are names; from is not to |
       | rename-file     | kind, from, to; to is a single name                                    |
-      | merge-packages  | kind, packages, into; packages has two or more distinct paths          |
+      | merge-packages  | kind, packages, into; packages has two or more distinct paths, none inside another |
       | split-package   | kind, package, parts; two or more parts; each part is name and files; names are unique and legal; no file is listed twice; files may be empty |
       | fate            | kind, file, fate "delete", and no into; or fate "fold", into a different file |
     sentenceOf is the 005 sentence for a 005 edit, and otherwise:
@@ -67,6 +66,8 @@ Feature: reshape a plan by creating, renaming, merging and splitting packages, a
       When I send "GET /api/graph?at=src&plan=split-app" with the token
       Then every key except "warnings" equals the body in "The three edits move save.ts, drop the domain import, and add a cycle" in features/plan-moves-and-edges.feature
       And "warnings" is [[], [], [{"kind":"added-cycle","cycle":"app → infra → app"}]]
+      When I send "GET /api/graph?plan=split-app" with the token
+      Then the only node is "src" and it has files 7
 
     Scenario Outline: A document that is not one of these edits is refused
       Given "POST /api/plans" has saved a plan named "Reshape"
@@ -92,6 +93,8 @@ Feature: reshape a plan by creating, renaming, merging and splitting packages, a
       Then the status is 200 and the body is {"path":"src/domain/shape.ts","text":"export interface Shape { draw(): void }\n"}
       When I send "GET /api/graph?at=src" with the token
       Then the body is the no-plan src body from features/plan-moves-and-edges.feature and it has no "warnings" key and no "stale" key
+      When I send "GET /api/graph" with the token
+      Then the only node is "src" and it has files 7, a "0.29" and no "warnings" key
       When I send "GET /api/graph?at=notes" with the token
       Then the status is 404 and the body is {"error":"no such directory"}
       When I send "GET /api/detail?id=src/domain&at=src" with the token
@@ -109,18 +112,43 @@ Feature: reshape a plan by creating, renaming, merging and splitting packages, a
       And "git status --porcelain" in "/tmp/qa/layered" is empty
 
   Rule: applyPlan applies the new edits in order and warns about what is left
-    Each edit sees the paths the earlier non-stale edits left. A created package
-    is a directory a later move can target, and it is drawn with files 0, ca 0,
-    ce 0, i "–", a "0.00", d "–", no zone and no abstract. A rename moves every
-    file under "from" to the same relative path under "to", and edges and
-    external imports follow, as they do for a move. A merge moves each file to
-    "into" plus its path relative to its own package. A split moves each listed
-    file to <package>/<part>/<path relative to package>. The original is not an
-    empty box beside the parts. A fate delete draws the file and keeps its
-    edges. A fate fold deletes the file from the scan after the retarget.
+    Each edit sees the paths the earlier non-stale edits left. The walk keeps a
+    set of declared packages: a create adds its path and a split adds each part
+    path; a package rename renames every declared path at or under "from"; a
+    merge drops each listed package other than "into". A known package is an
+    ancestor directory of a file in the scan so far, or a declared package. A
+    path is taken when it is a scanned file or a known package. A move may
+    target a declared package. A declared package with no file is still in the
+    planned graph and is drawn with files 0, ca 0, ce 0, i "–", a "0.00",
+    d "–", no zone and no abstract, where a file directly in it would be
+    grouped. A rename moves every file under "from" to the same relative path
+    under "to", and edges and external imports follow, as they do for a move.
+    A merge moves each file to "into" plus its path relative to its own
+    package. A split moves each listed file to <package>/<part>/<path relative
+    to package>; an unlisted file stays. A fate delete draws the file and keeps
+    its edges; the mark follows the file through later moves and renames. A
+    fate fold deletes the file from the scan after the retarget.
+    Grouping with a plan query adds one step, the same in graph, detail and
+    pairs: a package that has a file directly in it in the current scan, has
+    none in the planned scan, and still has a file or a declared package under
+    it is not a node; its child packages are nodes in its place, repeated
+    while a child qualifies. So after the split "src" shows "src/app/read" and
+    "src/app/write" and no "src/app", and after the merge back "src/app" is one
+    node again. The root view still has the one node "src".
+    An edit is stale when the first of its checks fails, and the reason is:
+      | kind           | checks, in order                                                                                       |
+      | create-package | parent not "." and not known: "no such directory <parent>"; path taken: "<path> already exists"         |
+      | rename-package | "from" not known: "no such directory <from>"; "to" taken: "<to> already exists"                         |
+      | rename-file    | "from" not a file: "no such file <from>"; <parent of from>/<to> taken: "<that path> already exists"     |
+      | merge-packages | first listed package not known: "no such directory <p>"; "into" a file, or a file outside the listed packages under it: "<into> already exists"; two files landing on one path: "<that path> already exists" |
+      | split-package  | package not known: "no such directory <package>"; first listed file not a file under it: "no such file <f>"; first part path taken: "<part path> already exists" |
+      | fate delete    | file not a file: "no such file <file>"; already deleted: "<file> is already deleted"                   |
+      | fate fold      | file not a file: "no such file <file>"; into not a file: "no such file <into>"                          |
     "warnings" is one array per edit. An empty entry is []. The objects are
-    {"kind":"empty-package","path"} for a created or split-off package that ends
-    with no file, {"kind":"deleted-imports","file","importers"} for a delete
+    {"kind":"empty-package","path"} for a declared package still in the
+    planned graph with no file at the end, on the edit that declared it, with
+    its final path; a package a later merge or rename removed does not warn.
+    {"kind":"deleted-imports","file","importers"} for a delete
     whose file is still imported, and {"kind":"added-cycle","cycle"} for a cycle
     text the planned graph draws and the current graph does not. Importers are
     the distinct files with an edge to the deleted file, tests included, sorted
@@ -133,7 +161,6 @@ Feature: reshape a plan by creating, renaming, merging and splitting packages, a
     "1 file still imports src/app/save.ts, which this plan deletes" when one
     file imports it, "2 files still import src/domain/model.ts, which this plan
     deletes" when two do, and "this plan adds a cycle: read → write → read".
-    A move onto a package this plan created is not "no such directory".
 
     Scenario: An empty src/ports warns, and the move of shape.ts clears it
       Given the plan "Reshape" has these edits, in order:
@@ -184,6 +211,20 @@ Feature: reshape a plan by creating, renaming, merging and splitting packages, a
       And the split sentence is "Split src/app into src/app/read (2 files) and src/app/write (2 files)"
       When I send "GET /api/graph?at=src/app&plan=reshape" with the token
       Then the only nodes are "src/app/read" and "src/app/write"
+      When I send "GET /api/graph?plan=reshape" with the token
+      Then the only node is "src" and it has files 7
+      When I send "GET /api/graph?at=src" with the token
+      Then the body is the no-plan src body from features/plan-moves-and-edges.feature
+
+    Scenario: A split part that stays empty is drawn and warns
+      Given the plan "Reshape" has the only edit {"kind":"split-package","package":"src/app","parts":[{"name":"read","files":["src/app/a.test.ts","src/app/a.ts","src/app/b.ts","src/app/save.ts"]},{"name":"spare","files":[]}]}
+      When I send "GET /api/graph?at=src&plan=reshape" with the token
+      Then "stale" is [null] and "warnings" is [[{"kind":"empty-package","path":"src/app/spare"}]]
+      And there is no node "src/app"
+      And "src/app/read" has files 3, row 0, order 0, ca 0, ce 2, i "1.00" and zone "healthy"
+      And "src/app/spare" has files 0, row 2, order 1, cycle false, ca 0, ce 0, i "–", a "0.00", d "–" and no zone and no abstract
+      And "src/domain" has row 2 order 0
+      And the sentence is "Split src/app into src/app/read (4 files) and src/app/spare (0 files)"
 
     Scenario: Merge, delete and fold leave one warning and move the arrow
       Given the plan "Reshape" has the create, the move, the rename and the split of the previous scenario, then these edits, in order:
@@ -215,15 +256,36 @@ Feature: reshape a plan by creating, renaming, merging and splitting packages, a
       Then "stale" is [null] and there is no "warnings" key
       And "src/app" has files 3
 
-    Scenario: A move into a package the plan did not create is stale, and so is a fold that follows a removed rename
-      Given the plan "Reshape" has the only edit {"kind":"move-file","file":"src/domain/shape.ts","to":"src/ports"}
+    Scenario Outline: Each new kind gives its reason when it no longer applies
+      Given the plan "Reshape" has the only edit <edit>
       When I send "GET /api/graph?at=src&plan=reshape" with the token
-      Then "stale" is ["no such directory src/ports"] and there is no "warnings" key
-      Given the plan "Reshape" has the create of "src/ports", the move of shape.ts, the rename of "src/infra" to "src/adapters", and the fold of "src/adapters/repo.ts" into "src/ports/shape.ts", and the rename edit is removed
-      When I send "GET /api/graph?at=src&plan=reshape" with the token
-      Then the fold's stale reason is "no such file src/adapters/repo.ts"
-      And the create and the move are not stale
-      And "GET /api/plans/reshape" still has the fold edit
+      Then "stale" is ["<reason>"] and there is no "warnings" key
+      And every key other than "stale" equals "GET /api/graph?at=src"
+      Examples:
+        | edit | reason |
+        | {"kind":"move-file","file":"src/domain/shape.ts","to":"src/ports"} | no such directory src/ports |
+        | {"kind":"create-package","path":"src/infra"} | src/infra already exists |
+        | {"kind":"create-package","path":"lib/ports"} | no such directory lib |
+        | {"kind":"rename-package","from":"src/io","to":"src/net"} | no such directory src/io |
+        | {"kind":"rename-package","from":"src/infra","to":"src/domain"} | src/domain already exists |
+        | {"kind":"rename-file","from":"src/app/save.ts","to":"b.ts"} | src/app/b.ts already exists |
+        | {"kind":"merge-packages","packages":["src/app/read","src/app/write"],"into":"src/app"} | no such directory src/app/read |
+        | {"kind":"merge-packages","packages":["src/app","src/infra"],"into":"src/domain"} | src/domain already exists |
+        | {"kind":"split-package","package":"src/app","parts":[{"name":"read","files":["src/infra/db.ts"]},{"name":"write","files":[]}]} | no such file src/infra/db.ts |
+        | {"kind":"fate","file":"src/app/gone.ts","fate":"delete"} | no such file src/app/gone.ts |
+        | {"kind":"fate","file":"src/app/save.ts","fate":"fold","into":"src/app/gone.ts"} | no such file src/app/gone.ts |
+
+    Scenario: Removing the split stales the merge, and a fold that follows a removed rename is stale
+      Given the plan "Reshape" has the seven edits of "Merge, delete and fold leave one warning and move the arrow"
+      When I remove the split edit with "PUT /api/plans/reshape"
+      And I send "GET /api/graph?at=src&plan=reshape" with the token
+      Then "stale" is [null, null, null, "no such directory src/app/read", null, null]
+      And "warnings" is [[], [], [], [], [{"kind":"deleted-imports","file":"src/domain/model.ts","importers":["src/adapters/db.ts","src/app/a.ts"]}], []]
+      And "src/app" has files 3 and there is no node "src/app/read"
+      When I also remove the rename edit with "PUT /api/plans/reshape"
+      And I send "GET /api/graph?at=src&plan=reshape" with the token
+      Then "stale" is [null, null, "no such directory src/app/read", null, "no such file src/adapters/repo.ts"]
+      And "GET /api/plans/reshape" still has the merge and the fold edits and no stale field
 
   Rule: the page creates, renames, merges, splits, deletes and folds
     While a plan is open the architecture view has a "Canvas" button whose menu
@@ -235,9 +297,10 @@ Feature: reshape a plan by creating, renaming, merging and splitting packages, a
     way, with the button "Rename", and stores a rename-package or a rename-file.
     A file name with no dot keeps the old extension. The same name stores
     nothing. A clash shows the full destination and " already exists". "Split"
-    opens "Split package" and lists every file under the package, tests
-    included, by its relative path, each select starting on "choose". "Add part"
-    adds the next part field. "Split" stores the edit only when at least two
+    opens "Split package" with two name fields, "Part 1" and "Part 2", and
+    lists every file under the package, tests included, by its relative path,
+    each select starting on "choose" and offering the typed part names. "Add
+    part" adds "Part 3", then "Part 4", and so on. "Split" stores the edit only when at least two
     part names are legal and distinct, every file has a part, and no part path
     already exists. Otherwise the dialogue shows the first failure, in this
     order: "name at least two parts", "bad name", "duplicate part",
@@ -245,7 +308,8 @@ Feature: reshape a plan by creating, renaming, merging and splitting packages, a
     selection. "Merge" appears on a selected package's menu only when two or
     more packages are selected. The dialogue is "Merge packages". The name of a
     selected box merges into that box; any other name merges into <view>/<name>.
-    A name that is some other existing box shows "<into> already exists".
+    A name whose path holds a file outside the selected packages shows
+    "<into> already exists".
     "Delete" on a file box menu stores a delete fate. The Delete key on a box
     still does nothing. "Fold into…" arms a fold; the notice is
     "click a file to fold <file> into". The next click on a file box or a file
@@ -257,8 +321,15 @@ Feature: reshape a plan by creating, renaming, merging and splitting packages, a
     warning count and aria-label "1 warning" or "N warnings" shows only when
     the count is not 0. A deleted-imports warning has a "Show importers" button
     that reveals the paths and becomes "Hide importers". A warning does not set
-    data-stale. Clicking an entry selects the box it named; a box the later
-    edits removed shows the notice "no such box <path>" and does not navigate.
+    data-stale. Clicking a new entry treats its target as 005 treats a move's:
+    the target is the path below as it stands right after that edit; the page
+    opens the view whose at is the target's parent directory ("" for none)
+    unless the target is a box in the current view, selects that box, and puts
+    its centre at the centre of the canvas. The targets are: create, the path;
+    rename-package, "to"; rename-file, the renamed file; merge, "into"; split,
+    the first part; delete, the file; fold, "into". A target that is not a box
+    in the planned graph shows the notice "no such box <path>" and does not
+    navigate.
 
     Scenario: The canvas asks for a package, refuses a bad name, and lists the warning
       Given the plan "Reshape" is open on the "src" view and the change list is empty
@@ -296,7 +367,9 @@ Feature: reshape a plan by creating, renaming, merging and splitting packages, a
       Then the entry reads "Rename src/infra to src/adapters"
       And there is no "infra" box and the "adapters" box lists "db.ts" and "repo.ts"
       And the move entry still reads "Move src/domain/shape.ts to src/ports"
-      When I choose "Split" on "app", name the parts "read" and "write", leave "a.ts" on "choose" and click "Split"
+      When I choose "Split" on "app"
+      Then the dialogue "Split package" has the fields "Part 1" and "Part 2" and the selects "a.test.ts", "a.ts", "b.ts" and "save.ts", each on "choose"
+      When I type "read" in "Part 1" and "write" in "Part 2", leave "a.ts" on "choose" and click "Split"
       Then the dialogue shows "assign every file" and the split entry is absent
       When I assign "a.test.ts" and "a.ts" to "read" and "b.ts" and "save.ts" to "write" and click "Split"
       Then the last entry reads "Split src/app into src/app/read (2 files) and src/app/write (2 files)"
@@ -333,6 +406,15 @@ Feature: reshape a plan by creating, renaming, merging and splitting packages, a
       When I reload the page
       Then the address bar shows "http://127.0.0.1:5000/#at=src&plan=reshape"
       And the seven entries, the struck-through "model.ts" and the badge "1" are shown
+      When I open the "src/app" view and click the entry "Rename src/infra to src/adapters"
+      Then the address bar shows "http://127.0.0.1:5000/#at=src&plan=reshape"
+      And the "adapters" box carries data-selected "true" and its centre is at the centre of the canvas
+      When I open the "src/app" view and click the entry "Fold src/adapters/repo.ts into src/ports/shape.ts"
+      Then the address bar shows "http://127.0.0.1:5000/#at=src/ports&plan=reshape"
+      And the "shape.ts" box carries data-selected "true" and its centre is at the centre of the canvas
+      When I click the entry "Split src/app into src/app/read (2 files) and src/app/write (2 files)"
+      Then the notice reads "no such box src/app/read" and the address bar still shows "http://127.0.0.1:5000/#at=src/ports&plan=reshape"
+      When I click the "src" breadcrumb
       When I click "Remove" on "Rename src/infra to src/adapters"
       Then that entry is gone
       And the fold entry carries data-stale "true" and shows "no such file src/adapters/repo.ts"
