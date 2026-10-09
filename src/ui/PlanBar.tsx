@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import type { PlanSummary } from '../domain/plan.ts';
 
-type ChangeLine = { sentence: string; stale: string | null };
+type WarningLine = { text: string; importers: string[] };
+
+type ChangeLine = { sentence: string; stale: string | null; warnings: WarningLine[] };
 
 type Shown = 'now' | 'planned';
 
@@ -96,6 +98,124 @@ export function NewPlanDialog(props: Readonly<{ error: string | null; onCreate: 
   );
 }
 
+type NameDialogProps = Readonly<{ error: string | null; onSubmit: (name: string) => void; onCancel: () => void }>;
+
+export function NewPackageDialog(props: NameDialogProps) {
+  return <FieldDialog label="New package" field="Name" empty="write a name" submit="Create" error={props.error} onSubmit={props.onSubmit} onCancel={props.onCancel} />;
+}
+
+export function RenameDialog(props: NameDialogProps) {
+  return <FieldDialog label="Rename" field="Name" empty="write a name" submit="Rename" error={props.error} onSubmit={props.onSubmit} onCancel={props.onCancel} />;
+}
+
+export function MergeDialog(props: NameDialogProps) {
+  return <FieldDialog label="Merge packages" field="Name" empty="write a name" submit="Merge" error={props.error} onSubmit={props.onSubmit} onCancel={props.onCancel} />;
+}
+
+type SplitFile = { path: string; label: string };
+
+function PartField(props: Readonly<{ index: number; value: string; onInput: (value: string) => void }>) {
+  const label = `Part ${props.index + 1}`;
+  return (
+    <label>
+      {label} <input aria-label={label} value={props.value} onInput={event => props.onInput(event.currentTarget.value)} />
+    </label>
+  );
+}
+
+function FileChoice(props: Readonly<{ file: SplitFile; names: string[]; value: string; onChoose: (value: string) => void }>) {
+  return (
+    <label>
+      {props.file.label}{' '}
+      <select aria-label={props.file.label} value={props.value} onChange={event => props.onChoose(event.currentTarget.value)}>
+        <option value="">choose</option>
+        {props.names.map(name => (
+          <option key={name} value={name}>
+            {name}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function typedNames(names: string[]): string[] {
+  return [...new Set(names.map(name => name.trim()).filter(name => name !== ''))];
+}
+
+function replaced(names: string[], index: number, value: string): string[] {
+  return names.map((name, at) => (at === index ? value : name));
+}
+
+type KeyedName = { key: string; value: string; index: number };
+
+function keyedNames(names: string[]): KeyedName[] {
+  return names.map((value, index) => ({ key: String(index), value, index }));
+}
+
+export function SplitDialog(
+  props: Readonly<{
+    files: SplitFile[];
+    error: string | null;
+    onSplit: (names: string[], assigned: Record<string, string>) => void;
+    onCancel: () => void;
+  }>,
+) {
+  const [names, setNames] = useState(['', '']);
+  const [assigned, setAssigned] = useState<Record<string, string>>({});
+  const options = typedNames(names);
+  return (
+    <DialogFrame label="Split package">
+      {keyedNames(names).map(item => (
+        <PartField key={item.key} index={item.index} value={item.value} onInput={value => setNames(current => replaced(current, item.index, value))} />
+      ))}
+      <button type="button" onClick={() => setNames(current => [...current, ''])}>
+        Add part
+      </button>
+      {props.files.map(file => (
+        <FileChoice
+          key={file.path}
+          file={file}
+          names={options}
+          value={assigned[file.path] ?? ''}
+          onChoose={value => setAssigned(current => ({ ...current, [file.path]: value }))}
+        />
+      ))}
+      <DialogError text={props.error} />
+      <button type="button" onClick={() => props.onSplit(names, assigned)}>
+        Split
+      </button>
+      <button type="button" onClick={props.onCancel}>
+        Cancel
+      </button>
+    </DialogFrame>
+  );
+}
+
+export function CanvasMenu(props: Readonly<{ onNewPackage: () => void }>) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="canvas-menu">
+      <button type="button" onClick={() => setOpen(current => !current)}>
+        Canvas
+      </button>
+      {open ? (
+        <span role="menu">
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              props.onNewPackage();
+            }}
+          >
+            New package
+          </button>
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 export function DeletePlanDialog(props: Readonly<{ name: string; onDelete: () => void; onCancel: () => void }>) {
   return (
     <DialogFrame label="Delete plan">
@@ -150,6 +270,39 @@ export function Notice(props: Readonly<{ text: string | null }>) {
   );
 }
 
+function Importers(props: Readonly<{ paths: string[] }>) {
+  const [open, setOpen] = useState(false);
+  if (props.paths.length === 0) return null;
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(current => !current)}>
+        {open ? 'Hide importers' : 'Show importers'}
+      </button>
+      {open ? (
+        <ul className="change-importers">
+          {props.paths.map(path => (
+            <li key={path}>{path}</li>
+          ))}
+        </ul>
+      ) : null}
+    </>
+  );
+}
+
+function WarningList(props: Readonly<{ warnings: WarningLine[] }>) {
+  if (props.warnings.length === 0) return null;
+  return (
+    <ul className="change-warnings">
+      {props.warnings.map(warning => (
+        <li key={warning.text} className="change-warning">
+          <span className="change-warning-text">{warning.text}</span>
+          <Importers paths={warning.importers} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function ChangeRow(props: Readonly<{ entry: ChangeLine; onPick: () => void; onRemove: () => void }>) {
   return (
     <li className="change" data-stale={props.entry.stale === null ? undefined : 'true'}>
@@ -160,7 +313,22 @@ function ChangeRow(props: Readonly<{ entry: ChangeLine; onPick: () => void; onRe
       <button type="button" aria-label="Remove" onClick={props.onRemove}>
         ×
       </button>
+      <WarningList warnings={props.entry.warnings} />
     </li>
+  );
+}
+
+function warningCount(entries: ChangeLine[]): number {
+  return entries.reduce((sum, entry) => sum + entry.warnings.length, 0);
+}
+
+function WarningBadge(props: Readonly<{ count: number }>) {
+  if (props.count === 0) return null;
+  const label = props.count === 1 ? '1 warning' : `${props.count} warnings`;
+  return (
+    <span className="warning-badge" aria-label={label}>
+      {props.count}
+    </span>
   );
 }
 
@@ -183,6 +351,9 @@ export function ChangeList<T extends ChangeLine>(
 ) {
   return (
     <aside aria-label="changes">
+      <h2 className="changes-heading">
+        Changes <WarningBadge count={warningCount(props.entries)} />
+      </h2>
       <div className="change-actions">
         <button type="button" onClick={props.onUndo} disabled={!props.canUndo}>
           Undo

@@ -4,10 +4,10 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { basename, dirname, extname, join } from 'node:path';
 import { z } from 'zod';
-import { edgePairs, graphView, nodeDetail, type GraphFlags, type GraphView } from './domain/graph.ts';
+import { cycleTexts, edgePairs, graphView, nodeDetail, type GraphFlags, type GraphView } from './domain/graph.ts';
 import { emptyLayout, parseLayout, type LayoutDoc } from './domain/layout.ts';
 import { PLAN_SLUG_PATTERN, parsePlan, planNameFrom, slugOf, type PlanDoc } from './domain/plan.ts';
-import { applyPlan, staleReasons } from './domain/planned.ts';
+import { applyPlan, planReport, type PlanReport } from './domain/planned.ts';
 import type { ScanResult } from './domain/scan.ts';
 import { buildTree, filePathSet, type TreeRoot } from './domain/tree.ts';
 import { freePlanSlug, listPlans, readPlan, removePlan, writePlan } from './plans.ts';
@@ -224,12 +224,22 @@ function plannedScanOf(scan: ScanResult, load: PlanLoad | null): ScanResult {
   return load !== null && load.ok === true ? applyPlan(scan, load.doc.edits) : scan;
 }
 
-function sendView(res: ServerResponse, view: GraphView, scan: ScanResult, load: PlanLoad | null): void {
-  if (load !== null && load.ok === true) {
-    sendJson(res, 200, { ...view, stale: staleReasons(scan, load.doc.edits) });
-    return;
-  }
-  sendJson(res, 200, view);
+type GraphPlan = { scan: ScanResult; report: PlanReport | null };
+
+function graphPlanOf(scan: ScanResult, load: PlanLoad | null): GraphPlan {
+  if (load === null || load.ok === false) return { scan, report: null };
+  const report = planReport(scan, load.doc.edits, cycleTexts);
+  return { scan: report.scan, report };
+}
+
+function warningsField(report: PlanReport): { warnings?: PlanReport['warnings'] } {
+  if (report.warnings.every(list => list.length === 0)) return {};
+  return { warnings: report.warnings };
+}
+
+function viewBody(view: GraphView, report: PlanReport | null): GraphView {
+  if (report === null) return view;
+  return { ...view, stale: report.stale, ...warningsField(report) };
 }
 
 async function serveGraph(app: App, graphs: GraphHolder, res: ServerResponse, url: URL): Promise<void> {
@@ -239,13 +249,13 @@ async function serveGraph(app: App, graphs: GraphHolder, res: ServerResponse, ur
     sendJson(res, 404, NO_SUCH_PLAN);
     return;
   }
-  const planned = plannedScanOf(scan, load);
-  const view = graphView(planned, url.searchParams.get('at') ?? '', basename(app.repoRoot), graphFlags(url), healthOf(app.repoRoot, planned));
+  const plan = graphPlanOf(scan, load);
+  const view = graphView(plan.scan, url.searchParams.get('at') ?? '', basename(app.repoRoot), graphFlags(url), healthOf(app.repoRoot, plan.scan));
   if (view === null) {
     sendJson(res, 404, { error: 'no such directory' });
     return;
   }
-  sendView(res, view, scan, load);
+  sendJson(res, 200, viewBody(view, plan.report));
 }
 
 function layoutFile(root: string): string {

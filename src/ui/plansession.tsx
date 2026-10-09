@@ -3,6 +3,8 @@ import { useEffect, useEffectEvent, useState, type ReactNode } from 'react';
 import type { GraphNode, GraphView, ViewEdge } from '../domain/graph.ts';
 import {
   addEdgeIndex,
+  childPath,
+  parentOf,
   withEdit,
   withRedo,
   withUndo,
@@ -13,10 +15,24 @@ import {
 } from '../domain/plan.ts';
 import { deletePlan, fetchGraph, fetchPairs, fetchPlan, fetchPlans, postPlan, putPlan } from './client.ts';
 import { parentDir } from './draw.ts';
-import { ChangeList, DeletePlanDialog, NewPlanDialog, NoteDialog, Notice, PlanSelect, ShownSwitch } from './PlanBar.tsx';
+import {
+  CanvasMenu,
+  ChangeList,
+  DeletePlanDialog,
+  MergeDialog,
+  NewPackageDialog,
+  NewPlanDialog,
+  NoteDialog,
+  Notice,
+  PlanSelect,
+  RenameDialog,
+  ShownSwitch,
+  SplitDialog,
+} from './PlanBar.tsx';
 import { FILE_DRAG_MIME, fieldTarget, keyActionOf, planDropTarget } from './plangesture.ts';
 import { arrowViewAt, entryTarget, planPicture, type Planning, type PlanInk, type ShownGraph } from './planpicture.ts';
 import { planRoster } from './planroster.ts';
+import { fileRenameName, mergeTarget, nameProblem, relativeTo, siblingPath, splitParts, splitProblem, takenProblem } from './reshape.ts';
 
 type Picture = ReturnType<typeof planPicture>;
 
@@ -39,6 +55,7 @@ type PlanSessionProps = {
   other: GraphView | undefined;
   planned: GraphView | undefined;
   ids: Set<string>;
+  selection: string[];
   deletable: ArrowEnds | null;
   onShown: (shown: ShownGraph) => void;
   onPlanChange: (plan: string | null) => void;
@@ -58,7 +75,12 @@ type PlanSessionView = {
   openFile: (path: string) => void;
   dropTarget: (kind: GraphNode['kind'] | null, event: unknown) => string | null;
   dropOnCrumb: (event: { preventDefault(): void; dataTransfer: { getData(mime: string): string } }, at: string) => void;
+  pickFile: (id: string) => boolean;
 };
+
+type NameAsk = { mode: 'create' } | { mode: 'rename'; id: string; kind: 'package' | 'file' } | { mode: 'merge' };
+
+type SplitAsk = { pkg: string; files: string[] };
 
 function editsOf(doc: PlanDoc | null): PlanEdit[] {
   if (doc === null) return [];
@@ -132,6 +154,7 @@ function PlanToolbar(
     onNewPlan: () => void;
     onDeletePlan: () => void;
     onShown: (shown: ShownGraph) => void;
+    onNewPackage: () => void;
   }>,
 ) {
   return (
@@ -144,6 +167,7 @@ function PlanToolbar(
         Delete plan
       </button>
       {props.slug === null ? null : <ShownSwitch shown={props.shown} onChoose={props.onShown} />}
+      {props.slug === null ? null : <CanvasMenu onNewPackage={props.onNewPackage} />}
     </>
   );
 }
@@ -210,6 +234,67 @@ function PlanDialogs(
   );
 }
 
+function NameSlot(props: Readonly<{ ask: NameAsk; error: string | null; onSubmit: (name: string) => void; onCancel: () => void }>) {
+  if (props.ask.mode === 'create') return <NewPackageDialog error={props.error} onSubmit={props.onSubmit} onCancel={props.onCancel} />;
+  if (props.ask.mode === 'merge') return <MergeDialog error={props.error} onSubmit={props.onSubmit} onCancel={props.onCancel} />;
+  return <RenameDialog error={props.error} onSubmit={props.onSubmit} onCancel={props.onCancel} />;
+}
+
+function ReshapeDialogs(
+  props: Readonly<{
+    nameAsk: NameAsk | null;
+    splitAsk: SplitAsk | null;
+    error: string | null;
+    onName: (ask: NameAsk, name: string) => void;
+    onSplit: (ask: SplitAsk, names: string[], assigned: Record<string, string>) => void;
+    onCancel: () => void;
+  }>,
+) {
+  const nameAsk = props.nameAsk;
+  const splitAsk = props.splitAsk;
+  return (
+    <>
+      {nameAsk === null ? null : <NameSlot ask={nameAsk} error={props.error} onSubmit={name => props.onName(nameAsk, name)} onCancel={props.onCancel} />}
+      {splitAsk === null ? null : (
+        <SplitDialog
+          files={splitAsk.files.map(path => ({ path, label: relativeTo(splitAsk.pkg, path) }))}
+          error={props.error}
+          onSplit={(names, assigned) => props.onSplit(splitAsk, names, assigned)}
+          onCancel={props.onCancel}
+        />
+      )}
+    </>
+  );
+}
+
+function nodeIdsOf(view: GraphView | undefined): Set<string> {
+  return new Set((view?.nodes ?? []).map(node => node.id));
+}
+
+function kindOf(nodes: GraphNode[], id: string): GraphNode['kind'] | undefined {
+  return nodes.find(node => node.id === id)?.kind;
+}
+
+function selectedPackages(nodes: GraphNode[], selection: string[]): GraphNode[] {
+  return nodes.filter(node => node.kind === 'package' && selection.includes(node.id)).sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function idsIn(nodes: GraphNode[]): string[] {
+  return nodes.map(node => node.id);
+}
+
+async function filesUnder(token: string, dir: string, slug: string, fetcher: typeof fetch): Promise<string[]> {
+  const view = await fetchGraph(token, dir, fetcher, { tests: true, external: false, plan: slug });
+  if ('error' in view) return [];
+  const nested = await Promise.all(view.nodes.filter(node => node.kind === 'package').map(node => filesUnder(token, node.id, slug, fetcher)));
+  return [...view.nodes.filter(node => node.kind === 'file').map(node => node.id), ...nested.flat()].sort();
+}
+
+async function boxShown(token: string, id: string, query: { tests: boolean; external: boolean; plan: string | null }, fetcher: typeof fetch): Promise<boolean> {
+  const view = await fetchGraph(token, parentOf(id), fetcher, query);
+  return !('error' in view) && view.nodes.some(node => node.id === id);
+}
+
 function plannedHas(planned: GraphView | undefined, from: string, to: string): boolean {
   return planned !== undefined && planned.edges.some(edge => edge.from === from && edge.to === to);
 }
@@ -240,6 +325,10 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
   const [newPlanError, setNewPlanError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [noteTarget, setNoteTarget] = useState<NoteTarget | null>(null);
+  const [nameAsk, setNameAsk] = useState<NameAsk | null>(null);
+  const [splitAsk, setSplitAsk] = useState<SplitAsk | null>(null);
+  const [askError, setAskError] = useState<string | null>(null);
+  const [foldFrom, setFoldFrom] = useState<string | null>(null);
   const roster = planRoster(plansQuery.data, planQuery.data, slug, deleteTarget);
   const doc = roster.doc;
   const edits = editsOf(doc);
@@ -256,6 +345,7 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     edges: props.edges,
     ids: props.ids,
     packages: rowPackages(rowResults),
+    warnings: props.planned?.warnings,
   });
   const disk = picture.diskPath;
   const entries = visibleEntries(props.ready, picture);
@@ -354,8 +444,16 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     if (viewAt === props.at) return;
     props.onDrill(viewAt);
   };
+  const pickBox = async (id: string): Promise<void> => {
+    if (props.ids.has(id) || (await boxShown(props.token, id, { tests: props.tests, external: props.external, plan: slug }, props.fetcher))) {
+      props.onPickNode(id);
+      return;
+    }
+    setNotice(`no such box ${id}`);
+  };
   const applyTarget = (target: ReturnType<typeof entryTarget>): void => {
     if (target.kind === 'node') props.onPickNode(target.id);
+    else if (target.kind === 'box') void pickBox(target.id);
     else pickArrow(target.from, target.to, target.cut);
   };
   const pickEntry = (entry: Picture['entries'][number]): void => {
@@ -385,6 +483,76 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     }
     props.onPlanChange(null);
   };
+  const closeAsk = (): void => {
+    setNameAsk(null);
+    setSplitAsk(null);
+    setAskError(null);
+  };
+  const ask = (next: NameAsk): void => {
+    closeAsk();
+    setNameAsk(next);
+  };
+  const storeOr = (problem: string | null, edit: PlanEdit): void => {
+    if (problem !== null) {
+      setAskError(problem);
+      return;
+    }
+    editPlan(edit);
+    closeAsk();
+  };
+  const taken = (): Set<string> => nodeIdsOf(props.planned);
+  const createPackage = (name: string): void => {
+    const path = childPath(props.at, name);
+    storeOr(nameProblem(name) ?? takenProblem(path, taken()), { kind: 'create-package', path });
+  };
+  const renamePackage = (id: string, name: string): void => {
+    const to = siblingPath(id, name);
+    if (to === id) closeAsk();
+    else storeOr(nameProblem(name) ?? takenProblem(to, taken()), { kind: 'rename-package', from: id, to });
+  };
+  const renameFile = (id: string, typed: string): void => {
+    const name = fileRenameName(id, typed);
+    const dest = siblingPath(id, name);
+    if (dest === id) closeAsk();
+    else storeOr(nameProblem(name) ?? takenProblem(dest, taken()), { kind: 'rename-file', from: id, to: name });
+  };
+  const mergeSelected = (name: string): void => {
+    const chosen = selectedPackages(props.nodes, props.selection);
+    const into = mergeTarget(name, props.at, chosen);
+    const packages = idsIn(chosen);
+    const clash = packages.includes(into) ? null : takenProblem(into, taken());
+    storeOr(nameProblem(name) ?? clash, { kind: 'merge-packages', packages, into });
+  };
+  const submitName = (current: NameAsk, name: string): void => {
+    if (current.mode === 'create') createPackage(name);
+    else if (current.mode === 'merge') mergeSelected(name);
+    else if (current.kind === 'package') renamePackage(current.id, name);
+    else renameFile(current.id, name);
+  };
+  const submitSplit = (current: SplitAsk, names: string[], assigned: Record<string, string>): void => {
+    const form = { pkg: current.pkg, names, files: current.files, assigned, taken: taken() };
+    storeOr(splitProblem(form), { kind: 'split-package', package: current.pkg, parts: splitParts(form) });
+  };
+  const openSplit = async (pkg: string): Promise<void> => {
+    const files = await filesUnder(props.token, pkg, String(slug), props.fetcher);
+    closeAsk();
+    setSplitAsk({ pkg, files });
+  };
+  const armFold = (file: string): void => {
+    setFoldFrom(file);
+    setNotice(`click a file to fold ${file} into`);
+  };
+  const foldInto = (path: string): boolean => {
+    if (foldFrom === null) return false;
+    if (foldFrom === path) {
+      setNotice('a file cannot fold into itself');
+      return true;
+    }
+    editPlan({ kind: 'fate', file: foldFrom, fate: 'fold', into: path });
+    setFoldFrom(null);
+    return true;
+  };
+  const pickFile = (id: string): boolean => kindOf(props.nodes, id) === 'file' && foldInto(id);
   const dropTarget = (kind: GraphNode['kind'] | null, event: unknown): string | null => dropTargetOf(slug, kind, event);
   const dropOnCrumb = (event: { preventDefault(): void; dataTransfer: { getData(mime: string): string } }, at: string): void => {
     event.preventDefault();
@@ -409,11 +577,18 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
   });
 
   const planning = planningOf(slug, picture.ink, {
+    mergeReady: selectedPackages(props.nodes, props.selection).length >= 2,
     onDropFile: moveFile,
     onDrawEdge: drawEdge,
     onCutEdge: cutArrow,
     onAddNote: setNoteTarget,
     onOpenPlanned: openFile,
+    onRename: (id, kind) => ask({ mode: 'rename', id, kind }),
+    onSplit: pkg => void openSplit(pkg),
+    onMerge: () => ask({ mode: 'merge' }),
+    onDelete: file => editPlan({ kind: 'fate', file, fate: 'delete' }),
+    onFold: armFold,
+    onPickFile: foldInto,
   });
 
   return {
@@ -431,6 +606,7 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
         }}
         onDeletePlan={() => setDeleteTarget(slug)}
         onShown={props.onShown}
+        onNewPackage={() => ask({ mode: 'create' })}
       />
     ),
     notice: <PlanNotice slug={slug} text={notice} />,
@@ -446,7 +622,9 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
       />
     ),
     dialogs: (
-      <PlanDialogs
+      <>
+        <ReshapeDialogs nameAsk={nameAsk} splitAsk={splitAsk} error={askError} onName={submitName} onSplit={submitSplit} onCancel={closeAsk} />
+        <PlanDialogs
         newPlanOpen={newPlanOpen}
         newPlanError={newPlanError}
         deleteTarget={deleteTarget}
@@ -458,12 +636,14 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
         onCancelDelete={() => setDeleteTarget(null)}
         onAddNote={addNote}
         onCancelNote={() => setNoteTarget(null)}
-      />
+        />
+      </>
     ),
     planning,
     moveFile,
     openFile,
     dropTarget,
     dropOnCrumb,
+    pickFile,
   };
 }

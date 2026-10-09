@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
   addEdgeIndex,
+  childPath,
   freeSlug,
+  lastSegment,
+  legalName,
   moveDest,
+  parentOf,
+  renamedFile,
+  splitPartPath,
+  within,
   parsePlan,
   parsePlanEdit,
   PLAN_SLUG_PATTERN,
@@ -144,6 +151,104 @@ describe('parsePlanEdit', () => {
       { kind: 'note', target: { node: 'n' }, text: 4 },
     ];
     for (const body of bad) expect(parsePlanEdit(body)).toBeUndefined();
+  });
+});
+
+describe('package edits and file fates', () => {
+  it('parses each new kind', () => {
+    const good: PlanEdit[] = [
+      { kind: 'create-package', path: 'src/ports' },
+      { kind: 'create-package', path: 'ports' },
+      { kind: 'rename-package', from: 'src/util', to: 'src/text' },
+      { kind: 'rename-package', from: 'util', to: 'text' },
+      { kind: 'rename-file', from: 'src/app/x.ts', to: 'y.ts' },
+      { kind: 'merge-packages', packages: ['src/io', 'src/net'], into: 'src/infra' },
+      { kind: 'merge-packages', packages: ['src/app/read', 'src/app/write'], into: 'src/app/read' },
+      { kind: 'split-package', package: 'src/app', parts: [{ name: 'read', files: ['src/app/a.ts'] }, { name: 'spare', files: [] }] },
+      { kind: 'fate', file: 'src/legacy.ts', fate: 'delete' },
+      { kind: 'fate', file: 'src/helpers.ts', fate: 'fold', into: 'src/text/format.ts' },
+    ];
+    for (const edit of good) expect(parsePlanEdit(JSON.parse(JSON.stringify(edit)))).toEqual(edit);
+  });
+
+  it('refuses malformed new edits', () => {
+    const part = (name: unknown, files: unknown) => ({ name, files });
+    const bad: unknown[] = [
+      { kind: 'create-package', path: 'src/../ports' },
+      { kind: 'create-package', path: 'src/./ports' },
+      { kind: 'create-package', path: '' },
+      { kind: 'create-package', path: 'src/has space' },
+      { kind: 'create-package', path: 3 },
+      { kind: 'create-package', path: 'src/ports', extra: 1 },
+      { kind: 'rename-package', from: 'src/infra', to: 'lib/adapters' },
+      { kind: 'rename-package', from: 'src/infra', to: 'src/infra' },
+      { kind: 'rename-package', from: 'src/in fra', to: 'src/infra2' },
+      { kind: 'rename-package', from: 'src/infra', to: 'src/..' },
+      { kind: 'rename-package', from: 'src/infra', to: 2 },
+      { kind: 'rename-package', from: 'src/infra', to: 'src/net', extra: 1 },
+      { kind: 'rename-file', from: 'src/app/a.ts', to: 'src/app/b.ts' },
+      { kind: 'rename-file', from: 'src/app/a.ts', to: '..' },
+      { kind: 'rename-file', from: 1, to: 'b.ts' },
+      { kind: 'rename-file', from: 'src/app/a.ts', to: 'b.ts', extra: 1 },
+      { kind: 'merge-packages', packages: ['src/app'], into: 'src/app' },
+      { kind: 'merge-packages', packages: ['src/app', 'src/app'], into: 'src/x' },
+      { kind: 'merge-packages', packages: ['src/app', 'src/app/read'], into: 'src/x' },
+      { kind: 'merge-packages', packages: ['src/app', 3], into: 'src/x' },
+      { kind: 'merge-packages', packages: 'src/app', into: 'src/x' },
+      { kind: 'merge-packages', packages: ['src/io', 'src/net'], into: 'src/../x' },
+      { kind: 'merge-packages', packages: ['src/io', 'src/net'], into: 4 },
+      { kind: 'merge-packages', packages: ['src/io', 'src/net'], into: 'src/x', extra: 1 },
+      { kind: 'split-package', package: 'src/app', parts: [part('read', ['src/app/a.ts'])] },
+      { kind: 'split-package', package: 'src/app', parts: 'read' },
+      { kind: 'split-package', package: 'src/app', parts: [part('read', []), part('read', [])] },
+      { kind: 'split-package', package: 'src/app', parts: [part('read', ['src/app/a.ts']), part('write', ['src/app/a.ts'])] },
+      { kind: 'split-package', package: 'src/app', parts: [part('has space', []), part('write', [])] },
+      { kind: 'split-package', package: 'src/app', parts: [part(5, []), part('write', [])] },
+      { kind: 'split-package', package: 'src/app', parts: [part('read', 'src/app/a.ts'), part('write', [])] },
+      { kind: 'split-package', package: 'src/app', parts: [part('read', [6]), part('write', [])] },
+      { kind: 'split-package', package: 'src/app', parts: [{ name: 'read', files: [], extra: 1 }, part('write', [])] },
+      { kind: 'split-package', package: 'src/app', parts: ['read', part('write', [])] },
+      { kind: 'split-package', package: 7, parts: [part('read', []), part('write', [])] },
+      { kind: 'split-package', package: 'src/app', parts: [part('read', []), part('write', [])], extra: 1 },
+      { kind: 'fate', file: 'src/app/save.ts', fate: 'fold' },
+      { kind: 'fate', file: 'src/app/save.ts', fate: 'fold', into: 9 },
+      { kind: 'fate', file: 'src/app/save.ts', fate: 'delete', into: 'src/app/a.ts' },
+      { kind: 'fate', file: 'src/app/a.ts', fate: 'fold', into: 'src/app/a.ts' },
+      { kind: 'fate', file: 'src/app/a.ts', fate: 'burn' },
+      { kind: 'fate', file: 8, fate: 'delete' },
+      { kind: 'fate', file: 'src/app/a.ts', fate: 'delete', extra: 1 },
+    ];
+    for (const body of bad) expect(parsePlanEdit(body)).toBeUndefined();
+  });
+
+  it('renders each new kind as its pinned sentence', () => {
+    const split = (counts: number[]): PlanEdit => ({
+      kind: 'split-package',
+      package: 'src/app',
+      parts: counts.map((count, index) => ({ name: `p${index}`, files: Array.from({ length: count }, (_, at) => `src/app/f${index}${at}.ts`) })),
+    });
+    expect(sentenceOf({ kind: 'create-package', path: 'src/ports' })).toBe('Create package src/ports');
+    expect(sentenceOf({ kind: 'rename-package', from: 'src/util', to: 'src/text' })).toBe('Rename src/util to src/text');
+    expect(sentenceOf({ kind: 'rename-file', from: 'src/app/x.ts', to: 'y.ts' })).toBe('Rename src/app/x.ts to y.ts');
+    expect(sentenceOf({ kind: 'merge-packages', packages: ['src/io', 'src/net'], into: 'src/infra' })).toBe('Merge src/io and src/net into src/infra');
+    expect(sentenceOf({ kind: 'merge-packages', packages: ['src/app', 'src/domain', 'src/infra'], into: 'src/core' })).toBe(
+      'Merge src/app, src/domain and src/infra into src/core',
+    );
+    expect(sentenceOf(split([4, 3]))).toBe('Split src/app into src/app/p0 (4 files) and src/app/p1 (3 files)');
+    expect(sentenceOf(split([1, 1, 0]))).toBe('Split src/app into src/app/p0 (1 file), src/app/p1 (1 file) and src/app/p2 (0 files)');
+    expect(sentenceOf({ kind: 'fate', file: 'src/legacy.ts', fate: 'delete' })).toBe('Delete src/legacy.ts');
+    expect(sentenceOf({ kind: 'fate', file: 'src/helpers.ts', fate: 'fold', into: 'src/text/format.ts' })).toBe('Fold src/helpers.ts into src/text/format.ts');
+  });
+
+  it('reads names and paths by the pinned rules', () => {
+    expect(['a', 'a.ts', 'A-b_c.9', '.hidden'].map(legalName)).toEqual([true, true, true, true]);
+    expect(['', '.', '..', 'a b', 'a/b', 'é'].map(legalName)).toEqual([false, false, false, false, false, false]);
+    expect([parentOf('src/app/a.ts'), parentOf('a.ts')]).toEqual(['src/app', '']);
+    expect([lastSegment('src/app/a.ts'), lastSegment('a.ts')]).toEqual(['a.ts', 'a.ts']);
+    expect([childPath('src', 'ports'), childPath('', 'ports')]).toEqual(['src/ports', 'ports']);
+    expect([renamedFile('src/app/save.ts', 'writer.ts'), renamedFile('save.ts', 'writer.ts')]).toEqual(['src/app/writer.ts', 'writer.ts']);
+    expect(splitPartPath('src/app', 'read')).toBe('src/app/read');
+    expect([within('src/app', 'src/app'), within('src/app', 'src/app/a.ts'), within('src/app', 'src/apple.ts')]).toEqual([true, true, false]);
   });
 });
 

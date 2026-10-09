@@ -35,6 +35,7 @@ type BoxData = {
   cycle: boolean;
   abstract: boolean;
   test: boolean;
+  deleted: boolean;
   x: number;
   y: number;
   selected: boolean;
@@ -82,13 +83,14 @@ export type CanvasProps = {
   spots: PlacedBox[];
   hover: string | null;
   chosen: string | null;
+  also: string[];
   marked: MarkSel | null;
   overlay: OverlayName;
   crapMax: number;
   planning: Planning | null;
   focus: FocusRequest | null;
   onHover: (id: string | null) => void;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, shift: boolean) => void;
   onSelectMark: (mark: MarkSel) => void;
   onClear: () => void;
   onOpen: (id: string, kind: GraphNode['kind'] | null) => void;
@@ -170,7 +172,11 @@ function NoteMarks({ texts }: Readonly<{ texts: string[] }>) {
   );
 }
 
-function BoxRow({ row, onOpen }: Readonly<{ row: RowInk; onOpen: (path: string) => void }>) {
+function fateOf(deleted: boolean): 'delete' | undefined {
+  return deleted ? 'delete' : undefined;
+}
+
+function BoxRow({ row, planning }: Readonly<{ row: RowInk; planning: Planning }>) {
   if (row.ghost) {
     return (
       <div className="box-row" data-ghost="true" data-path={row.path} onDoubleClick={event => event.stopPropagation()}>
@@ -182,47 +188,94 @@ function BoxRow({ row, onOpen }: Readonly<{ row: RowInk; onOpen: (path: string) 
     <div
       className="box-row nodrag"
       data-path={row.path}
+      data-fate={fateOf(row.deleted)}
       draggable
       onDragStart={event => event.dataTransfer.setData(FILE_DRAG_MIME, row.path)}
       onDoubleClick={event => {
         event.stopPropagation();
-        onOpen(row.path);
+        planning.onOpenPlanned(row.path);
       }}
     >
-      {row.name}
+      <button
+        type="button"
+        className="box-row-name"
+        onClick={event => {
+          if (planning.onPickFile(row.path)) event.stopPropagation();
+        }}
+      >
+        {row.name}
+      </button>
     </div>
   );
 }
 
-function BoxRows({ rows, onOpen }: Readonly<{ rows: RowInk[]; onOpen: (path: string) => void }>) {
+function BoxRows({ rows, planning }: Readonly<{ rows: RowInk[]; planning: Planning }>) {
   if (rows.length === 0) return null;
   return (
     <div className="box-rows">
       {rows.map(row => (
-        <BoxRow key={row.path} row={row} onOpen={onOpen} />
+        <BoxRow key={row.path} row={row} planning={planning} />
       ))}
     </div>
   );
 }
 
-function BoxMenu({ onNote }: Readonly<{ onNote: () => void }>) {
+type MenuItem = { label: string; run: () => void };
+
+function packageItems(planning: Planning, id: string): MenuItem[] {
+  const items = [
+    { label: 'Rename', run: () => planning.onRename(id, 'package') },
+    { label: 'Split', run: () => planning.onSplit(id) },
+  ];
+  if (!planning.mergeReady) return items;
+  return [...items, { label: 'Merge', run: planning.onMerge }];
+}
+
+function fileItems(planning: Planning, id: string): MenuItem[] {
+  return [
+    { label: 'Rename', run: () => planning.onRename(id, 'file') },
+    { label: 'Delete', run: () => planning.onDelete(id) },
+    { label: 'Fold into…', run: () => planning.onFold(id) },
+  ];
+}
+
+function kindItems(kind: GraphNode['kind'], planning: Planning, id: string): MenuItem[] {
+  if (kind === 'package') return packageItems(planning, id);
+  return kind === 'file' ? fileItems(planning, id) : [];
+}
+
+function menuItems(kind: GraphNode['kind'], planning: Planning, id: string): MenuItem[] {
+  return [{ label: 'Add note', run: () => planning.onAddNote({ node: id }) }, ...kindItems(kind, planning, id)];
+}
+
+function BoxMenu({ items }: Readonly<{ items: MenuItem[] }>) {
   const [open, setOpen] = useState(false);
   return (
     <span className="box-menu nopan nodrag">
-      <button type="button" onClick={() => setOpen(current => !current)}>
+      <button
+        type="button"
+        onClick={event => {
+          event.stopPropagation();
+          setOpen(current => !current);
+        }}
+      >
         Menu
       </button>
       {open ? (
         <span role="menu">
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(false);
-              onNote();
-            }}
-          >
-            Add note
-          </button>
+          {items.map(item => (
+            <button
+              key={item.label}
+              type="button"
+              onClick={event => {
+                event.stopPropagation();
+                setOpen(false);
+                item.run();
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
         </span>
       ) : null}
     </span>
@@ -247,7 +300,7 @@ function boxDropProps(data: BoxData, id: string): { onDragOver?: (event: DragEve
 function boxMenu(data: BoxData, id: string): ReactNode {
   const planning = data.planning;
   if (planning === null || !data.selected) return null;
-  return <BoxMenu onNote={() => planning.onAddNote({ node: id })} />;
+  return <BoxMenu items={menuItems(data.kind, planning, id)} />;
 }
 
 function drawLabel(planning: Planning | null): string | undefined {
@@ -264,6 +317,7 @@ function Box({ id, data }: NodeProps<BoxNode>) {
       data-cycle={boolAttr(data.cycle)}
       data-abstract={boolAttr(data.abstract)}
       data-selected={boolAttr(data.selected)}
+      data-fate={fateOf(data.deleted)}
       onMouseEnter={() => data.onHover(id)}
       onMouseLeave={() => data.onHover(null)}
       {...boxDropProps(data, id)}
@@ -274,7 +328,7 @@ function Box({ id, data }: NodeProps<BoxNode>) {
       <TestTag show={data.test} />
       <HealthBadge text={data.badge} level={data.level} />
       <NoteMarks texts={data.noteTexts} />
-      {data.planning === null ? null : <BoxRows rows={data.rows} onOpen={data.planning.onOpenPlanned} />}
+      {data.planning === null ? null : <BoxRows rows={data.rows} planning={data.planning} />}
       {boxMenu(data, id)}
       <Handle type="source" position={Position.Bottom} aria-label={drawLabel(data.planning)} isConnectable={data.planning !== null} />
     </div>
@@ -442,6 +496,10 @@ function isTestNode(node: GraphNode): boolean {
   return (node as { test?: true }).test === true;
 }
 
+function isDeleted(node: GraphNode): boolean {
+  return (node as { fate?: 'delete' }).fate === 'delete';
+}
+
 function countOf(node: GraphNode): string | null {
   if (node.kind !== 'package') return null;
   return filesLabel(node.files);
@@ -450,6 +508,7 @@ function countOf(node: GraphNode): string | null {
 type BoxStyle = {
   hover: string | null;
   chosen: string | null;
+  also: string[];
   overlay: OverlayName;
   crapMax: number;
   planning: Planning | null;
@@ -472,9 +531,10 @@ function boxData(node: GraphNode, spot: PlacedBox, style: BoxStyle): BoxData {
     cycle: node.cycle,
     abstract: isAbstract(node),
     test: isTestNode(node),
+    deleted: isDeleted(node),
     x: spot.x,
     y: spot.y,
-    selected: node.id === style.chosen,
+    selected: node.id === style.chosen || style.also.includes(node.id),
     dimmed: style.hover !== null && style.hover !== node.id,
     badge: badgeText(style.overlay, node),
     level: badgeLevel(style.overlay, node, style.crapMax),
@@ -696,12 +756,13 @@ export function ArchCanvas(props: Readonly<CanvasProps & { view: GraphView }>) {
       zipBoxes(props.view.nodes, props.spots, {
         hover: props.hover,
         chosen: props.chosen,
+        also: props.also,
         overlay: props.overlay,
         crapMax: props.crapMax,
         planning,
         onHover: props.onHover,
       }),
-    [props.view.nodes, props.spots, props.hover, props.chosen, props.overlay, props.crapMax, planning, props.onHover],
+    [props.view.nodes, props.spots, props.hover, props.chosen, props.also, props.overlay, props.crapMax, planning, props.onHover],
   );
   const boxes = useMemo(() => [...nodes, ...(planning?.ink.ghosts ?? []).map(toGhost)], [nodes, planning]);
   const edges = useMemo(() => {
@@ -737,7 +798,7 @@ export function ArchCanvas(props: Readonly<CanvasProps & { view: GraphView }>) {
         connectionRadius={CONNECT_RADIUS}
         zoomOnDoubleClick={false}
         fitView
-        onNodeClick={(_event, node) => props.onSelect(node.id)}
+        onNodeClick={(event, node) => props.onSelect(node.id, event.shiftKey)}
         onNodeDoubleClick={(_event, node) => props.onOpen(node.id, nodeKind(node))}
         onNodeDragStop={(event, node) => props.onDropNode(node.id, nodeKind(node), node.position.x, node.position.y, event)}
         onEdgeClick={(_event, edge) => props.onSelectMark({ from: edge.source, to: edge.target, cut: edge.type === 'cutmark' })}

@@ -402,6 +402,7 @@ describe('plan documents and the planned graph', () => {
         { from: 'src/infra', to: 'src/domain', runtime: 2, type: 0, heritage: 1, cycle: false },
       ],
       stale: [null, null, null],
+      warnings: [[], [], [{ kind: 'added-cycle', cycle: 'app → infra → app' }]],
     });
     const drilled = graphOf(json(await hit(port, 'GET', '/api/graph?at=src/infra&plan=split-app', bearer)));
     expect(drilled.nodes.map(placeLabel)).toEqual(['src/infra/db.ts:0:0', 'src/infra/repo.ts:0:1', 'src/infra/save.ts:0:2']);

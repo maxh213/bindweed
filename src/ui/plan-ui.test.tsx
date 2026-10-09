@@ -1950,6 +1950,7 @@ describe('the plan canvas over a real server', () => {
             spots,
             hover: null,
             chosen: null,
+            also: [],
             marked: null,
             overlay: 'none',
             crapMax: 4,

@@ -416,6 +416,60 @@ aside[aria-label='changes'] ol {
   gap: 0.4rem;
 }
 
+.change {
+  flex-wrap: wrap;
+}
+
+.changes-heading {
+  margin: 0 0 0.4rem;
+  font-size: 0.9rem;
+}
+
+.warning-badge {
+  display: inline-block;
+  min-width: 1.1rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  background: #b45309;
+  color: #ffffff;
+  font-size: 0.7rem;
+  text-align: center;
+}
+
+.change-warnings,
+.change-importers {
+  flex-basis: 100%;
+  margin: 0.1rem 0 0;
+  padding-left: 0.8rem;
+  list-style: none;
+  font-size: 0.7rem;
+  color: #b45309;
+}
+
+[data-fate='delete'] {
+  text-decoration-line: line-through;
+}
+
+.box-row-name {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-decoration-line: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+
+.canvas-menu {
+  display: inline-block;
+}
+
+.canvas-menu [role='menu'] {
+  display: inline-flex;
+  gap: 0.25rem;
+  margin-left: 0.25rem;
+}
+
 .plan-dialog-backdrop {
   position: fixed;
   inset: 0;

@@ -33,6 +33,7 @@ function picture(over: Partial<Parameters<typeof planPicture>[0]> = {}) {
     edges: [],
     ids: new Set<string>(),
     packages: [],
+    warnings: undefined,
     ...over,
   });
 }
@@ -46,13 +47,31 @@ describe('the change list', () => {
 
   it('builds sentences with the edit and the reason attached', () => {
     expect(picture({ edits: [MOVE, CUT, ADD, NOTE_NODE, NOTE_EDGE], stale: [null, 'stale', null, null, null] }).entries).toEqual([
-      { edit: MOVE, sentence: 'Move src/app/save.ts to src/infra', stale: null },
-      { edit: CUT, sentence: 'src/app must not import src/domain (1 import)', stale: 'stale' },
-      { edit: ADD, sentence: 'src/infra should use src/app', stale: null },
-      { edit: NOTE_NODE, sentence: 'Note on src/domain: "pull an interface out here"', stale: null },
-      { edit: NOTE_EDGE, sentence: 'Note on src/app → src/infra: "keep this"', stale: null },
+      { edit: MOVE, sentence: 'Move src/app/save.ts to src/infra', stale: null, warnings: [] },
+      { edit: CUT, sentence: 'src/app must not import src/domain (1 import)', stale: 'stale', warnings: [] },
+      { edit: ADD, sentence: 'src/infra should use src/app', stale: null, warnings: [] },
+      { edit: NOTE_NODE, sentence: 'Note on src/domain: "pull an interface out here"', stale: null, warnings: [] },
+      { edit: NOTE_EDGE, sentence: 'Note on src/app → src/infra: "keep this"', stale: null, warnings: [] },
     ]);
-    expect(picture({ edits: [MOVE], stale: [] }).entries).toEqual([{ edit: MOVE, sentence: 'Move src/app/save.ts to src/infra', stale: null }]);
+    expect(picture({ edits: [MOVE], stale: [] }).entries).toEqual([{ edit: MOVE, sentence: 'Move src/app/save.ts to src/infra', stale: null, warnings: [] }]);
+  });
+});
+
+describe('change warnings', () => {
+  it('words each warning under its edit', () => {
+    const warnings = [
+      [{ kind: 'empty-package' as const, path: 'src/ports' }],
+      [{ kind: 'deleted-imports' as const, file: 'src/a.ts', importers: ['src/b.ts'] }],
+      [{ kind: 'deleted-imports' as const, file: 'src/m.ts', importers: ['src/b.ts', 'src/c.ts'] }],
+      [{ kind: 'added-cycle' as const, cycle: 'read → write → read' }],
+    ];
+    expect(picture({ edits: [MOVE, MOVE, MOVE, MOVE, MOVE], warnings }).entries.map(entry => entry.warnings)).toEqual([
+      [{ text: 'src/ports is empty', importers: [] }],
+      [{ text: '1 file still imports src/a.ts, which this plan deletes', importers: ['src/b.ts'] }],
+      [{ text: '2 files still import src/m.ts, which this plan deletes', importers: ['src/b.ts', 'src/c.ts'] }],
+      [{ text: 'this plan adds a cycle: read → write → read', importers: [] }],
+      [],
+    ]);
   });
 });
 
@@ -78,6 +97,17 @@ describe('entryTarget', () => {
     expect(entryTarget(NOTE_NODE)).toEqual({ kind: 'node', id: 'src/domain' });
     expect(entryTarget(NOTE_EDGE)).toEqual({ kind: 'arrow', from: 'src/app', to: 'src/infra', cut: false });
   });
+
+  it('maps each package edit and fate to the box it leaves behind', () => {
+    const split: PlanEdit = { kind: 'split-package', package: 'src/app', parts: [{ name: 'read', files: [] }, { name: 'write', files: [] }] };
+    expect(entryTarget({ kind: 'create-package', path: 'src/ports' })).toEqual({ kind: 'box', id: 'src/ports' });
+    expect(entryTarget({ kind: 'rename-package', from: 'src/infra', to: 'src/adapters' })).toEqual({ kind: 'box', id: 'src/adapters' });
+    expect(entryTarget({ kind: 'rename-file', from: 'src/app/save.ts', to: 'writer.ts' })).toEqual({ kind: 'box', id: 'src/app/writer.ts' });
+    expect(entryTarget({ kind: 'merge-packages', packages: ['src/a', 'src/b'], into: 'src/c' })).toEqual({ kind: 'box', id: 'src/c' });
+    expect(entryTarget(split)).toEqual({ kind: 'box', id: 'src/app/read' });
+    expect(entryTarget({ kind: 'fate', file: 'src/a.ts', fate: 'delete' })).toEqual({ kind: 'box', id: 'src/a.ts' });
+    expect(entryTarget({ kind: 'fate', file: 'src/a.ts', fate: 'fold', into: 'src/b.ts' })).toEqual({ kind: 'box', id: 'src/b.ts' });
+  });
 });
 
 describe('arrowViewAt', () => {
@@ -95,7 +125,7 @@ describe('package rows', () => {
       shown: 'planned',
       packages: [{ id: 'src/app', now: viewOf([packageNode('src/app'), fileNode('src/app/a.ts')]), planned: viewOf([packageNode('src/app'), fileNode('src/app/a.ts')]) }],
     });
-    expect(pack.ink.rows.get('src/app')).toEqual([{ path: 'src/app/a.ts', name: 'a.ts', ghost: false }]);
+    expect(pack.ink.rows.get('src/app')).toEqual([{ path: 'src/app/a.ts', name: 'a.ts', ghost: false, deleted: false }]);
     const missing = picture({
       packages: [
         { id: 'src/app', now: undefined, planned: undefined },
@@ -106,24 +136,38 @@ describe('package rows', () => {
     expect(missing.ink.rows.get('src/infra')).toEqual([]);
   });
 
+  it('marks a deleted file on its real row and never on its ghost', () => {
+    const doomed: GraphNode = { id: 'src/app/a.ts', kind: 'file', name: 'a.ts', path: 'src/app/a.ts', row: 0, order: 0, cycle: false, fate: 'delete' };
+    const planned = viewOf([doomed]);
+    const now = viewOf([fileNode('src/app/b.ts')]);
+    expect(picture({ shown: 'planned', packages: [{ id: 'src/app', now, planned }] }).ink.rows.get('src/app')).toEqual([
+      { path: 'src/app/a.ts', name: 'a.ts', ghost: false, deleted: true },
+      { path: 'src/app/b.ts', name: 'b.ts', ghost: true, deleted: false },
+    ]);
+    expect(picture({ shown: 'now', packages: [{ id: 'src/app', now, planned }] }).ink.rows.get('src/app')).toEqual([
+      { path: 'src/app/b.ts', name: 'b.ts', ghost: false, deleted: false },
+      { path: 'src/app/a.ts', name: 'a.ts', ghost: true, deleted: false },
+    ]);
+  });
+
   it('sorts real rows by name and appends ghost rows for files the shown view lacks', () => {
     const planned = viewOf([fileNode('src/app/b.ts'), fileNode('src/app/a.ts')]);
     const now = viewOf([fileNode('src/app/a.ts'), fileNode('src/app/save.ts'), fileNode('src/app/b.ts')]);
     expect(picture({ shown: 'planned', packages: [{ id: 'src/app', now, planned }] }).ink.rows.get('src/app')).toEqual([
-      { path: 'src/app/a.ts', name: 'a.ts', ghost: false },
-      { path: 'src/app/b.ts', name: 'b.ts', ghost: false },
-      { path: 'src/app/save.ts', name: 'save.ts', ghost: true },
+      { path: 'src/app/a.ts', name: 'a.ts', ghost: false, deleted: false },
+      { path: 'src/app/b.ts', name: 'b.ts', ghost: false, deleted: false },
+      { path: 'src/app/save.ts', name: 'save.ts', ghost: true, deleted: false },
     ]);
     expect(picture({ packages: [{ id: 'src/app', now: viewOf([]), planned: viewOf([]) }] }).ink.rows.get('src/app')).toEqual([]);
     const twins = viewOf([fileNode('a/x.ts'), fileNode('b/x.ts')]);
     expect(picture({ shown: 'now', packages: [{ id: 'src', now: twins, planned: viewOf([]) }] }).ink.rows.get('src')).toEqual([
-      { path: 'a/x.ts', name: 'x.ts', ghost: false },
-      { path: 'b/x.ts', name: 'x.ts', ghost: false },
+      { path: 'a/x.ts', name: 'x.ts', ghost: false, deleted: false },
+      { path: 'b/x.ts', name: 'x.ts', ghost: false, deleted: false },
     ]);
     expect(picture({ shown: 'planned', packages: [{ id: 'src/app', now, planned: viewOf([]) }] }).ink.rows.get('src/app')).toEqual([
-      { path: 'src/app/a.ts', name: 'a.ts', ghost: true },
-      { path: 'src/app/b.ts', name: 'b.ts', ghost: true },
-      { path: 'src/app/save.ts', name: 'save.ts', ghost: true },
+      { path: 'src/app/a.ts', name: 'a.ts', ghost: true, deleted: false },
+      { path: 'src/app/b.ts', name: 'b.ts', ghost: true, deleted: false },
+      { path: 'src/app/save.ts', name: 'save.ts', ghost: true, deleted: false },
     ]);
   });
 });

@@ -10,12 +10,20 @@ export type WorkspacePackage = { dir: string; name: string };
 
 type PlannedEdge = { from: string; to: string };
 
+export type PlanWarning =
+  | { kind: 'empty-package'; path: string }
+  | { kind: 'deleted-imports'; file: string; importers: string[] }
+  | { kind: 'added-cycle'; cycle: string };
+
 export type ScanResult = {
   files: ScannedFile[];
   edges: ScanEdge[];
   externals: ExternalRef[];
   workspaces: WorkspacePackage[];
   planned?: PlannedEdge[];
+  declared?: string[];
+  deleted?: string[];
+  hidden?: string[];
 };
 
 const TEST_DIR = /(^|\/)(__tests__|test|tests|e2e)(\/|$)/;

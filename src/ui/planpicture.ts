@@ -1,11 +1,11 @@
 import type { GraphNode, GraphView, ViewEdge } from '../domain/graph.ts';
 import { arrange, type LayerNode, type Pin, type PlacedBox } from '../domain/layout.ts';
-import { moveDest, sentenceOf, type NoteTarget, type PlanEdit } from '../domain/plan.ts';
+import { moveDest, renamedFile, sentenceOf, splitPartPath, type FateEdit, type NoteTarget, type PlanEdit } from '../domain/plan.ts';
 import { parentDir } from './draw.ts';
 
 export type ShownGraph = 'now' | 'planned';
 
-export type RowInk = { path: string; name: string; ghost: boolean };
+export type RowInk = { path: string; name: string; ghost: boolean; deleted: boolean };
 
 export type GhostBoxInk = { id: string; name: string; x: number; y: number };
 
@@ -23,20 +23,31 @@ export type PlanInk = {
 
 export type Planning = {
   ink: PlanInk;
+  mergeReady: boolean;
   onDropFile: (file: string, dir: string) => boolean;
   onDrawEdge: (from: string, to: string) => void;
   onCutEdge: (from: string, to: string) => void;
   onAddNote: (target: NoteTarget) => void;
   onOpenPlanned: (path: string) => void;
+  onRename: (id: string, kind: 'package' | 'file') => void;
+  onSplit: (id: string) => void;
+  onMerge: () => void;
+  onDelete: (file: string) => void;
+  onFold: (file: string) => void;
+  onPickFile: (path: string) => boolean;
 };
 
-type ChangeEntry = { edit: PlanEdit; sentence: string; stale: string | null };
+type PlanWarning = NonNullable<GraphView['warnings']>[number][number];
 
-type EntryTarget = { kind: 'node'; id: string } | { kind: 'arrow'; from: string; to: string; cut: boolean };
+type WarningLine = { text: string; importers: string[] };
+
+type ChangeEntry = { edit: PlanEdit; sentence: string; stale: string | null; warnings: WarningLine[] };
+
+type EntryTarget = { kind: 'node'; id: string } | { kind: 'box'; id: string } | { kind: 'arrow'; from: string; to: string; cut: boolean };
 
 type PlanView = GraphView | { error: string } | undefined;
 
-type DrilledFile = { id: string; name: string };
+type DrilledFile = { id: string; name: string; deleted: boolean };
 
 type PackageRows = { id: string; now: PlanView; planned: PlanView };
 
@@ -56,6 +67,7 @@ type PictureInput = {
   edges: ViewEdge[] | undefined;
   ids: Set<string>;
   packages: PackageRows[];
+  warnings: PlanWarning[][] | undefined;
 };
 
 function staleList(edits: PlanEdit[], stale: (string | null)[] | undefined): (string | null)[] {
@@ -89,11 +101,35 @@ function noteEntryTarget(target: NoteTarget): EntryTarget {
   return { kind: 'arrow', from: target.edge[0], to: target.edge[1], cut: false };
 }
 
+function fateTarget(edit: FateEdit): string {
+  return edit.fate === 'fold' ? edit.into : edit.file;
+}
+
+type PackageEdit = Exclude<PlanEdit, { kind: 'move-file' | 'cut-edge' | 'add-edge' | 'note' }>;
+
+function reshapeTarget(edit: Exclude<PackageEdit, { kind: 'create-package' | 'rename-package' }>): string {
+  if (edit.kind === 'rename-file') return renamedFile(edit.from, edit.to);
+  if (edit.kind === 'merge-packages') return edit.into;
+  if (edit.kind === 'split-package') return splitPartPath(edit.package, edit.parts[0].name);
+  return fateTarget(edit);
+}
+
+function boxTargetOf(edit: PackageEdit): EntryTarget {
+  if (edit.kind === 'create-package') return { kind: 'box', id: edit.path };
+  if (edit.kind === 'rename-package') return { kind: 'box', id: edit.to };
+  return { kind: 'box', id: reshapeTarget(edit) };
+}
+
+function laterTarget(edit: Exclude<PlanEdit, { kind: 'move-file' | 'cut-edge' | 'add-edge' }>): EntryTarget {
+  if (edit.kind === 'note') return noteEntryTarget(edit.target);
+  return boxTargetOf(edit);
+}
+
 export function entryTarget(edit: PlanEdit): EntryTarget {
   if (edit.kind === 'move-file') return { kind: 'node', id: moveDest(edit.file, edit.to) };
   if (edit.kind === 'cut-edge') return { kind: 'arrow', from: edit.from, to: edit.to, cut: true };
   if (edit.kind === 'add-edge') return { kind: 'arrow', from: edit.from, to: edit.to, cut: false };
-  return noteEntryTarget(edit.target);
+  return laterTarget(edit);
 }
 
 export function arrowViewAt(from: string, to: string): string {
@@ -103,7 +139,7 @@ export function arrowViewAt(from: string, to: string): string {
 
 function drilledFiles(view: PlanView): DrilledFile[] {
   if (view === undefined || 'error' in view) return [];
-  return view.nodes.filter(node => node.kind === 'file').map(node => ({ id: node.id, name: node.name }));
+  return view.nodes.filter(node => node.kind === 'file').map(node => ({ id: node.id, name: node.name, deleted: node.fate === 'delete' }));
 }
 
 function byRowName(a: { name: string }, b: { name: string }): number {
@@ -111,7 +147,7 @@ function byRowName(a: { name: string }, b: { name: string }): number {
 }
 
 function rowOf(file: DrilledFile, ghost: boolean): RowInk {
-  return { path: file.id, name: file.name, ghost };
+  return { path: file.id, name: file.name, ghost, deleted: !ghost && file.deleted };
 }
 
 function rowsFor(shown: DrilledFile[], other: DrilledFile[]): RowInk[] {
@@ -207,8 +243,23 @@ function addedOf(shown: ShownGraph, edits: PlanEdit[], stale: (string | null)[],
   return marksInView(addedMarkers(edits, stale, edges), ids);
 }
 
-function changeEntries(edits: PlanEdit[], stale: (string | null)[]): ChangeEntry[] {
-  return edits.map((edit, index) => ({ edit, sentence: sentenceOf(edit), stale: stale[index] ?? null }));
+function importLine(count: number, file: string): string {
+  if (count === 1) return `1 file still imports ${file}, which this plan deletes`;
+  return `${count} files still import ${file}, which this plan deletes`;
+}
+
+function warningLine(warning: PlanWarning): WarningLine {
+  if (warning.kind === 'empty-package') return { text: `${warning.path} is empty`, importers: [] };
+  if (warning.kind === 'added-cycle') return { text: `this plan adds a cycle: ${warning.cycle}`, importers: [] };
+  return { text: importLine(warning.importers.length, warning.file), importers: warning.importers };
+}
+
+function warningLines(warnings: PlanWarning[][] | undefined, index: number): WarningLine[] {
+  return (warnings?.[index] ?? []).map(warningLine);
+}
+
+function changeEntries(edits: PlanEdit[], stale: (string | null)[], warnings: PlanWarning[][] | undefined): ChangeEntry[] {
+  return edits.map((edit, index) => ({ edit, sentence: sentenceOf(edit), stale: stale[index] ?? null, warnings: warningLines(warnings, index) }));
 }
 
 function inkOf(input: PictureInput, stale: (string | null)[]): PlanInk {
@@ -225,7 +276,7 @@ export function planPicture(input: PictureInput): PlanPicture {
   const stale = staleList(input.edits, input.stale);
   return {
     ink: inkOf(input, stale),
-    entries: changeEntries(input.edits, stale),
+    entries: changeEntries(input.edits, stale, input.warnings),
     diskPath: path => diskPathOf(path, input.edits, stale),
   };
 }

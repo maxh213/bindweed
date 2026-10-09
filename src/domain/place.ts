@@ -1,4 +1,4 @@
-type Mark = { abstract?: true; test?: true };
+type Mark = { abstract?: true; test?: true; fate?: 'delete' };
 
 export type RawNode =
   | ({ id: string; kind: 'package'; name: string; path: string; files: number } & Mark)

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PlanEdit } from './domain/plan.ts';
-import { applyPlan, staleReasons } from './domain/planned.ts';
+import { applyPlan, planReport, staleReasons } from './domain/planned.ts';
 import type { ScanResult } from './domain/scan.ts';
 
 const LAYERED: ScanResult = {
@@ -229,5 +229,215 @@ describe('staleReasons', () => {
     expect(staleReasons(LAYERED, [{ kind: 'move-file', file: 'src/app/b.ts', to: 'src/infra' }, cut])).toEqual([null, 'no such file src/app/b.ts']);
     const movedCut: PlanEdit = { kind: 'cut-edge', from: 'src/infra', to: 'src/infra', files: [['src/infra/b.ts', 'src/infra/db.ts']] };
     expect(staleReasons(LAYERED, [{ kind: 'move-file', file: 'src/app/b.ts', to: 'src/infra' }, movedCut])).toEqual([null, null]);
+  });
+});
+
+const CREATE_PORTS: PlanEdit = { kind: 'create-package', path: 'src/ports' };
+const SPLIT_APP: PlanEdit = {
+  kind: 'split-package',
+  package: 'src/app',
+  parts: [
+    { name: 'read', files: ['src/app/a.test.ts', 'src/app/a.ts'] },
+    { name: 'write', files: ['src/app/b.ts', 'src/app/save.ts'] },
+  ],
+};
+
+function edgesOf(scan: ScanResult): string[] {
+  return scan.edges.map(edge => `${edge.from}>${edge.to}`);
+}
+
+function noCycles(): string[] {
+  return [];
+}
+
+describe('package edits and file fates in the walk', () => {
+  it('declares created packages, as parents too, and lets a move target them', () => {
+    const planned = applyPlan(LAYERED, [CREATE_PORTS, { kind: 'create-package', path: 'src/ports/deep' }, { kind: 'create-package', path: 'top' }, { kind: 'move-file', file: 'src/domain/shape.ts', to: 'src/ports' }]);
+    expect(planned.declared).toEqual(['src/ports', 'src/ports/deep', 'top']);
+    expect(pathsOf(planned)).toContain('src/ports/shape.ts');
+    expect(applyPlan(LAYERED, [])).not.toHaveProperty('declared');
+  });
+
+  it('gives the pinned reasons for creates and renames', () => {
+    expect(
+      staleReasons(LAYERED, [
+        { kind: 'create-package', path: 'lib/ports' },
+        { kind: 'create-package', path: 'src/infra' },
+        { kind: 'create-package', path: 'src/app/a.ts' },
+        { kind: 'rename-package', from: 'src/io', to: 'src/net' },
+        { kind: 'rename-package', from: 'src/infra', to: 'src/domain' },
+        { kind: 'rename-file', from: 'src/app/gone.ts', to: 'x.ts' },
+        { kind: 'rename-file', from: 'src/app/save.ts', to: 'b.ts' },
+      ]),
+    ).toEqual([
+      'no such directory lib',
+      'src/infra already exists',
+      'src/app/a.ts already exists',
+      'no such directory src/io',
+      'src/domain already exists',
+      'no such file src/app/gone.ts',
+      'src/app/b.ts already exists',
+    ]);
+  });
+
+  it('renames a package with its edges, externals, planned edges, declared paths and deleted marks', () => {
+    const planned = applyPlan(LAYERED, [
+      ADD_INFRA_APP,
+      { kind: 'create-package', path: 'src/infra/empty' },
+      { kind: 'fate', file: 'src/infra/db.ts', fate: 'delete' },
+      { kind: 'rename-package', from: 'src/infra', to: 'src/adapters' },
+    ]);
+    expect(pathsOf(planned).filter(path => path.startsWith('src/adapters/'))).toEqual(['src/adapters/db.ts', 'src/adapters/repo.ts']);
+    expect(edgesOf(planned)).toContain('src/app/a.ts>src/adapters/db.ts');
+    expect(planned.externals.map(ext => ext.from)).toEqual(['src/adapters/repo.ts', 'src/adapters/repo.ts']);
+    expect(planned.planned).toEqual([{ from: 'src/adapters', to: 'src/app' }]);
+    expect(planned.declared).toEqual(['src/adapters/empty']);
+    expect(planned.deleted).toEqual(['src/adapters/db.ts']);
+  });
+
+  it('renames a file in its directory and keeps its edges', () => {
+    const planned = applyPlan(LAYERED, [{ kind: 'rename-file', from: 'src/app/b.ts', to: 'c.ts' }]);
+    expect(pathsOf(planned)).toContain('src/app/c.ts');
+    expect(edgesOf(planned)).toContain('src/app/a.ts>src/app/c.ts');
+  });
+
+  it('gives the pinned reasons for merges', () => {
+    expect(
+      staleReasons(LAYERED, [
+        { kind: 'merge-packages', packages: ['src/app', 'src/gone'], into: 'src/x' },
+        { kind: 'merge-packages', packages: ['src/app', 'src/infra'], into: 'src/domain' },
+        { kind: 'merge-packages', packages: ['src/app', 'src/infra'], into: 'src/domain/model.ts' },
+      ]),
+    ).toEqual(['no such directory src/gone', 'src/domain already exists', 'src/domain/model.ts already exists']);
+    const twins: ScanResult = { ...LAYERED, files: [{ path: 'x/a.ts', test: false }, { path: 'y/a.ts', test: false }], edges: [], externals: [] };
+    expect(staleReasons(twins, [{ kind: 'merge-packages', packages: ['x', 'y'], into: 'z' }])).toEqual(['z/a.ts already exists']);
+    expect(staleReasons(twins, [{ kind: 'merge-packages', packages: ['x', 'y'], into: 'x' }])).toEqual(['x/a.ts already exists']);
+  });
+
+  it('merges files under their own sub-paths, into one of the packages too, and drops the others from the declared set', () => {
+    const into = applyPlan(LAYERED, [{ kind: 'merge-packages', packages: ['src/app', 'src/infra'], into: 'src/core' }]);
+    expect(pathsOf(into)).toEqual(['src/core/a.ts', 'src/core/b.ts', 'src/core/a.test.ts', 'src/core/save.ts', 'src/domain/model.ts', 'src/domain/shape.ts', 'src/core/db.ts', 'src/core/repo.ts']);
+    const kept = applyPlan(LAYERED, [SPLIT_APP, { kind: 'merge-packages', packages: ['src/app/read', 'src/app/write'], into: 'src/app/read' }]);
+    expect(pathsOf(kept).filter(path => path.startsWith('src/app/'))).toEqual(['src/app/read/a.ts', 'src/app/read/b.ts', 'src/app/read/a.test.ts', 'src/app/read/save.ts']);
+    expect(kept.declared).toEqual(['src/app/read']);
+    const back = applyPlan(LAYERED, [SPLIT_APP, { kind: 'merge-packages', packages: ['src/app/read', 'src/app/write'], into: 'src/app' }]);
+    expect(pathsOf(back)).toEqual(pathsOf(LAYERED));
+    expect(back).not.toHaveProperty('declared');
+    expect(back).not.toHaveProperty('hidden');
+  });
+
+  it('gives the pinned reasons for splits', () => {
+    const parts = (files: string[]) => [
+      { name: 'read', files },
+      { name: 'write', files: [] },
+    ];
+    expect(
+      staleReasons(LAYERED, [
+        { kind: 'split-package', package: 'src/gone', parts: parts([]) },
+        { kind: 'split-package', package: 'src/app', parts: parts(['src/infra/db.ts']) },
+        { kind: 'split-package', package: 'src/app', parts: parts(['src/app/gone.ts']) },
+        { kind: 'split-package', package: 'src/app', parts: [{ name: 'a.ts', files: [] }, { name: 'b.ts', files: [] }] },
+      ]),
+    ).toEqual(['no such directory src/gone', 'no such file src/infra/db.ts', 'no such file src/app/gone.ts', 'src/app/a.ts already exists']);
+  });
+
+  it('splits listed files into parts, leaves the rest, declares the parts and hides the emptied package', () => {
+    const partial = applyPlan(LAYERED, [{ kind: 'split-package', package: 'src/app', parts: [{ name: 'read', files: ['src/app/a.ts'] }, { name: 'write', files: [] }] }]);
+    expect(pathsOf(partial)).toContain('src/app/read/a.ts');
+    expect(pathsOf(partial)).toContain('src/app/b.ts');
+    expect(partial.declared).toEqual(['src/app/read', 'src/app/write']);
+    expect(partial).not.toHaveProperty('hidden');
+    const full = applyPlan(LAYERED, [SPLIT_APP]);
+    expect(full.hidden).toEqual(['src/app']);
+    const emptied = applyPlan(LAYERED, [{ kind: 'move-file', file: 'src/infra/db.ts', to: 'src/app' }, { kind: 'move-file', file: 'src/infra/repo.ts', to: 'src/app' }]);
+    expect(emptied).not.toHaveProperty('hidden');
+  });
+
+  it('gives the pinned reasons for fates', () => {
+    expect(
+      staleReasons(LAYERED, [
+        { kind: 'fate', file: 'src/app/gone.ts', fate: 'delete' },
+        { kind: 'fate', file: 'src/app/save.ts', fate: 'delete' },
+        { kind: 'fate', file: 'src/app/save.ts', fate: 'delete' },
+        { kind: 'fate', file: 'src/app/gone.ts', fate: 'fold', into: 'src/app/a.ts' },
+        { kind: 'fate', file: 'src/app/b.ts', fate: 'fold', into: 'src/app/gone.ts' },
+      ]),
+    ).toEqual(['no such file src/app/gone.ts', null, 'src/app/save.ts is already deleted', 'no such file src/app/gone.ts', 'no such file src/app/gone.ts']);
+  });
+
+  it('marks a deleted file that follows a move, and folds a file into another', () => {
+    const deleted = applyPlan(LAYERED, [{ kind: 'fate', file: 'src/app/save.ts', fate: 'delete' }, MOVE_SAVE]);
+    expect(deleted.deleted).toEqual(['src/infra/save.ts']);
+    expect(pathsOf(deleted)).toContain('src/infra/save.ts');
+    const folded = applyPlan(LAYERED, [
+      { kind: 'fate', file: 'src/infra/repo.ts', fate: 'delete' },
+      { kind: 'fate', file: 'src/infra/repo.ts', fate: 'fold', into: 'src/domain/shape.ts' },
+    ]);
+    expect(pathsOf(folded)).not.toContain('src/infra/repo.ts');
+    expect(edgesOf(folded)).toContain('src/app/a.ts>src/domain/shape.ts');
+    expect(edgesOf(folded)).not.toContain('src/domain/shape.ts>src/domain/shape.ts');
+    expect(folded.externals.map(ext => ext.from)).toEqual(['src/domain/shape.ts', 'src/domain/shape.ts']);
+    expect(folded).not.toHaveProperty('deleted');
+  });
+});
+
+describe('planReport', () => {
+  it('returns the planned scan and the stale list of the walk', () => {
+    const report = planReport(LAYERED, [MOVE_SAVE, { kind: 'move-file', file: 'src/app/gone.ts', to: 'src/infra' }], noCycles);
+    expect(report.scan).toEqual(applyPlan(LAYERED, [MOVE_SAVE]));
+    expect(report.stale).toEqual([null, 'no such file src/app/gone.ts']);
+    expect(report.warnings).toEqual([[], []]);
+  });
+
+  it('warns about empty packages on the declaring edit, sorted, with their final paths', () => {
+    const report = planReport(
+      LAYERED,
+      [
+        { kind: 'create-package', path: 'src/zeta' },
+        { kind: 'split-package', package: 'src/app', parts: [{ name: 'read', files: ['src/app/a.ts', 'src/app/b.ts', 'src/app/save.ts', 'src/app/a.test.ts'] }, { name: 'x', files: [] }, { name: 'b', files: [] }] },
+        { kind: 'rename-package', from: 'src/zeta', to: 'src/alpha' },
+        CREATE_PORTS,
+        { kind: 'move-file', file: 'src/domain/shape.ts', to: 'src/ports' },
+      ],
+      noCycles,
+    );
+    expect(report.warnings).toEqual([
+      [{ kind: 'empty-package', path: 'src/alpha' }],
+      [
+        { kind: 'empty-package', path: 'src/app/b' },
+        { kind: 'empty-package', path: 'src/app/x' },
+      ],
+      [],
+      [],
+      [],
+    ]);
+  });
+
+  it('warns about a deleted file that is still imported, with its distinct importers sorted', () => {
+    const report = planReport(LAYERED, [{ kind: 'fate', file: 'src/app/a.ts', fate: 'delete' }, { kind: 'fate', file: 'src/app/save.ts', fate: 'delete' }], noCycles);
+    expect(report.warnings).toEqual([[{ kind: 'deleted-imports', file: 'src/app/a.ts', importers: ['src/app/a.test.ts', 'src/app/b.ts'] }], []]);
+  });
+
+  it('puts a new cycle on the earliest edit after which it holds, and skips cycles the current scan has', () => {
+    const cycles = (scan: ScanResult): string[] => (scan.planned ?? []).map(edge => `${edge.from} → ${edge.to}`).concat(['old']);
+    const report = planReport(
+      LAYERED,
+      [ADD_INFRA_APP, { kind: 'move-file', file: 'src/app/missing.ts', to: 'src/infra' }, { kind: 'add-edge', from: 'src/domain', to: 'src/app' }],
+      cycles,
+    );
+    expect(report.stale).toEqual([null, 'no such file src/app/missing.ts', null]);
+    expect(report.warnings).toEqual([[{ kind: 'added-cycle', cycle: 'src/infra → src/app' }], [], [{ kind: 'added-cycle', cycle: 'src/domain → src/app' }]]);
+  });
+
+  it('lists empty packages before cycles on one edit', () => {
+    const cycles = (scan: ScanResult): string[] => ((scan.hidden ?? []).length > 0 ? ['b → a → b', 'a → b → a'] : []);
+    const report = planReport(LAYERED, [{ kind: 'split-package', package: 'src/app', parts: [{ name: 'read', files: ['src/app/a.ts', 'src/app/b.ts', 'src/app/save.ts', 'src/app/a.test.ts'] }, { name: 'spare', files: [] }] }], cycles);
+    expect(report.warnings).toEqual([
+      [
+        { kind: 'empty-package', path: 'src/app/spare' },
+        { kind: 'added-cycle', cycle: 'a → b → a' },
+        { kind: 'added-cycle', cycle: 'b → a → b' },
+      ],
+    ]);
   });
 });

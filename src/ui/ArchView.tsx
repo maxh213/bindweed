@@ -148,6 +148,7 @@ function CanvasArea(props: Readonly<CanvasAreaProps>) {
       spots={props.spots}
       hover={props.hover}
       chosen={props.chosen}
+      also={props.also}
       marked={props.marked}
       overlay={props.overlay}
       crapMax={props.crapMax}
@@ -219,6 +220,15 @@ function plannedOn(layout: LayoutDoc | undefined, slug: string | null): boolean 
   return layout !== undefined && slug !== null;
 }
 
+function addedId(list: string[], id: string): string[] {
+  return list.includes(id) ? list : [...list, id];
+}
+
+function selectionOf(chosen: string | null, also: string[], ids: Set<string>): string[] {
+  const kept = also.filter(id => id !== chosen && ids.has(id));
+  return chosen === null ? kept : [chosen, ...kept];
+}
+
 function deletableOf(marked: MarkSel | null): { from: string; to: string } | null {
   if (marked === null || marked.cut) return null;
   return { from: marked.from, to: marked.to };
@@ -245,6 +255,7 @@ function ArchPane(props: Readonly<ArchViewProps & { slug: string | null }>) {
   const [shown, setShown] = useState<Shown>('planned');
   const [picked, setPicked] = useState<string | null>(null);
   const [armed, setArmed] = useState<string | null>(null);
+  const [also, setAlso] = useState<string[]>([]);
   const [marked, setMarked] = useState<MarkSel | null>(null);
   const [hover, setHover] = useState<string | null>(null);
   const [metricsOpen, setMetricsOpen] = useState(false);
@@ -258,6 +269,7 @@ function ArchPane(props: Readonly<ArchViewProps & { slug: string | null }>) {
   const pins = pinsOf(layoutQuery.data, props.at);
   const ids = idsOf(state);
   const chosen = chosenId(picked, armed, ids);
+  const selection = selectionOf(chosen, also, ids);
   const detailPlan = detailPlanOf(shown, slug);
   const detailQuery = useQuery({
     queryKey: ['detail', props.token, props.at, detailId(chosen), settings.tests, settings.external, detailPlan] as const,
@@ -300,6 +312,7 @@ function ArchPane(props: Readonly<ArchViewProps & { slug: string | null }>) {
     other: viewOf(otherState),
     planned: viewOf(plannedState),
     ids,
+    selection,
     deletable: deletableOf(marked),
     onShown: setShown,
     onPlanChange: planChangerOf(props.onPlanChange),
@@ -327,6 +340,17 @@ function ArchPane(props: Readonly<ArchViewProps & { slug: string | null }>) {
     setPicked(null);
     setArmed(null);
     setMarked(null);
+    setAlso([]);
+  };
+  const selectBox = (id: string, shift: boolean): void => {
+    if (session.pickFile(id)) return;
+    setMarked(null);
+    if (shift && slug !== null) {
+      setAlso(current => addedId(current, id));
+      return;
+    }
+    setPicked(id);
+    setAlso([]);
   };
   const dropNode = (id: string, kind: GraphNode['kind'] | null, x: number, y: number, event: unknown): void => {
     const target = session.dropTarget(kind, event);
@@ -385,16 +409,14 @@ function ArchPane(props: Readonly<ArchViewProps & { slug: string | null }>) {
           spots={spots}
           hover={hover}
           chosen={chosen}
+          also={selection}
           marked={marked}
           overlay={overlay}
           crapMax={crapMaxOf(state)}
           planning={session.planning}
           focus={focus}
           onHover={setHover}
-          onSelect={id => {
-            setPicked(id);
-            setMarked(null);
-          }}
+          onSelect={selectBox}
           onSelectMark={mark => {
             setMarked(mark);
             setPicked(null);

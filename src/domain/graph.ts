@@ -9,7 +9,7 @@ import {
   type ReportFlag,
 } from './health.ts';
 import { byStrings, placeView, toViewEdge, type RawEdge, type RawNode, type ViewEdge, type ViewNode } from './place.ts';
-import type { ExternalRef, ScanEdge, ScanResult, ScannedFile, WorkspacePackage } from './scan.ts';
+import type { ExternalRef, PlanWarning, ScanEdge, ScanResult, ScannedFile, WorkspacePackage } from './scan.ts';
 
 export type { ViewEdge };
 
@@ -26,6 +26,7 @@ export type GraphView = {
   coverage: ReportFlag;
   mutation: ReportFlag;
   stale?: (string | null)[];
+  warnings?: PlanWarning[][];
 };
 
 type NodeCount = { isFile: boolean; files: number; abstract: boolean; test: boolean };
@@ -81,7 +82,7 @@ function flagOn(flags: GraphFlags, key: keyof GraphFlags): boolean {
   return flags[key] !== false;
 }
 
-type WorkspaceOrder = { ordered: WorkspacePackage[]; byDir: Map<string, string> };
+type WorkspaceOrder = { ordered: WorkspacePackage[]; byDir: Map<string, string>; hidden: Set<string>; deleted: Set<string> };
 
 function baseName(path: string): string {
   return path.slice(path.lastIndexOf('/') + 1);
@@ -118,9 +119,15 @@ function childNodeId(path: string, at: string): string {
   return inside && slash !== -1 ? `${at}/${rel.slice(0, slash)}` : path;
 }
 
-function nodeIdFor(path: string, at: string, ws: WorkspaceOrder): string {
+function groupedId(path: string, at: string, ws: WorkspaceOrder): string {
   if (at === '') return rootNodeId(path, ws);
   return childNodeId(path, at);
+}
+
+function nodeIdFor(path: string, at: string, ws: WorkspaceOrder): string {
+  let id = groupedId(path, at, ws);
+  while (ws.hidden.has(id)) id = childNodeId(path, id);
+  return id;
 }
 
 function newCount(isFile: boolean, file: ScannedFile): NodeCount {
@@ -165,16 +172,34 @@ function testMark(info: NodeCount): { test?: true } {
   return { test: true };
 }
 
+function fateMark(id: string, ws: WorkspaceOrder): { fate?: 'delete' } {
+  if (!ws.deleted.has(id)) return {};
+  return { fate: 'delete' };
+}
+
 function rawNode(id: string, info: NodeCount, ws: WorkspaceOrder): RawNode {
   const name = ws.byDir.get(id) ?? baseName(id);
-  const marks = { ...abstractMark(info.abstract), ...testMark(info) };
+  const marks = { ...abstractMark(info.abstract), ...testMark(info), ...fateMark(id, ws) };
   if (info.isFile) return { id, kind: 'file', name, path: id, ...marks };
   return { id, kind: 'package', name, path: id, files: info.files, ...marks };
+}
+
+function emptyDeclared(scan: ScanResult): string[] {
+  return (scan.declared ?? []).filter(path => !scan.files.some(file => contains(path, file.path)));
+}
+
+function addEmptyPackage(counts: Map<string, NodeCount>, path: string, at: string, ws: WorkspaceOrder): void {
+  const probe = `${path}/`;
+  if (!insideView(probe, at)) return;
+  const id = nodeIdFor(probe, at, ws);
+  if (id === probe || counts.has(id)) return;
+  counts.set(id, { isFile: false, files: 0, abstract: false, test: false });
 }
 
 function viewNodes(scan: ScanResult, at: string, ws: WorkspaceOrder, includeTests: boolean): RawNode[] {
   const counts = new Map<string, NodeCount>();
   for (const file of scan.files) addFileNode(counts, file, at, ws, includeTests);
+  for (const path of emptyDeclared(scan)) addEmptyPackage(counts, path, at, ws);
   return [...counts.entries()].map(([id, info]) => rawNode(id, info, ws));
 }
 
@@ -340,6 +365,8 @@ function orderOf(scan: ScanResult): WorkspaceOrder {
   return {
     ordered: [...scan.workspaces].sort((a, b) => b.dir.length - a.dir.length),
     byDir: new Map(scan.workspaces.map(workspace => [workspace.dir, workspace.name])),
+    hidden: new Set(scan.hidden),
+    deleted: new Set(scan.deleted),
   };
 }
 
@@ -352,11 +379,16 @@ function plannedRaw(scan: ScanResult, at: string, nodeIds: Set<string>, ws: Work
   return out;
 }
 
+function placedView(scan: ScanResult, dir: string, nodes: RawNode[], includeTests: boolean, ws: WorkspaceOrder): ReturnType<typeof placeView> {
+  const nodeIds = new Set(nodes.map(node => node.id));
+  const raw = [...viewEdges(scan, dir, nodeIds, includeTests, ws), ...plannedRaw(scan, dir, nodeIds, ws)].sort(byEndpoints);
+  return placeView(nodes, raw);
+}
+
 function assemble(scan: ScanResult, dir: string, rootName: string, nodes: RawNode[], flags: GraphFlags, ws: WorkspaceOrder, health: Health): GraphView {
   const nodeIds = new Set(nodes.map(node => node.id));
   const includeTests = flagOn(flags, 'tests');
-  const raw = [...viewEdges(scan, dir, nodeIds, includeTests, ws), ...plannedRaw(scan, dir, nodeIds, ws)].sort(byEndpoints);
-  const placed = placeView(nodes, raw);
+  const placed = placedView(scan, dir, nodes, includeTests, ws);
   const ext = flagOn(flags, 'external') ? externalEdges(scan, dir, nodeIds, includeTests, ws) : [];
   const index = martinIndex(scan);
   const drawn = withExternals(
@@ -385,6 +417,37 @@ export function graphView(scan: ScanResult, at: string, rootName: string, flags:
   const nodes = viewNodes(scan, dir, ws, flagOn(flags, 'tests'));
   if (emptyView(nodes, dir)) return null;
   return assemble(scan, dir, rootName, nodes, flags, ws, health);
+}
+
+function ancestorDirs(path: string): string[] {
+  const segments = path.split('/').slice(0, -1);
+  return segments.map((_, index) => segments.slice(0, index + 1).join('/'));
+}
+
+function viewDirs(scan: ScanResult): string[] {
+  return [...new Set(['', ...scan.files.flatMap(file => ancestorDirs(file.path))])];
+}
+
+function pairKey(edge: ViewEdge): string {
+  return [edge.from, edge.to].sort(byStrings).join('\n');
+}
+
+function keepSmaller(texts: Map<string, string>, key: string, text: string): void {
+  const found = texts.get(key);
+  if (found === undefined || text < found) texts.set(key, text);
+}
+
+function viewCycleTexts(scan: ScanResult, dir: string, ws: WorkspaceOrder): string[] {
+  const texts = new Map<string, string>();
+  for (const edge of placedView(scan, dir, viewNodes(scan, dir, ws, false), false, ws).edges) {
+    if (edge.cycleText !== undefined) keepSmaller(texts, pairKey(edge), edge.cycleText);
+  }
+  return [...texts.values()];
+}
+
+export function cycleTexts(scan: ScanResult): string[] {
+  const ws = orderOf(scan);
+  return [...new Set(viewDirs(scan).flatMap(dir => viewCycleTexts(scan, dir, ws)))];
 }
 
 type Tally = { runtime: number; type: number; heritage: number };

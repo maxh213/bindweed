@@ -3,7 +3,20 @@ import { createElement, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PlanSummary } from '../domain/plan.ts';
-import { ChangeList, DeletePlanDialog, NewPlanDialog, NoteDialog, Notice, PlanSelect, ShownSwitch } from './PlanBar.tsx';
+import {
+  CanvasMenu,
+  ChangeList,
+  DeletePlanDialog,
+  MergeDialog,
+  NewPackageDialog,
+  NewPlanDialog,
+  NoteDialog,
+  Notice,
+  PlanSelect,
+  RenameDialog,
+  ShownSwitch,
+  SplitDialog,
+} from './PlanBar.tsx';
 
 const PLANS: PlanSummary[] = [
   { name: 'Split app', slug: 'split-app', editCount: 0, createdAt: '2026-10-01T00:00:00.000Z' },
@@ -16,8 +29,8 @@ const LABELS = new Map([
 ]);
 
 const ENTRIES = [
-  { sentence: 'Move src/app/save.ts to src/infra', stale: null },
-  { sentence: 'src/app must not import src/domain (1 import)', stale: 'no such file src/app/a.ts' },
+  { sentence: 'Move src/app/save.ts to src/infra', stale: null, warnings: [] },
+  { sentence: 'src/app must not import src/domain (1 import)', stale: 'no such file src/app/a.ts', warnings: [] },
 ];
 
 function rowAt(rows: Element[], index: number): Element {
@@ -240,14 +253,105 @@ describe('the plan bar components', () => {
   it('keys repeated sentences without duplicate-key warnings', async () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const entries = [
-      { sentence: 'Move a.ts to b', stale: null },
-      { sentence: 'Move a.ts to b', stale: null },
-      { sentence: 'Move a.ts to b', stale: 'gone' },
+      { sentence: 'Move a.ts to b', stale: null, warnings: [] },
+      { sentence: 'Move a.ts to b', stale: null, warnings: [] },
+      { sentence: 'Move a.ts to b', stale: 'gone', warnings: [] },
     ];
     await show(createElement(ChangeList, { entries, canUndo: true, canRedo: false, onUndo: () => undefined, onRedo: () => undefined, onPick: () => undefined, onRemove: () => undefined }));
     expect(document.querySelectorAll('li.change')).toHaveLength(3);
     const keyWarnings = spy.mock.calls.filter(args => String(args[0]).includes('same key'));
     expect(keyWarnings).toEqual([]);
     spy.mockRestore();
+  });
+
+  it('counts warnings on the heading badge and words the count', async () => {
+    type Line = { sentence: string; stale: string | null; warnings: { text: string; importers: string[] }[] };
+    const none: Line = { sentence: 'Create package src/ports', stale: null, warnings: [] };
+    const one: Line = { sentence: 'Create package src/ports', stale: null, warnings: [{ text: 'src/ports is empty', importers: [] }] };
+    const list = (entries: Line[]) =>
+      createElement(ChangeList, { entries, canUndo: true, canRedo: false, onUndo: () => undefined, onRedo: () => undefined, onPick: () => undefined, onRemove: () => undefined });
+    await show(list([none]));
+    expect(textOf('.changes-heading')).toBe('Changes ');
+    expect(document.querySelector('.warning-badge')).toBeNull();
+    expect(document.querySelector('.change-warnings')).toBeNull();
+    await show(list([one]));
+    expect(textOf('.warning-badge')).toBe('1');
+    expect(document.querySelector('.warning-badge')?.getAttribute('aria-label')).toBe('1 warning');
+    expect(textOf('.change-warning-text')).toBe('src/ports is empty');
+    expect(document.querySelector('li.change')?.hasAttribute('data-stale')).toBe(false);
+    expect(Array.from(document.querySelectorAll('li.change button')).map(el => el.textContent)).toEqual(['Create package src/ports', '×']);
+    await show(list([one, { ...one, warnings: [...one.warnings, { text: 'this plan adds a cycle: a → b → a', importers: [] }] }]));
+    expect(textOf('.warning-badge')).toBe('3');
+    expect(document.querySelector('.warning-badge')?.getAttribute('aria-label')).toBe('3 warnings');
+  });
+
+  it('shows and hides the importers of a deleted file', async () => {
+    const entry = { sentence: 'Delete src/m.ts', stale: null, warnings: [{ text: '2 files still import src/m.ts, which this plan deletes', importers: ['src/a.ts', 'src/b.ts'] }] };
+    await show(createElement(ChangeList, { entries: [entry], canUndo: true, canRedo: false, onUndo: () => undefined, onRedo: () => undefined, onPick: () => undefined, onRemove: () => undefined }));
+    expect(document.querySelector('.change-importers')).toBeNull();
+    await click(button('Show importers'));
+    expect(Array.from(document.querySelectorAll('.change-importers li')).map(el => el.textContent)).toEqual(['src/a.ts', 'src/b.ts']);
+    await click(button('Hide importers'));
+    expect(document.querySelector('.change-importers')).toBeNull();
+  });
+
+  it('asks for a package name, a new name and a merged name', async () => {
+    const calls: string[] = [];
+    const dialogs = [
+      [NewPackageDialog, 'New package', 'Create'],
+      [RenameDialog, 'Rename', 'Rename'],
+      [MergeDialog, 'Merge packages', 'Merge'],
+    ] as const;
+    for (const [Dialog, label, submit] of dialogs) {
+      await show(createElement(Dialog, { error: null, onSubmit: name => calls.push(`${submit}:${name}`), onCancel: () => calls.push(`cancel:${submit}`) }));
+      expect(document.querySelector('dialog')?.getAttribute('aria-label')).toBe(label);
+      await click(button(submit));
+      expect(textOf('.plan-dialog-error')).toBe('write a name');
+      await typeText(document.querySelector('input[aria-label="Name"]') as Element, ' ports ');
+      await click(button(submit));
+      await click(button('Cancel'));
+      await show(createElement(Dialog, { error: 'bad name', onSubmit: () => undefined, onCancel: () => undefined }));
+      expect(textOf('.plan-dialog-error')).toBe('bad name');
+    }
+    expect(calls).toEqual(['Create:ports', 'cancel:Create', 'Rename:ports', 'cancel:Rename', 'Merge:ports', 'cancel:Merge']);
+  });
+
+  it('splits with two part fields, adds parts and offers the typed names per file', async () => {
+    const calls: unknown[] = [];
+    const files = [
+      { path: 'src/app/a.ts', label: 'a.ts' },
+      { path: 'src/app/sub/b.ts', label: 'sub/b.ts' },
+    ];
+    await show(createElement(SplitDialog, { files, error: null, onSplit: (names, assigned) => calls.push({ names, assigned }), onCancel: () => calls.push('cancel') }));
+    expect(document.querySelector('dialog')?.getAttribute('aria-label')).toBe('Split package');
+    expect(Array.from(document.querySelectorAll('dialog input')).map(el => el.getAttribute('aria-label'))).toEqual(['Part 1', 'Part 2']);
+    expect(Array.from(document.querySelectorAll('dialog select')).map(el => el.getAttribute('aria-label'))).toEqual(['a.ts', 'sub/b.ts']);
+    expect(Array.from(document.querySelectorAll('select[aria-label="a.ts"] option')).map(el => el.textContent)).toEqual(['choose']);
+    await click(button('Add part'));
+    await click(button('Add part'));
+    expect(Array.from(document.querySelectorAll('dialog input')).map(el => el.getAttribute('aria-label'))).toEqual(['Part 1', 'Part 2', 'Part 3', 'Part 4']);
+    await typeText(document.querySelector('input[aria-label="Part 1"]') as Element, 'read');
+    await typeText(document.querySelector('input[aria-label="Part 2"]') as Element, ' write ');
+    await typeText(document.querySelector('input[aria-label="Part 3"]') as Element, 'read');
+    expect(Array.from(document.querySelectorAll('select[aria-label="a.ts"] option')).map(el => el.textContent)).toEqual(['choose', 'read', 'write']);
+    await change(document.querySelector('select[aria-label="a.ts"]') as Element, 'read');
+    await click(button('Split'));
+    await click(button('Cancel'));
+    expect(calls).toEqual([{ names: ['read', ' write ', 'read', ''], assigned: { 'src/app/a.ts': 'read' } }, 'cancel']);
+    await show(createElement(SplitDialog, { files: [], error: 'assign every file', onSplit: () => undefined, onCancel: () => undefined }));
+    expect(textOf('.plan-dialog-error')).toBe('assign every file');
+  });
+
+  it('opens the canvas menu with New package and closes it on choice', async () => {
+    const calls: string[] = [];
+    await show(createElement(CanvasMenu, { onNewPackage: () => calls.push('new') }));
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    await click(button('Canvas'));
+    await click(button('New package'));
+    expect(calls).toEqual(['new']);
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    await click(button('Canvas'));
+    await click(button('Canvas'));
+    expect(document.querySelector('[role="menu"]')).toBeNull();
   });
 });

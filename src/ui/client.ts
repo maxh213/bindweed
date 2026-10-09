@@ -35,7 +35,14 @@ const errorBodySchema = z.object({ error: z.string().optional() });
 const nodeMarks = {
   abstract: z.literal(true).optional(),
   test: z.literal(true).optional(),
+  fate: z.literal('delete').optional(),
 };
+
+const warningSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('empty-package'), path: z.string() }),
+  z.object({ kind: z.literal('deleted-imports'), file: z.string(), importers: z.array(z.string()) }),
+  z.object({ kind: z.literal('added-cycle'), cycle: z.string() }),
+]);
 
 const healthFields = {
   crap: z.union([z.number(), z.literal('–')]).optional(),
@@ -136,6 +143,7 @@ const graphJsonSchema: z.ZodType<GraphView> = z.object({
   coverage: reportFlag.default('off'),
   mutation: reportFlag.default('off'),
   stale: z.array(z.string().nullable()).optional(),
+  warnings: z.array(z.array(warningSchema)).optional(),
 });
 
 const rescanJsonSchema = z.object({ files: z.number(), ms: z.number() });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { edgePairs, graphView, nodeDetail, type GraphFlags, type GraphView, type NodeDetail } from './domain/graph.ts';
+import { cycleTexts, edgePairs, graphView, nodeDetail, type GraphFlags, type GraphView, type NodeDetail } from './domain/graph.ts';
 import { emptyHealth, type Health } from './domain/health.ts';
 import { isTestPath, type ScanResult, type WorkspacePackage } from './domain/scan.ts';
 
@@ -800,5 +800,49 @@ describe('edgePairs', () => {
 
   it('matches a file arrow in a drilled view', () => {
     expect(edgePairs(LAYERED, 'src/app', 'src/app/a.ts', 'src/app/b.ts')).toEqual([['src/app/a.ts', 'src/app/b.ts']]);
+  });
+});
+
+describe('graphView over a planned scan', () => {
+  it('draws an empty declared package where a file in it would be grouped, and not in its own view', () => {
+    const scan: ScanResult = { ...LAYERED, declared: ['src/ports', 'src/app'] };
+    expect(view(scan, 'src').nodes.find(node => node.id === 'src/ports')).toMatchObject({ kind: 'package', files: 0, row: 2, order: 1, cycle: false });
+    expect(view(scan, 'src').nodes.find(node => node.id === 'src/app')).toMatchObject({ files: 2 });
+    expect(view(scan, '').nodes.map(node => node.id)).toEqual(['src']);
+    expect(graphView(scan, 'src/ports', 'repo')).toBeNull();
+    expect(view(scan, 'src/app').nodes.map(node => node.id)).toEqual(['src/app/a.ts', 'src/app/b.ts']);
+  });
+
+  it('stands the children of a hidden package in its place, at every depth', () => {
+    const scan: ScanResult = {
+      ...scanOf(['src/app/read/a.ts', 'src/app/write/deep/b.ts', 'src/infra/db.ts'], [['src/app/read/a.ts', 'src/app/write/deep/b.ts']]),
+      hidden: ['src/app', 'src/app/write'],
+    };
+    expect(view(scan, 'src').nodes.map(node => node.id).sort()).toEqual(['src/app/read', 'src/app/write/deep', 'src/infra']);
+    expect(view(scan, 'src').edges.map(edge => `${edge.from}>${edge.to}`)).toEqual(['src/app/read>src/app/write/deep']);
+    expect(view(scan, 'src/app').nodes.map(node => node.id)).toEqual(['src/app/read', 'src/app/write/deep']);
+    expect(view(scan, '').nodes.map(node => node.id)).toEqual(['src']);
+    expect(edgePairs(scan, 'src', 'src/app/read', 'src/app/write/deep')).toEqual([['src/app/read/a.ts', 'src/app/write/deep/b.ts']]);
+  });
+
+  it('marks a deleted file box with its fate', () => {
+    const scan: ScanResult = { ...LAYERED, deleted: ['src/domain/model.ts'] };
+    expect(view(scan, 'src/domain').nodes[0]).toMatchObject({ id: 'src/domain/model.ts', fate: 'delete' });
+    expect(view(LAYERED, 'src/domain').nodes[0]).not.toHaveProperty('fate');
+  });
+});
+
+describe('cycleTexts', () => {
+  it('collects the smaller text of each cycle pair from the root and every directory, once', () => {
+    expect(cycleTexts(LAYERED)).toEqual(['a.ts → b.ts → a.ts']);
+    const planned: ScanResult = { ...LAYERED, planned: [{ from: 'src/infra', to: 'src/app' }] };
+    expect(cycleTexts(planned).sort()).toEqual(['a.ts → b.ts → a.ts', 'app → infra → app']);
+    const twice: ScanResult = scanOf(['x/a/p.ts', 'x/a/q.ts', 'y/a/p.ts', 'y/a/q.ts'], [['x/a/p.ts', 'x/a/q.ts'], ['x/a/q.ts', 'x/a/p.ts'], ['y/a/p.ts', 'y/a/q.ts'], ['y/a/q.ts', 'y/a/p.ts']]);
+    expect(cycleTexts(twice)).toEqual(['p.ts → q.ts → p.ts']);
+    expect(cycleTexts(scanOf(['a.ts'], []))).toEqual([]);
+  });
+
+  it('leaves out test files', () => {
+    expect(cycleTexts(scanOf(['src/a.ts', 'src/a.test.ts'], [['src/a.ts', 'src/a.test.ts'], ['src/a.test.ts', 'src/a.ts']]))).toEqual([]);
   });
 });
