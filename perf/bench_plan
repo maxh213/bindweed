@@ -1,0 +1,608 @@
+#!/usr/bin/env node
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import {
+  VALUES,
+  WARMUP,
+  absent,
+  cleanup,
+  emit,
+  fixtureRepo,
+  fixtureUi,
+  hit,
+  keepAliveAgent,
+  loadExport,
+  loadModule,
+  sample,
+} from './harness.mjs';
+
+const PACKAGES = 20;
+const PER_PACKAGE = 200;
+const DEEP_FILES = 100;
+const WORKSPACES = 8;
+const MOVE_COUNT = 20;
+const CUT_COUNT = 10;
+const ADD_COUNT = 10;
+const NOTE_COUNT = 5;
+
+const APPLY = 'applyPlan 4100 files';
+const STALE = 'staleReasons 4100 files';
+const PAIRS = 'edgePairs 4100 files';
+const GRAPH_ROOT = 'graphView root 4100 files planned';
+const GRAPH_DEEP = 'graphView deep 100 files planned';
+const PARSE = 'parsePlan 50 edits';
+const PICTURE = 'planPicture 4100 files';
+const ROSTER = 'planRoster 200 plans';
+const KEY = 'keyActionOf';
+const COLOR = 'plannedColor';
+const FETCH_GRAPH = 'fetchGraph planned 500 nodes';
+const FETCH_PLANS = 'fetchPlans 200 plans';
+const FETCH_PLAN = 'fetchPlan 50 edits';
+const POST_PLAN = 'postPlan 50 edits';
+const PUT_PLAN = 'putPlan 50 edits';
+const DELETE_CLIENT = 'deletePlan';
+const FETCH_PAIRS = 'fetchPairs 100 pairs';
+
+const HTTP_TARGETS = [
+  'GET /api/plans',
+  'POST /api/plans',
+  'GET /api/plans/split-app',
+  'PUT /api/plans/split-app',
+  'DELETE /api/plans/:slug',
+  'GET /api/pairs?plan=split-app',
+  'GET /api/graph?plan=split-app',
+  'GET /api/graph?at=src&plan=split-app',
+  'GET /api/detail?plan=split-app',
+];
+
+const PLAN_SLUG = 'split-app';
+const CREATED_AT = '2026-10-09T12:00:00.000Z';
+const COMMIT = 'ab'.repeat(20);
+
+const applyPlan = await loadExport('src/domain/planned.ts', 'applyPlan');
+const staleReasons = await loadExport('src/domain/planned.ts', 'staleReasons');
+const edgePairs = await loadExport('src/domain/graph.ts', 'edgePairs');
+const graphView = await loadExport('src/domain/graph.ts', 'graphView');
+const planMod = await loadModule('src/domain/plan.ts');
+const pictureMod = await loadModule('src/ui/planpicture.ts');
+const rosterMod = await loadModule('src/ui/planroster.ts');
+const gestureMod = await loadModule('src/ui/plangesture.ts');
+const drawMod = await loadModule('src/ui/draw.ts');
+const client = await loadModule('src/ui/client.ts');
+
+function packageFiles(files, edges) {
+  for (let i = 0; i < PACKAGES; i += 1) {
+    for (let j = 0; j < PER_PACKAGE; j += 1) {
+      const from = `pkg${i}/f${j}.ts`;
+      files.push({ path: from, test: j % 50 === 0 });
+      for (let k = 1; k <= 5; k += 1) {
+        const to =
+          k <= 3
+            ? `pkg${i}/f${(j + k * 7) % PER_PACKAGE}.ts`
+            : `pkg${(i + k) % PACKAGES}/f${(j + k * 3) % PER_PACKAGE}.ts`;
+        edges.push({ from, to, kind: k === 5 ? 'type' : 'runtime' });
+      }
+    }
+  }
+}
+
+function deepFiles(files, edges) {
+  for (let j = 0; j < DEEP_FILES; j += 1) {
+    const from = `deep/f${j}.ts`;
+    files.push({ path: from, test: false });
+    for (let k = 1; k <= 5; k += 1) edges.push({ from, to: `deep/f${(j + k * 7) % DEEP_FILES}.ts`, kind: k === 5 ? 'type' : 'runtime' });
+  }
+}
+
+function buildScan() {
+  const files = [];
+  const edges = [];
+  packageFiles(files, edges);
+  deepFiles(files, edges);
+  const workspaces = [];
+  for (let i = 0; i < WORKSPACES; i += 1) workspaces.push({ dir: `pkg${i}`, name: `@acme/pkg${i}` });
+  return { files, edges, externals: [], workspaces };
+}
+
+function buildEdits(scan) {
+  const cuts = [];
+  const seen = new Set();
+  for (const edge of scan.edges) {
+    if (!edge.from.startsWith('pkg1/') || !edge.to.startsWith('pkg1/')) continue;
+    const key = `${edge.from}\n${edge.to}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    cuts.push({ kind: 'cut-edge', from: edge.from, to: edge.to, files: [[edge.from, edge.to]] });
+    if (cuts.length === CUT_COUNT) break;
+  }
+  if (cuts.length !== CUT_COUNT) throw new Error(`expected ${CUT_COUNT} cuts, found ${cuts.length}`);
+  const moves = [];
+  for (let i = 1; i <= MOVE_COUNT; i += 1) moves.push({ kind: 'move-file', file: `pkg0/f${i}.ts`, to: '.' });
+  const adds = [];
+  for (let i = 0; i < ADD_COUNT; i += 1) adds.push({ kind: 'add-edge', from: `pkg${i}`, to: `pkg${i + 10}` });
+  const notes = [];
+  for (let i = 0; i < NOTE_COUNT; i += 1) notes.push({ kind: 'note', target: { node: `pkg${i}` }, text: `note ${i}` });
+  for (let i = 0; i < NOTE_COUNT; i += 1) {
+    notes.push({ kind: 'note', target: { edge: [`pkg${i}`, `pkg${i + 4}`] }, text: `edge ${i}` });
+  }
+  return [...cuts, ...moves, ...adds, ...notes];
+}
+
+function planDocument(edits) {
+  return {
+    version: 1,
+    name: 'Split app',
+    slug: PLAN_SLUG,
+    createdAt: CREATED_AT,
+    baseCommit: COMMIT,
+    edits,
+    redo: [],
+  };
+}
+
+function requireView(view, count, label) {
+  if (view === null || view === undefined || view.nodes.length < count) throw new Error(`${label} did not draw`);
+  return view;
+}
+
+function summariesOf(count) {
+  const plans = [];
+  for (let i = 0; i < count; i += 1) {
+    plans.push({
+      name: i % 5 === 0 ? 'Split app' : `Plan ${i}`,
+      slug: `plan-${i}`,
+      editCount: i % 7,
+      createdAt: CREATED_AT,
+    });
+  }
+  return plans;
+}
+
+function plannedGraphBody() {
+  const nodes = [];
+  const edges = [];
+  for (let i = 0; i < 500; i += 1) {
+    nodes.push({
+      id: `pkg${i}`,
+      kind: 'package',
+      name: `pkg${i}`,
+      path: `pkg${i}`,
+      files: 8,
+      row: 0,
+      order: i,
+      cycle: false,
+      ca: i % 7,
+      ce: i % 5,
+      i: (i % 100 / 100).toFixed(2),
+      a: '0.00',
+      d: (i % 50 / 100).toFixed(2),
+      zone: i % 3 === 0 ? 'pain' : 'healthy',
+      crap: i % 13,
+      coverage: (i % 100 / 100).toFixed(2),
+      mutants: i % 4,
+    });
+    if (i > 0) edges.push({ from: `pkg${i - 1}`, to: `pkg${i}`, runtime: 0, type: 0, planned: true, cycle: i % 17 === 0 });
+  }
+  const stale = [];
+  for (let i = 0; i < 50; i += 1) stale.push(null);
+  return {
+    at: '',
+    crumbs: [{ name: 'perf-repo', at: '' }],
+    nodes,
+    edges,
+    crapMax: 4,
+    coverage: 'on',
+    mutation: 'on',
+    stale,
+  };
+}
+
+function pairBody() {
+  const pairs = [];
+  for (let i = 0; i < 100; i += 1) pairs.push([`pkg0/f${i}.ts`, `pkg4/f${i}.ts`]);
+  return { pairs };
+}
+
+function jsonFetcher(body) {
+  return async () => ({ ok: true, json: async () => body });
+}
+
+function parsedOk(value, label) {
+  if (value === null || typeof value !== 'object' || 'error' in value) throw new Error(`${label} rejected the body`);
+}
+
+function hasFn(mod, name) {
+  return mod !== undefined && typeof mod[name] === 'function';
+}
+
+function readJson(res) {
+  return JSON.parse(res.body.toString('utf8'));
+}
+
+function errorText(res) {
+  try {
+    const parsed = readJson(res);
+    return typeof parsed.error === 'string' ? parsed.error : '';
+  } catch {
+    return '';
+  }
+}
+
+async function measureScan(scan, edits) {
+  const reasons = staleReasons(scan, edits);
+  if (reasons.length !== edits.length || reasons.some(reason => reason !== null)) {
+    throw new Error(`${STALE} fixture: ${JSON.stringify(reasons)}`);
+  }
+  const planned = applyPlan(scan, edits);
+  if (!planned.files.some(file => file.path === 'f1.ts')) throw new Error(`${APPLY} did not move f1.ts`);
+  if ((planned.planned ?? []).length !== ADD_COUNT) throw new Error(`${APPLY} did not add edges`);
+
+  emit(
+    APPLY,
+    await sample(() => {
+      const next = applyPlan(scan, edits);
+      if (next.files.length !== scan.files.length) throw new Error(`${APPLY} dropped a file`);
+    }, VALUES, WARMUP),
+  );
+
+  emit(
+    STALE,
+    await sample(() => {
+      const next = staleReasons(scan, edits);
+      if (next.length !== edits.length) throw new Error(`${STALE} dropped an edit`);
+    }, VALUES, WARMUP),
+  );
+
+  if (edgePairs === undefined) absent(PAIRS);
+  else {
+    emit(
+      PAIRS,
+      await sample(() => {
+        const pairs = edgePairs(scan, '', 'pkg0', 'pkg4');
+        if (pairs.length === 0) throw new Error(`${PAIRS} found no imports`);
+      }, VALUES, WARMUP),
+    );
+  }
+
+  const root = requireView(graphView(planned, '', 'perf-repo'), 20, GRAPH_ROOT);
+  if (!root.edges.some(edge => edge.planned === true)) throw new Error(`${GRAPH_ROOT} drew no planned edge`);
+  requireView(graphView(planned, 'deep', 'perf-repo'), 90, GRAPH_DEEP);
+
+  emit(
+    GRAPH_ROOT,
+    await sample(() => {
+      const view = requireView(graphView(planned, '', 'perf-repo'), 20, GRAPH_ROOT);
+      if (!view.edges.some(edge => edge.planned === true)) throw new Error(`${GRAPH_ROOT} dropped a planned edge`);
+    }, VALUES, WARMUP),
+  );
+
+  emit(
+    GRAPH_DEEP,
+    await sample(() => {
+      requireView(graphView(planned, 'deep', 'perf-repo'), 90, GRAPH_DEEP);
+    }, VALUES, WARMUP),
+  );
+
+  if (!hasFn(pictureMod, 'planPicture')) absent(PICTURE);
+  else {
+    const nowRoot = requireView(graphView(scan, '', 'perf-repo'), 20, PICTURE);
+    const packages = [];
+    for (let i = 0; i < PACKAGES; i += 1) {
+      const id = `pkg${i}`;
+      packages.push({
+        id,
+        now: requireView(graphView(scan, id, 'perf-repo'), 1, PICTURE),
+        planned: requireView(graphView(planned, id, 'perf-repo'), 1, PICTURE),
+      });
+    }
+    const input = {
+      shown: 'now',
+      nodes: nowRoot.nodes,
+      other: root,
+      pins: {},
+      edits,
+      stale: reasons,
+      edges: nowRoot.edges,
+      ids: new Set(nowRoot.nodes.map(node => node.id)),
+      packages,
+    };
+    emit(
+      PICTURE,
+      await sample(() => {
+        const picture = pictureMod.planPicture(input);
+        if (picture.entries.length !== edits.length || picture.ink.rows.size !== PACKAGES) throw new Error(`${PICTURE} dropped a row`);
+        if (picture.ink.ghosts.length === 0) throw new Error(`${PICTURE} drew no ghost`);
+        if (picture.diskPath('f1.ts') !== 'pkg0/f1.ts') throw new Error(`${PICTURE} lost the move`);
+        for (const edit of edits) {
+          pictureMod.entryTarget(edit);
+          if (edit.kind === 'cut-edge' || edit.kind === 'add-edge') pictureMod.arrowViewAt(edit.from, edit.to);
+        }
+      }, VALUES, WARMUP),
+    );
+  }
+}
+
+async function measureDocument(edits) {
+  if (!hasFn(planMod, 'parsePlan')) {
+    absent(PARSE, ROSTER);
+    return;
+  }
+  const raw = planDocument(edits);
+  const doc = planMod.parsePlan(raw);
+  if (doc === undefined) throw new Error(`${PARSE} rejected the document`);
+  emit(
+    PARSE,
+    await sample(() => {
+      const parsed = planMod.parsePlan(raw);
+      if (parsed === undefined) throw new Error(`${PARSE} rejected the document`);
+      let text = 0;
+      for (const edit of parsed.edits) text += planMod.sentenceOf(edit).length;
+      const removed = planMod.withoutEdit(planMod.withRedo(planMod.withUndo(planMod.withEdit(parsed, parsed.edits[0]))), 0);
+      planMod.summarisePlan(removed);
+      planMod.addEdgeIndex(removed.edits, removed.edits.map(() => null), 'pkg0', 'pkg10');
+      if (planMod.slugOf('Split app') !== PLAN_SLUG) throw new Error(`${PARSE} slug`);
+      if (planMod.freeSlug(PLAN_SLUG, slug => slug === PLAN_SLUG) !== 'split-app-2') throw new Error(`${PARSE} clash`);
+      if (planMod.moveDest('pkg0/f1.ts', '.') !== 'f1.ts') throw new Error(`${PARSE} dest`);
+      if (planMod.planNameFrom({ name: 'Split app' }) !== 'Split app') throw new Error(`${PARSE} name`);
+      if (text === 0) throw new Error(`${PARSE} sentence`);
+    }, VALUES, WARMUP),
+  );
+
+  if (!hasFn(rosterMod, 'planRoster')) absent(ROSTER);
+  else {
+    const list = { plans: summariesOf(200) };
+    emit(
+      ROSTER,
+      await sample(() => {
+        const roster = rosterMod.planRoster(list, doc, 'plan-3', 'plan-1');
+        if (roster.choice !== 'plan-3' || roster.labels.size !== 200 || roster.deleteName !== 'Plan 1') {
+          throw new Error(`${ROSTER} mismatched`);
+        }
+      }, VALUES, WARMUP),
+    );
+  }
+}
+
+async function measureClients() {
+  if (!hasFn(client, 'fetchGraph')) absent(FETCH_GRAPH);
+  else {
+    const fetcher = jsonFetcher(plannedGraphBody());
+    const trial = await client.fetchGraph('token', '', fetcher, { plan: PLAN_SLUG });
+    if (trial === null || typeof trial !== 'object' || 'error' in trial) {
+      if (!hasFn(client, 'fetchPlans')) absent(FETCH_GRAPH);
+      else throw new Error(`${FETCH_GRAPH} rejected the planned body`);
+    } else {
+      emit(
+        FETCH_GRAPH,
+        await sample(async () => {
+          parsedOk(await client.fetchGraph('token', '', fetcher, { plan: PLAN_SLUG }), FETCH_GRAPH);
+        }, VALUES, WARMUP),
+      );
+    }
+  }
+
+  if (!hasFn(client, 'fetchPlans') || !hasFn(planMod, 'parsePlan')) {
+    absent(FETCH_PLANS, FETCH_PLAN, POST_PLAN, PUT_PLAN, DELETE_CLIENT, FETCH_PAIRS);
+    return;
+  }
+  const full = planMod.parsePlan(planDocument(buildEdits(buildScan())));
+  if (full === undefined) throw new Error(`${PUT_PLAN} fixture`);
+  const listFetcher = jsonFetcher({ plans: summariesOf(200) });
+  const docFetcher = jsonFetcher(full);
+  const pairFetcher = jsonFetcher(pairBody());
+  const okFetcher = jsonFetcher({ ok: true });
+  emit(
+    FETCH_PLANS,
+    await sample(async () => {
+      const parsed = await client.fetchPlans('token', listFetcher);
+      if (!parsed || !Array.isArray(parsed.plans) || parsed.plans.length !== 200) throw new Error(`${FETCH_PLANS} dropped a plan`);
+    }, VALUES, WARMUP),
+  );
+  emit(
+    FETCH_PLAN,
+    await sample(async () => {
+      parsedOk(await client.fetchPlan('token', PLAN_SLUG, docFetcher), FETCH_PLAN);
+    }, VALUES, WARMUP),
+  );
+  emit(
+    POST_PLAN,
+    await sample(async () => {
+      parsedOk(await client.postPlan('token', 'Split app', docFetcher), POST_PLAN);
+    }, VALUES, WARMUP),
+  );
+  emit(
+    PUT_PLAN,
+    await sample(async () => {
+      parsedOk(await client.putPlan('token', full, docFetcher), PUT_PLAN);
+    }, VALUES, WARMUP),
+  );
+  emit(
+    DELETE_CLIENT,
+    await sample(async () => {
+      const parsed = await client.deletePlan('token', PLAN_SLUG, okFetcher);
+      if (!parsed || parsed.ok !== true) throw new Error(`${DELETE_CLIENT} rejected`);
+    }, VALUES, WARMUP),
+  );
+  emit(
+    FETCH_PAIRS,
+    await sample(async () => {
+      const parsed = await client.fetchPairs('token', 'pkg0', 'pkg4', '', { plan: PLAN_SLUG }, pairFetcher);
+      if (!parsed || !Array.isArray(parsed.pairs) || parsed.pairs.length !== 100) throw new Error(`${FETCH_PAIRS} dropped a pair`);
+    }, VALUES, WARMUP),
+  );
+}
+
+function httpEdits() {
+  return [
+    { kind: 'add-edge', from: 'src', to: 'src/lib' },
+    { kind: 'note', target: { node: 'src' }, text: 'split the app' },
+    { kind: 'note', target: { edge: ['src', 'src/lib'] }, text: 'new seam' },
+    { kind: 'move-file', file: 'src/lib/util.ts', to: 'src' },
+  ];
+}
+
+function deleteDoc(slug, index) {
+  return {
+    version: 1,
+    name: `Delete ${index}`,
+    slug,
+    createdAt: CREATED_AT,
+    baseCommit: COMMIT,
+    edits: [],
+    redo: [],
+  };
+}
+
+async function measureHttp() {
+  const serve = await loadModule('src/serve.ts');
+  if (serve === undefined || typeof serve.bindApp !== 'function') {
+    absent(...HTTP_TARGETS);
+    return;
+  }
+  const prepareBindweed = await loadExport('src/repo.ts', 'prepareBindweed');
+  const repo = await fixtureRepo(60);
+  const ui = await fixtureUi();
+  const agent = keepAliveAgent();
+  let server;
+  try {
+    if (prepareBindweed !== undefined) await prepareBindweed(repo);
+    const bound = await serve.bindApp({ repoRoot: repo, uiDir: ui }, { mode: 'fixed', port: 0 });
+    if ('error' in bound) throw new Error(`bindApp failed: ${JSON.stringify(bound.error)}`);
+    server = bound.server;
+    const addr = server.address();
+    if (addr === null || typeof addr === 'string') throw new Error('no port');
+    const port = addr.port;
+    const auth = { Authorization: `Bearer ${bound.token}` };
+    const listProbe = await hit(agent, port, 'GET', '/api/plans', auth);
+    if (listProbe.status === 404 && errorText(listProbe) === 'not found') {
+      absent(...HTTP_TARGETS);
+      return;
+    }
+    if (listProbe.status !== 200) throw new Error(`GET /api/plans -> ${listProbe.status} ${errorText(listProbe)}`);
+
+    const created = await hit(agent, port, 'POST', '/api/plans', auth, JSON.stringify({ name: 'Split app' }));
+    if (created.status !== 201) throw new Error(`POST /api/plans -> ${created.status} ${created.body.toString('utf8')}`);
+    const doc = readJson(created);
+    if (doc.slug !== PLAN_SLUG) throw new Error(`POST /api/plans slug ${doc.slug}`);
+    const stored = { ...doc, edits: httpEdits(), redo: [] };
+    const replaced = await hit(agent, port, 'PUT', `/api/plans/${PLAN_SLUG}`, auth, JSON.stringify(stored));
+    if (replaced.status !== 200) throw new Error(`PUT /api/plans/${PLAN_SLUG} -> ${replaced.status} ${replaced.body.toString('utf8')}`);
+
+    const graphProbe = await hit(agent, port, 'GET', `/api/graph?plan=${PLAN_SLUG}`, auth);
+    if (graphProbe.status !== 200) throw new Error(`GET /api/graph?plan= -> ${graphProbe.status} ${graphProbe.body.toString('utf8')}`);
+    const graphJson = readJson(graphProbe);
+    if (!Array.isArray(graphJson.stale) || graphJson.stale.some(reason => reason !== null)) {
+      throw new Error(`GET /api/graph?plan= stale ${JSON.stringify(graphJson.stale)}`);
+    }
+
+    async function getPlans() {
+      const res = await hit(agent, port, 'GET', '/api/plans', auth);
+      if (res.status !== 200) throw new Error(`GET /api/plans -> ${res.status}`);
+    }
+
+    async function getPlan() {
+      const res = await hit(agent, port, 'GET', `/api/plans/${PLAN_SLUG}`, auth);
+      if (res.status !== 200) throw new Error(`GET /api/plans/${PLAN_SLUG} -> ${res.status}`);
+    }
+
+    const putBody = JSON.stringify(stored);
+    async function putPlan() {
+      const res = await hit(agent, port, 'PUT', `/api/plans/${PLAN_SLUG}`, auth, putBody);
+      if (res.status !== 200) throw new Error(`PUT /api/plans/${PLAN_SLUG} -> ${res.status}`);
+    }
+
+    async function getPairs() {
+      const res = await hit(agent, port, 'GET', `/api/pairs?from=src&to=src/lib&plan=${PLAN_SLUG}`, auth);
+      if (res.status !== 200) throw new Error(`GET /api/pairs?plan= -> ${res.status} ${res.body.toString('utf8')}`);
+    }
+
+    async function getGraph() {
+      const res = await hit(agent, port, 'GET', `/api/graph?plan=${PLAN_SLUG}`, auth);
+      if (res.status !== 200) throw new Error(`GET /api/graph?plan= -> ${res.status}`);
+    }
+
+    async function getGraphAt() {
+      const res = await hit(agent, port, 'GET', `/api/graph?at=src&plan=${PLAN_SLUG}`, auth);
+      if (res.status !== 200) throw new Error(`GET /api/graph?at=src&plan= -> ${res.status} ${res.body.toString('utf8')}`);
+    }
+
+    async function getDetail() {
+      const res = await hit(agent, port, 'GET', `/api/detail?id=src/a.ts&at=src&plan=${PLAN_SLUG}`, auth);
+      if (res.status !== 200) throw new Error(`GET /api/detail?plan= -> ${res.status} ${res.body.toString('utf8')}`);
+    }
+
+    emit(HTTP_TARGETS[0], await sample(getPlans, VALUES, WARMUP));
+    emit(HTTP_TARGETS[2], await sample(getPlan, VALUES, WARMUP));
+    emit(HTTP_TARGETS[3], await sample(putPlan, VALUES, WARMUP));
+    emit(HTTP_TARGETS[5], await sample(getPairs, VALUES, WARMUP));
+    emit(HTTP_TARGETS[6], await sample(getGraph, VALUES, WARMUP));
+    emit(HTTP_TARGETS[7], await sample(getGraphAt, VALUES, WARMUP));
+    emit(HTTP_TARGETS[8], await sample(getDetail, VALUES, WARMUP));
+
+    const plansDir = join(repo, '.bindweed', 'plans');
+    await mkdir(plansDir, { recursive: true });
+    const deleteSlugs = [];
+    const writes = [];
+    for (let i = 0; i < WARMUP + VALUES; i += 1) {
+      const slug = `delete-${i}`;
+      deleteSlugs.push(slug);
+      writes.push(writeFile(join(plansDir, `${slug}.json`), JSON.stringify(deleteDoc(slug, i))));
+    }
+    await Promise.all(writes);
+    let deleted = 0;
+    async function deletePlan() {
+      const slug = deleteSlugs[deleted];
+      deleted += 1;
+      const res = await hit(agent, port, 'DELETE', `/api/plans/${slug}`, auth);
+      if (res.status !== 200) throw new Error(`DELETE /api/plans/${slug} -> ${res.status} ${res.body.toString('utf8')}`);
+    }
+    emit(HTTP_TARGETS[4], await sample(deletePlan, VALUES, WARMUP));
+
+    let posted = 0;
+    async function postPlan() {
+      const name = `Extra ${posted}`;
+      posted += 1;
+      const res = await hit(agent, port, 'POST', '/api/plans', auth, JSON.stringify({ name }));
+      if (res.status !== 201) throw new Error(`POST /api/plans ${name} -> ${res.status} ${res.body.toString('utf8')}`);
+    }
+    emit(HTTP_TARGETS[1], await sample(postPlan, VALUES, WARMUP));
+  } finally {
+    agent.destroy();
+    if (server) await new Promise(resolve => server.close(() => resolve()));
+    await cleanup(repo, ui);
+  }
+}
+
+const scanTargets = [APPLY, STALE, PAIRS, GRAPH_ROOT, GRAPH_DEEP, PICTURE];
+if (applyPlan === undefined || staleReasons === undefined || graphView === undefined) absent(...scanTargets);
+else {
+  const scan = buildScan();
+  const edits = buildEdits(scan);
+  await measureScan(scan, edits);
+  await measureDocument(edits);
+}
+if (applyPlan === undefined || graphView === undefined) absent(PARSE, ROSTER);
+
+if (hasFn(gestureMod, 'keyActionOf')) {
+  emit(
+    KEY,
+    await sample(() => {
+      if (gestureMod.keyActionOf('Z', true, true, false) !== 'redo') throw new Error(`${KEY} redo`);
+      if (gestureMod.keyActionOf('z', true, false, false) !== 'undo') throw new Error(`${KEY} undo`);
+      if (gestureMod.keyActionOf('Delete', false, false, false) !== 'delete') throw new Error(`${KEY} delete`);
+      if (gestureMod.keyActionOf('z', true, false, true) !== null) throw new Error(`${KEY} field`);
+    }, VALUES, WARMUP),
+  );
+} else absent(KEY);
+
+if (hasFn(drawMod, 'plannedColor')) {
+  emit(
+    COLOR,
+    await sample(() => {
+      if (drawMod.plannedColor(true) !== '#dc2626' || drawMod.plannedColor(false) !== '#2563eb') throw new Error(COLOR);
+    }, VALUES, WARMUP),
+  );
+} else absent(COLOR);
+
+await measureClients();
+await measureHttp();
