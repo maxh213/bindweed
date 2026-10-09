@@ -172,9 +172,9 @@ module.exports = {
     {
       name: 'canvas-only-draws',
       severity: 'error',
-      comment: 'The canvas is handed a view and draws it; it does not fetch, own page state or open panels',
+      comment: 'The canvas is handed a view and draws it; it does not fetch, own page state, edit a plan or open panels',
       from: { path: '^src/ui/ArchCanvas\\.tsx$' },
-      to: { path: ['^src/ui/(client|view|App|DetailPanel|HealthControls)\\.tsx?$', '^src/domain/(tree|scan)\\.ts$', 'node_modules/@tanstack'] }
+      to: { path: ['^src/ui/(client|view|App|DetailPanel|HealthControls|plansession|PlanBar|planroster)\\.tsx?$', '^src/domain/(tree|scan|plan|planned)\\.ts$', '^src/plans\\.ts$', 'node_modules/@tanstack'] }
     },
     {
       name: 'arch-view-does-not-import-xyflow',
@@ -273,6 +273,132 @@ module.exports = {
       comment: 'The overlay selector and metrics drawer render numbers they are handed; they do not fetch, own the page, or draw the canvas',
       from: { path: '^src/ui/HealthControls\\.tsx$' },
       to: { path: ['^src/ui/(client|view|ArchCanvas|App|draw|boot|main|TreeView|FilePanel)\\.tsx?$', '^src/domain/', 'node_modules/(@tanstack|@xyflow|zod)'] }
+    },
+    {
+      name: 'plan-document-is-a-leaf',
+      severity: 'error',
+      comment: 'The plan document is pure data and its algebra; it imports nothing under src',
+      from: { path: '^src/domain/plan\\.ts$' },
+      to: { path: '^src/' }
+    },
+    {
+      name: 'planned-graph-imports-only-the-document-and-the-scan',
+      severity: 'error',
+      comment: 'Applying a plan is a pure function of the scan and the document',
+      from: { path: '^src/domain/planned\\.ts$' },
+      to: { path: '^src/', pathNot: '^src/domain/(plan|scan)\\.ts$' }
+    },
+    {
+      name: 'only-serve-applies-a-plan',
+      severity: 'error',
+      comment: 'The server applies the plan before building a view; the page, the store and the view do not',
+      from: { pathNot: '^src/(serve\\.ts|domain/planned\\.ts|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/domain/planned\\.ts$' }
+    },
+    {
+      name: 'only-serve-imports-the-plan-store',
+      severity: 'error',
+      comment: 'Plan files are server IO; only serve reads them among production files',
+      from: { pathNot: '^src/(serve\\.ts|plans\\.ts|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/plans\\.ts$' }
+    },
+    {
+      name: 'plan-store-reads-the-document-only',
+      severity: 'error',
+      comment: 'The store parses and writes plan documents; it does not apply them or know the view',
+      from: { path: '^src/plans\\.ts$' },
+      to: { path: '^src/', pathNot: '^src/domain/plan\\.ts$' }
+    },
+    {
+      name: 'the-view-does-not-apply-a-plan',
+      severity: 'error',
+      comment: 'A view is built from a scan the server has already planned',
+      from: { path: '^src/domain/graph\\.ts$' },
+      to: { path: '^src/domain/(plan|planned)\\.ts$' }
+    },
+    {
+      name: 'the-scanner-does-not-know-plans',
+      severity: 'error',
+      comment: 'Scanning a repository does not read or apply a plan',
+      from: { path: '^src/(scan\\.ts|scanning/)' },
+      to: { path: '^src/(domain/(plan|planned)|plans)\\.ts$' }
+    },
+    {
+      name: 'plan-picture-imports-the-view-and-the-document',
+      severity: 'error',
+      comment: 'The picture is a pure function of the plan document, the graph view and layout placement',
+      from: { path: '^src/ui/planpicture\\.ts$' },
+      to: { path: '^src/', pathNot: '^src/(domain/(plan|graph|layout)|ui/draw)\\.ts$' }
+    },
+    {
+      name: 'plan-picture-is-framework-free',
+      severity: 'error',
+      comment: 'The picture does not fetch, draw or depend on a UI framework',
+      from: { path: '^src/ui/planpicture\\.ts$' },
+      to: { path: 'node_modules' }
+    },
+    {
+      name: 'plan-roster-reads-the-document-only',
+      severity: 'error',
+      comment: 'The roster is how a plan list and one document read as a selector. It is pure',
+      from: { path: '^src/ui/planroster\\.ts$' },
+      to: { path: ['^src/', 'node_modules'], pathNot: '^src/domain/plan\\.ts$' }
+    },
+    {
+      name: 'plan-gestures-import-nothing',
+      severity: 'error',
+      comment: 'A plan gesture is a reading of a browser event; it imports nothing',
+      from: { path: '^src/ui/plangesture\\.ts$' },
+      to: { path: '.' }
+    },
+    {
+      name: 'only-the-session-and-the-canvas-read-the-plan-picture',
+      severity: 'error',
+      comment: 'The session builds the picture and the canvas draws it. Callers do not reach into its pieces',
+      from: { pathNot: '^src/ui/(plansession\\.tsx|ArchCanvas\\.tsx|planpicture\\.ts|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/ui/planpicture\\.ts$' }
+    },
+    {
+      name: 'only-the-session-reads-the-plan-roster',
+      severity: 'error',
+      comment: 'The session is the only production reader of the plan roster',
+      from: { pathNot: '^src/ui/(plansession\\.tsx|planroster\\.ts|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/ui/planroster\\.ts$' }
+    },
+    {
+      name: 'only-the-session-and-the-canvas-read-plan-gestures',
+      severity: 'error',
+      comment: 'The session interprets keys and drops. The canvas writes the drag payload. Nothing else reaches in',
+      from: { pathNot: '^src/ui/(plansession\\.tsx|ArchCanvas\\.tsx|plangesture\\.ts|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/ui/plangesture\\.ts$' }
+    },
+    {
+      name: 'only-the-session-imports-the-plan-chrome',
+      severity: 'error',
+      comment: 'The selector, dialogs, notice and change list are the session chrome',
+      from: { pathNot: '^src/ui/(plansession\\.tsx|PlanBar\\.tsx|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/ui/PlanBar\\.tsx$' }
+    },
+    {
+      name: 'plan-chrome-is-presentational',
+      severity: 'error',
+      comment: 'Dialogs, the selector and the change list render what they are handed. They do not fetch, edit a document or know the scan',
+      from: { path: '^src/ui/PlanBar\\.tsx$' },
+      to: { path: ['^src/', 'node_modules/(@tanstack|@xyflow|zod)'], pathNot: '^src/domain/plan\\.ts$' }
+    },
+    {
+      name: 'the-page-mounts-the-plan-session',
+      severity: 'error',
+      comment: 'The architecture page mounts the session. It does not reach into edits, the picture, the gestures, the roster or the chrome',
+      from: { path: '^src/ui/ArchView\\.tsx$' },
+      to: { path: ['^src/domain/plan\\.ts$', '^src/ui/(PlanBar|planpicture|plangesture|planroster)\\.tsx?$'] }
+    },
+    {
+      name: 'the-session-does-not-draw-or-apply',
+      severity: 'error',
+      comment: 'The session edits a plan and builds its picture. The canvas draws. The server applies the scan and reads plan files',
+      from: { path: '^src/ui/plansession\\.tsx$' },
+      to: { path: ['^src/ui/(ArchCanvas|ArchView|view)\\.tsx?$', '^src/domain/(planned|layout|scan)\\.ts$', '^src/plans\\.ts$', '^src/serve\\.ts$', 'node_modules/@xyflow'] }
     }
   ],
   options: {

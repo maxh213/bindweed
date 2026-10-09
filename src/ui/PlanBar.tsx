@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import type { PlanSummary } from '../domain/plan.ts';
-import type { ChangeEntry, ShownGraph } from './planview.ts';
+
+type ChangeLine = { sentence: string; stale: string | null };
+
+type Shown = 'now' | 'planned';
 
 export function PlanSelect(
   props: Readonly<{ value: string; plans: PlanSummary[]; labels: Map<string, string>; onChoose: (slug: string | null) => void }>,
@@ -130,7 +133,7 @@ function ShownChoice(props: Readonly<{ label: string; checked: boolean; onChoose
   );
 }
 
-export function ShownSwitch(props: Readonly<{ shown: ShownGraph; onChoose: (shown: ShownGraph) => void }>) {
+export function ShownSwitch(props: Readonly<{ shown: Shown; onChoose: (shown: Shown) => void }>) {
   return (
     <div role="radiogroup" aria-label="Shown graph">
       <ShownChoice label="Now" checked={props.shown === 'now'} onChoose={() => props.onChoose('now')} />
@@ -147,9 +150,7 @@ export function Notice(props: Readonly<{ text: string | null }>) {
   );
 }
 
-function ChangeRow(
-  props: Readonly<{ entry: ChangeEntry; onPick: () => void; onRemove: () => void }>,
-) {
+function ChangeRow(props: Readonly<{ entry: ChangeLine; onPick: () => void; onRemove: () => void }>) {
   return (
     <li className="change" data-stale={props.entry.stale === null ? undefined : 'true'}>
       <button type="button" className="change-sentence" onClick={props.onPick}>
@@ -163,11 +164,11 @@ function ChangeRow(
   );
 }
 
-type ListedChange = { key: string; entry: ChangeEntry; index: number };
+type ListedChange<T extends ChangeLine> = { key: string; entry: T; index: number };
 
-function listedChanges(entries: ChangeEntry[]): ListedChange[] {
+function listedChanges<T extends ChangeLine>(entries: T[]): ListedChange<T>[] {
   const seen = new Map<string, number>();
-  const rows: ListedChange[] = [];
+  const rows: ListedChange<T>[] = [];
   entries.forEach((entry, index) => {
     const base = `${entry.sentence}\0${entry.stale ?? ''}`;
     const count = (seen.get(base) ?? 0) + 1;
@@ -177,14 +178,14 @@ function listedChanges(entries: ChangeEntry[]): ListedChange[] {
   return rows;
 }
 
-export function ChangeList(
+export function ChangeList<T extends ChangeLine>(
   props: Readonly<{
-    entries: ChangeEntry[];
+    entries: T[];
     canUndo: boolean;
     canRedo: boolean;
     onUndo: () => void;
     onRedo: () => void;
-    onPick: (entry: ChangeEntry) => void;
+    onPick: (entry: T) => void;
     onRemove: (index: number) => void;
   }>,
 ) {

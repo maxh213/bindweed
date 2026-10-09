@@ -2,9 +2,8 @@ import { JSDOM } from 'jsdom';
 import { createElement, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { PlanEdit, PlanSummary } from '../domain/plan.ts';
+import type { PlanSummary } from '../domain/plan.ts';
 import { ChangeList, DeletePlanDialog, NewPlanDialog, NoteDialog, Notice, PlanSelect, ShownSwitch } from './PlanBar.tsx';
-import type { ChangeEntry } from './planview.ts';
 
 const PLANS: PlanSummary[] = [
   { name: 'Split app', slug: 'split-app', editCount: 0, createdAt: '2026-10-01T00:00:00.000Z' },
@@ -16,12 +15,9 @@ const LABELS = new Map([
   ['split-app-2', 'Split app (split-app-2)'],
 ]);
 
-const MOVE: PlanEdit = { kind: 'move-file', file: 'src/app/save.ts', to: 'src/infra' };
-const CUT: PlanEdit = { kind: 'cut-edge', from: 'src/app', to: 'src/domain', files: [['src/app/a.ts', 'src/domain/model.ts']] };
-
-const ENTRIES: ChangeEntry[] = [
-  { edit: MOVE, sentence: 'Move src/app/save.ts to src/infra', stale: null },
-  { edit: CUT, sentence: 'src/app must not import src/domain (1 import)', stale: 'no such file src/app/a.ts' },
+const ENTRIES = [
+  { sentence: 'Move src/app/save.ts to src/infra', stale: null },
+  { sentence: 'src/app must not import src/domain (1 import)', stale: 'no such file src/app/a.ts' },
 ];
 
 function rowAt(rows: Element[], index: number): Element {
@@ -53,7 +49,7 @@ function changeList(calls: string[]): ReactElement {
     canRedo: false,
     onUndo: () => calls.push('undo'),
     onRedo: () => calls.push('redo'),
-    onPick: (entry: ChangeEntry) => calls.push(`pick:${entry.sentence}`),
+    onPick: (entry: { sentence: string }) => calls.push(`pick:${entry.sentence}`),
     onRemove: (index: number) => calls.push(`remove:${index}`),
   });
 }

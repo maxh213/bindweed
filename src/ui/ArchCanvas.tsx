@@ -19,27 +19,12 @@ import '@xyflow/react/dist/style.css';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent, type ReactNode } from 'react';
 import type { GraphNode, GraphView, ViewEdge } from '../domain/graph.ts';
 import { pointsUp, type PlacedBox } from '../domain/layout.ts';
-import type { NoteTarget } from '../domain/plan.ts';
 import { arrowColor, boxCenter, edgeLabel, edgeTitle, filesLabel, headOf, lineOf, plannedColor } from './draw.ts';
 import { badgeLevel, badgeText, type Level, type OverlayName } from './healthdraw.ts';
-import { FILE_DRAG_MIME, type CutMarkInk, type GhostBoxInk, type MarkSel, type NoteInk, type RowInk } from './planview.ts';
+import { FILE_DRAG_MIME } from './plangesture.ts';
+import type { CutMarkInk, GhostBoxInk, Planning, RowInk } from './planpicture.ts';
 
-export type PlanInk = {
-  rows: Map<string, RowInk[]>;
-  ghosts: GhostBoxInk[];
-  cuts: CutMarkInk[];
-  added: ViewEdge[];
-  notes: NoteInk;
-};
-
-export type Planning = {
-  ink: PlanInk;
-  onDropFile: (file: string, dir: string) => boolean;
-  onDrawEdge: (from: string, to: string) => void;
-  onCutEdge: (from: string, to: string) => void;
-  onAddNote: (target: NoteTarget) => void;
-  onOpenPlanned: (path: string) => void;
-};
+export type MarkSel = { from: string; to: string; cut: boolean };
 
 export type FocusRequest = { kind: 'node'; id: string } | { kind: 'arrow'; from: string; to: string };
 
