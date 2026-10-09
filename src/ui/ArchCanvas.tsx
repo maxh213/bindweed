@@ -93,7 +93,7 @@ type CutEdge = Edge<CutData, 'cutmark'>;
 
 type MarkerEnd = string | { type: MarkerType; width: number; height: number; color: string };
 
-type CanvasProps = {
+export type CanvasProps = {
   spots: PlacedBox[];
   hover: string | null;
   chosen: string | null;
@@ -168,12 +168,25 @@ function HealthBadge({ text, level }: Readonly<{ text: string | null; level: Lev
   );
 }
 
+type Noted = { key: string; text: string; at: number };
+
+function notedTexts(texts: string[]): Noted[] {
+  const seen = new Map<string, number>();
+  const marks: Noted[] = [];
+  texts.forEach((text, index) => {
+    const count = (seen.get(text) ?? 0) + 1;
+    seen.set(text, count);
+    marks.push({ key: `${count}:${text}`, text, at: index });
+  });
+  return marks;
+}
+
 function NoteMarks({ texts }: Readonly<{ texts: string[] }>) {
   if (texts.length === 0) return null;
   return (
     <>
-      {texts.map((text, index) => (
-        <span key={index} className="note-marker" aria-label="note" title={text}>
+      {notedTexts(texts).map(mark => (
+        <span key={mark.key} className="note-marker" aria-label="note" title={mark.text}>
           ✎
         </span>
       ))}
@@ -331,9 +344,9 @@ function ArrowNoteMarks({ texts, x, y }: Readonly<{ texts: string[]; x: number; 
   if (texts.length === 0) return null;
   return (
     <>
-      {texts.map((text, index) => (
-        <g key={index} className="note-marker" aria-label="note" {...{ title: text }} transform={`translate(${x + 14 * (index + 1)} ${y})`}>
-          <title>{text}</title>
+      {notedTexts(texts).map(mark => (
+        <g key={mark.key} className="note-marker" aria-label="note" {...{ title: mark.text }} transform={`translate(${x + 14 * (mark.at + 1)} ${y})`}>
+          <title>{mark.text}</title>
           <circle r={4} className="note-dot" />
         </g>
       ))}

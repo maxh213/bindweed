@@ -24,7 +24,7 @@ import {
   type PlanEdit,
   type PlanSummary,
 } from '../domain/plan.ts';
-import { ArchCanvas, CanvasProvider, useCenterOn, type FocusRequest, type PlanInk, type Planning } from './ArchCanvas.tsx';
+import { ArchCanvas, CanvasProvider, useCenterOn, type CanvasProps, type FocusRequest, type PlanInk, type Planning } from './ArchCanvas.tsx';
 import {
   deletePlan,
   fetchDetail,
@@ -190,23 +190,7 @@ function settingsDoc(change: Partial<LayoutSettings>): (doc: LayoutDoc) => Layou
   return doc => withSettings(doc, { ...doc.settings, ...change });
 }
 
-type CanvasAreaProps = {
-  state: GraphState;
-  spots: PlacedBox[];
-  hover: string | null;
-  chosen: string | null;
-  marked: MarkSel | null;
-  overlay: OverlayName;
-  crapMax: number;
-  planning: Planning | null;
-  focus: FocusRequest | null;
-  onHover: (id: string | null) => void;
-  onSelect: (id: string) => void;
-  onSelectMark: (mark: MarkSel) => void;
-  onClear: () => void;
-  onOpen: (id: string, kind: GraphNode['kind'] | null) => void;
-  onDropNode: (id: string, kind: GraphNode['kind'] | null, x: number, y: number, event: unknown) => void;
-};
+type CanvasAreaProps = CanvasProps & { state: GraphState };
 
 function CanvasArea(props: Readonly<CanvasAreaProps>) {
   if (props.state.kind === 'loading') return <div className="arch-canvas">loading…</div>;
@@ -324,8 +308,9 @@ function showingPlanned(shown: ShownGraph, slug: string | null): boolean {
   return shown === 'planned' && slug !== null;
 }
 
-function detailPlanKey(planned: boolean, slug: string | null): string {
-  return planned ? slugKey(slug) : '';
+function detailPlanOf(shown: ShownGraph, slug: string | null): string {
+  if (shown !== 'planned' || slug === null) return '';
+  return slug;
 }
 
 function plannedEnabled(layout: LayoutDoc | undefined, slug: string | null): boolean {
@@ -504,7 +489,7 @@ function ArchPane(props: Readonly<ArchViewProps & { slug: string | null }>) {
   const otherState = plannedShown ? nowState : plannedState;
   const ids = useMemo(() => idsOf(state), [state]);
   const chosen = chosenId(picked, armed, ids);
-  const detailPlan = detailPlanKey(plannedShown, slug);
+  const detailPlan = detailPlanOf(shown, slug);
   const detailQuery = useQuery({
     queryKey: ['detail', props.token, props.at, detailId(chosen), settings.tests, settings.external, detailPlan] as const,
     queryFn: () => fetchDetail(props.token, detailId(chosen), props.at, props.fetcher, { ...settings, plan: detailPlan }),

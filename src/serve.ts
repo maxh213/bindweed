@@ -398,7 +398,7 @@ async function getPlan(app: App, req: IncomingMessage, res: ServerResponse, slug
 
 async function putPlan(app: App, req: IncomingMessage, res: ServerResponse, slug: string): Promise<void> {
   const doc = parsePlan(parseJsonText(await readBody(req)));
-  if (doc === undefined || doc.slug !== slug) {
+  if (doc?.slug !== slug) {
     sendJson(res, 400, { error: 'bad plan' });
     return;
   }

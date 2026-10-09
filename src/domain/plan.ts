@@ -28,9 +28,25 @@ const CREATED_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const COMMIT = /^[0-9a-f]{40}$/;
 const PLAN_KEYS = ['version', 'name', 'slug', 'createdAt', 'baseCommit', 'edits', 'redo'];
 
+function isDash(value: string, index: number): boolean {
+  return value[index] === '-';
+}
+
+function skipDashes(value: string, from: number, step: number): number {
+  let index = from;
+  while (isDash(value, index)) index += step;
+  return index;
+}
+
+function trimDashes(value: string): string {
+  const start = skipDashes(value, 0, 1);
+  const end = skipDashes(value, value.length - 1, -1) + 1;
+  return value.slice(start, end);
+}
+
 export function slugOf(name: string): string {
   const dashed = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
-  return dashed.replace(/^-+|-+$/g, '').slice(0, SLUG_MAX);
+  return trimDashes(dashed).slice(0, SLUG_MAX);
 }
 
 export function freeSlug(base: string, taken: (slug: string) => boolean): string {
@@ -272,13 +288,9 @@ function noteSentence(target: NoteTarget, text: string): string {
   return `Note on ${target.edge[0]} → ${target.edge[1]}: "${text}"`;
 }
 
-const SENTENCE_OF = {
-  'move-file': (edit: MoveEdit): string => `Move ${edit.file} to ${edit.to}`,
-  'cut-edge': (edit: CutEdit): string => cutSentence(edit.from, edit.to, edit.files.length),
-  'add-edge': (edit: AddEdit): string => `${edit.from} should use ${edit.to}`,
-  note: (edit: NoteEdit): string => noteSentence(edit.target, edit.text),
-};
-
 export function sentenceOf(edit: PlanEdit): string {
-  return SENTENCE_OF[edit.kind](edit as never);
+  if (edit.kind === 'move-file') return `Move ${edit.file} to ${edit.to}`;
+  if (edit.kind === 'cut-edge') return cutSentence(edit.from, edit.to, edit.files.length);
+  if (edit.kind === 'add-edge') return `${edit.from} should use ${edit.to}`;
+  return noteSentence(edit.target, edit.text);
 }

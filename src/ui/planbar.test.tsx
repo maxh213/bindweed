@@ -143,7 +143,7 @@ describe('the plan bar components', () => {
     const created: string[] = [];
     const cancelled: string[] = [];
     await show(createElement(NewPlanDialog, { error: null, onCreate: name => created.push(name), onCancel: () => cancelled.push('x') }));
-    expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('New plan');
+    expect(document.querySelector('dialog')?.getAttribute('aria-label')).toBe('New plan');
     await click(button('Create'));
     expect(document.querySelector('.plan-dialog-error')?.textContent).toBe('write a name');
     expect(created).toEqual([]);
@@ -163,7 +163,7 @@ describe('the plan bar components', () => {
   it('confirms the plan deletion by name', async () => {
     const calls: string[] = [];
     await show(createElement(DeletePlanDialog, { name: 'Split app', onDelete: () => calls.push('delete'), onCancel: () => calls.push('cancel') }));
-    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Delete Split app?');
+    expect(document.querySelector('dialog')?.textContent).toContain('Delete Split app?');
     await click(button('Delete'));
     await click(button('Cancel'));
     expect(calls).toEqual(['delete', 'cancel']);
@@ -173,7 +173,7 @@ describe('the plan bar components', () => {
     const added: string[] = [];
     const cancelled: string[] = [];
     await show(createElement(NoteDialog, { error: null, onAdd: text => added.push(text), onCancel: () => cancelled.push('x') }));
-    expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('Add note');
+    expect(document.querySelector('dialog')?.getAttribute('aria-label')).toBe('Add note');
     await click(button('Add'));
     expect(document.querySelector('.plan-dialog-error')?.textContent).toBe('write a note');
     expect(added).toEqual([]);
@@ -201,9 +201,9 @@ describe('the plan bar components', () => {
 
   it('shows the notice text or nothing', async () => {
     await show(createElement(Notice, { text: 'no such arrow src/app → src/domain' }));
-    expect(document.querySelector('[role="status"]')?.textContent).toBe('no such arrow src/app → src/domain');
+    expect(document.querySelector('output[aria-label="notice"]')?.textContent).toBe('no such arrow src/app → src/domain');
     await show(createElement(Notice, { text: null }));
-    expect(document.querySelector('[role="status"]')?.textContent).toBe('');
+    expect(document.querySelector('output[aria-label="notice"]')?.textContent).toBe('');
   });
 
   it('lists the changes with stale marks, undo, redo, pick and remove', async () => {

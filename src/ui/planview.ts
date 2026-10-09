@@ -1,5 +1,5 @@
 import type { GraphNode, GraphView, ViewEdge } from '../domain/graph.ts';
-import { arrange, type LayerNode, type Pin } from '../domain/layout.ts';
+import { arrange, type LayerNode, type Pin, type PlacedBox } from '../domain/layout.ts';
 import { moveDest, sentenceOf, type AddEdit, type CutEdit, type MoveEdit, type NoteEdit, type NoteTarget, type PlanDoc, type PlanEdit, type PlanSummary } from '../domain/plan.ts';
 import { parentDir } from './draw.ts';
 
@@ -32,9 +32,20 @@ function unmovedBy(path: string, edit: PlanEdit, stale: string | null): string {
   return moveUndoneBy(path, edit);
 }
 
+type UndoStep = { edit: PlanEdit; reason: string | null };
+
+function undoSteps(edits: PlanEdit[], stale: (string | null)[]): UndoStep[] {
+  const steps: UndoStep[] = [];
+  edits.forEach((edit, index) => {
+    steps.push({ edit, reason: stale[index] ?? null });
+  });
+  steps.reverse();
+  return steps;
+}
+
 export function diskPathOf(path: string, edits: PlanEdit[], stale: (string | null)[]): string {
   let current = path;
-  for (let i = edits.length - 1; i >= 0; i -= 1) current = unmovedBy(current, edits[i] as PlanEdit, stale[i] ?? null);
+  for (const step of undoSteps(edits, stale)) current = unmovedBy(current, step.edit, step.reason);
   return current;
 }
 
@@ -43,15 +54,11 @@ function noteEntryTarget(target: NoteTarget): EntryTarget {
   return { kind: 'arrow', from: target.edge[0], to: target.edge[1], cut: false };
 }
 
-const TARGET_OF = {
-  'move-file': (edit: MoveEdit): EntryTarget => ({ kind: 'node', id: moveDest(edit.file, edit.to) }),
-  'cut-edge': (edit: CutEdit): EntryTarget => ({ kind: 'arrow', from: edit.from, to: edit.to, cut: true }),
-  'add-edge': (edit: AddEdit): EntryTarget => ({ kind: 'arrow', from: edit.from, to: edit.to, cut: false }),
-  note: (edit: NoteEdit): EntryTarget => noteEntryTarget(edit.target),
-};
-
 export function entryTarget(edit: PlanEdit): EntryTarget {
-  return TARGET_OF[edit.kind](edit as never);
+  if (edit.kind === 'move-file') return { kind: 'node', id: moveDest(edit.file, edit.to) };
+  if (edit.kind === 'cut-edge') return { kind: 'arrow', from: edit.from, to: edit.to, cut: true };
+  if (edit.kind === 'add-edge') return { kind: 'arrow', from: edit.from, to: edit.to, cut: false };
+  return noteEntryTarget(edit.target);
 }
 
 export function arrowViewAt(from: string, to: string): string {
@@ -104,6 +111,11 @@ function viewNodesOf(view: ViewData): GraphNode[] {
   return view.nodes;
 }
 
+function fileGhost(node: GraphNode, spot: PlacedBox, shown: boolean): GhostBoxInk | null {
+  if (shown || node.kind !== 'file') return null;
+  return { id: node.id, name: node.name, x: spot.x, y: spot.y };
+}
+
 export function ghostBoxes(shown: GraphNode[], other: ViewData, pins: Record<string, Pin>): GhostBoxInk[] {
   const others = viewNodesOf(other);
   const shownIds = new Set(shown.map(node => node.id));
@@ -111,9 +123,8 @@ export function ghostBoxes(shown: GraphNode[], other: ViewData, pins: Record<str
   const spots = arrange(layers, pins);
   const ghosts: GhostBoxInk[] = [];
   others.forEach((node, index) => {
-    const spot = spots[index] as { id: string; x: number; y: number };
-    if (node.kind !== 'file' || shownIds.has(node.id)) return;
-    ghosts.push({ id: node.id, name: node.name, x: spot.x, y: spot.y });
+    const ghost = fileGhost(node, spots[index] as PlacedBox, shownIds.has(node.id));
+    if (ghost !== null) ghosts.push(ghost);
   });
   return ghosts;
 }
@@ -145,22 +156,25 @@ export function noteInk(edits: PlanEdit[], stale: (string | null)[]): NoteInk {
   return ink;
 }
 
-export function liveCuts(edits: PlanEdit[], stale: (string | null)[]): CutMarkInk[] {
-  const cuts: CutMarkInk[] = [];
+function isLink(edit: PlanEdit, kind: 'cut-edge' | 'add-edge'): edit is CutEdit | AddEdit {
+  return edit.kind === kind;
+}
+
+function liveOf(edits: PlanEdit[], stale: (string | null)[], kind: 'cut-edge' | 'add-edge'): CutMarkInk[] {
+  const marks: CutMarkInk[] = [];
   edits.forEach((edit, index) => {
-    if (stale[index] !== null || edit.kind !== 'cut-edge') return;
-    cuts.push({ from: edit.from, to: edit.to });
+    if (stale[index] !== null || !isLink(edit, kind)) return;
+    marks.push({ from: edit.from, to: edit.to });
   });
-  return cuts;
+  return marks;
+}
+
+export function liveCuts(edits: PlanEdit[], stale: (string | null)[]): CutMarkInk[] {
+  return liveOf(edits, stale, 'cut-edge');
 }
 
 function liveAdds(edits: PlanEdit[], stale: (string | null)[]): CutMarkInk[] {
-  const adds: CutMarkInk[] = [];
-  edits.forEach((edit, index) => {
-    if (stale[index] !== null || edit.kind !== 'add-edge') return;
-    adds.push({ from: edit.from, to: edit.to });
-  });
-  return adds;
+  return liveOf(edits, stale, 'add-edge');
 }
 
 function markerEdge(add: CutMarkInk): ViewEdge {

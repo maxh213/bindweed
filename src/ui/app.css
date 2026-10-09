@@ -363,7 +363,8 @@ aside[aria-label='metrics'] tbody tr {
   padding: 0.15rem 0.3rem;
 }
 
-[role='status'][aria-label='notice'] {
+.plan-notice {
+  display: block;
   padding: 0.2rem 0.75rem;
   color: #b45309;
   font-size: 0.8rem;
@@ -426,6 +427,12 @@ aside[aria-label='changes'] ol {
 }
 
 .plan-dialog {
+  position: static;
+  margin: 0;
+  color: inherit;
+  max-width: none;
+  max-height: none;
+  height: fit-content;
   background: #ffffff;
   border: 1px solid #94a3b8;
   border-radius: 6px;
@@ -446,4 +453,10 @@ aside[aria-label='changes'] ol {
   display: flex;
   gap: 0.6rem;
   font-size: 0.85rem;
+}
+
+.shown-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
 }

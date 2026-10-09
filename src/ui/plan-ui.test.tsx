@@ -628,7 +628,7 @@ describe('the plan canvas over a real server', () => {
   }
 
   function noticeText(): string {
-    return document.querySelector('[role="status"][aria-label="notice"]')?.textContent ?? '';
+    return document.querySelector('output[aria-label="notice"]')?.textContent ?? '';
   }
 
   function planSelect(): HTMLSelectElement {
@@ -976,9 +976,9 @@ describe('the plan canvas over a real server', () => {
     await waitForText(() => expect(boxOf('src/app').textContent).toContain('3 files'));
     expect(window.location.hash).toBe('#at=src');
     await click(button('New plan…'));
-    expect(ariaOf('[role="dialog"]')).toBe('New plan');
+    expect(ariaOf('dialog')).toBe('New plan');
     await click(button('Cancel'));
-    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.querySelector('dialog')).toBeNull();
     await click(button('New plan…'));
     await click(button('Create'));
     expect(textAt('.plan-dialog-error')).toBe('write a name');
@@ -1266,7 +1266,7 @@ describe('the plan canvas over a real server', () => {
     await click(mustQuery(boxOf('src/domain'), '.box-menu button', 'missing box menu'));
     await click(menuItem(boxOf('src/domain'), 'Add note'));
     await click(button('Cancel'));
-    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.querySelector('dialog')).toBeNull();
     await click(mustQuery(boxOf('src/domain'), '.box-menu button', 'missing box menu'));
     await click(menuItem(boxOf('src/domain'), 'Add note'));
     await click(button('Add'));
@@ -1453,14 +1453,14 @@ describe('the plan canvas over a real server', () => {
     await showApp('#at=src&plan=split-app');
     await waitForText(() => expect(planSelect().value).toBe('split-app'));
     await click(button('Delete plan'));
-    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Delete Split app?');
+    expect(document.querySelector('dialog')?.textContent).toContain('Delete Split app?');
     await click(button('Cancel'));
     expect(planSelect().value).toBe('split-app');
     expect(window.location.hash).toContain('plan=split-app');
     await click(button('Delete plan'));
     await click(button('Delete'));
     await waitForText(() => expect(planSelect().value).toBe(''));
-    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.querySelector('dialog')).toBeNull();
     expect(window.location.hash).toBe('#at=src');
     expect(boxOf('src/app').textContent).toContain('3 files');
     expect(boxOf('src/app').querySelectorAll('.box-row')).toHaveLength(0);
@@ -1509,7 +1509,7 @@ describe('the plan canvas over a real server', () => {
       expect(deletes).toBe(deletesBefore + 1);
       expect(noticeText()).toBe('no such plan');
     });
-    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(document.querySelector('dialog')).not.toBeNull();
     expect(window.location.hash).toBe('#at=src&plan=split-app');
     await api(token, 'POST', '/api/plans', { name: 'Split app' });
   });

@@ -270,7 +270,7 @@ export async function postRescan(token: string, fetcher: typeof fetch = fetch): 
 function planBody(raw: unknown, ok: boolean): PlanDoc | { error: string } {
   if (!ok) return errorFrom(raw);
   const doc = parsePlan(raw);
-  return doc === undefined ? { error: 'cannot reach bindweed' } : doc;
+  return doc ?? { error: 'cannot reach bindweed' };
 }
 
 export async function fetchPlans(token: string, fetcher: typeof fetch = fetch): Promise<{ plans: PlanSummary[] } | { error: string }> {

@@ -23,39 +23,54 @@ export function PlanSelect(
 function DialogFrame(props: Readonly<{ label: string; children: React.ReactNode }>) {
   return (
     <div className="plan-dialog-backdrop">
-      <div role="dialog" aria-label={props.label} className="plan-dialog">
+      <dialog open aria-label={props.label} className="plan-dialog">
         {props.children}
-      </div>
+      </dialog>
     </div>
   );
 }
 
-export function NewPlanDialog(props: Readonly<{ error: string | null; onCreate: (name: string) => void; onCancel: () => void }>) {
-  const [name, setName] = useState('');
+function DialogError(props: Readonly<{ text: string | null }>) {
+  if (props.text === null) return null;
+  return <p className="plan-dialog-error">{props.text}</p>;
+}
+
+function FieldDialog(
+  props: Readonly<{
+    label: string;
+    field: string;
+    empty: string;
+    submit: string;
+    error: string | null;
+    onSubmit: (value: string) => void;
+    onCancel: () => void;
+  }>,
+) {
+  const [value, setValue] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
-  const create = () => {
-    if (name.trim() === '') {
-      setLocalError('write a name');
+  const submit = () => {
+    if (value.trim() === '') {
+      setLocalError(props.empty);
       return;
     }
-    props.onCreate(name.trim());
+    props.onSubmit(value.trim());
   };
   return (
-    <DialogFrame label="New plan">
+    <DialogFrame label={props.label}>
       <label>
-        Name{' '}
+        {props.field}{' '}
         <input
-          aria-label="Name"
-          value={name}
+          aria-label={props.field}
+          value={value}
           onInput={event => {
-            setName(event.currentTarget.value);
+            setValue(event.currentTarget.value);
             setLocalError(null);
           }}
         />
       </label>
       <DialogError text={localError ?? props.error} />
-      <button type="button" onClick={create}>
-        Create
+      <button type="button" onClick={submit}>
+        {props.submit}
       </button>
       <button type="button" onClick={props.onCancel}>
         Cancel
@@ -64,9 +79,18 @@ export function NewPlanDialog(props: Readonly<{ error: string | null; onCreate: 
   );
 }
 
-function DialogError(props: Readonly<{ text: string | null }>) {
-  if (props.text === null) return null;
-  return <p className="plan-dialog-error">{props.text}</p>;
+export function NewPlanDialog(props: Readonly<{ error: string | null; onCreate: (name: string) => void; onCancel: () => void }>) {
+  return (
+    <FieldDialog
+      label="New plan"
+      field="Name"
+      empty="write a name"
+      submit="Create"
+      error={props.error}
+      onSubmit={props.onCreate}
+      onCancel={props.onCancel}
+    />
+  );
 }
 
 export function DeletePlanDialog(props: Readonly<{ name: string; onDelete: () => void; onCancel: () => void }>) {
@@ -84,59 +108,42 @@ export function DeletePlanDialog(props: Readonly<{ name: string; onDelete: () =>
 }
 
 export function NoteDialog(props: Readonly<{ error: string | null; onAdd: (text: string) => void; onCancel: () => void }>) {
-  const [text, setText] = useState('');
-  const [localError, setLocalError] = useState<string | null>(null);
-  const add = () => {
-    if (text.trim() === '') {
-      setLocalError('write a note');
-      return;
-    }
-    props.onAdd(text.trim());
-  };
   return (
-    <DialogFrame label="Add note">
-      <label>
-        Note{' '}
-        <input
-          aria-label="Note"
-          value={text}
-          onInput={event => {
-            setText(event.currentTarget.value);
-            setLocalError(null);
-          }}
-        />
-      </label>
-      <DialogError text={localError ?? props.error} />
-      <button type="button" onClick={add}>
-        Add
-      </button>
-      <button type="button" onClick={props.onCancel}>
-        Cancel
-      </button>
-    </DialogFrame>
+    <FieldDialog
+      label="Add note"
+      field="Note"
+      empty="write a note"
+      submit="Add"
+      error={props.error}
+      onSubmit={props.onAdd}
+      onCancel={props.onCancel}
+    />
+  );
+}
+
+function ShownChoice(props: Readonly<{ label: string; checked: boolean; onChoose: () => void }>) {
+  return (
+    <label className="shown-choice">
+      <input type="radio" name="shown-graph" checked={props.checked} onChange={props.onChoose} />
+      <span>{props.label}</span>
+    </label>
   );
 }
 
 export function ShownSwitch(props: Readonly<{ shown: ShownGraph; onChoose: (shown: ShownGraph) => void }>) {
   return (
     <div role="radiogroup" aria-label="Shown graph">
-      <label>
-        <input type="radio" name="shown-graph" checked={props.shown === 'now'} onChange={() => props.onChoose('now')} />
-        Now
-      </label>
-      <label>
-        <input type="radio" name="shown-graph" checked={props.shown === 'planned'} onChange={() => props.onChoose('planned')} />
-        Planned
-      </label>
+      <ShownChoice label="Now" checked={props.shown === 'now'} onChoose={() => props.onChoose('now')} />
+      <ShownChoice label="Planned" checked={props.shown === 'planned'} onChoose={() => props.onChoose('planned')} />
     </div>
   );
 }
 
 export function Notice(props: Readonly<{ text: string | null }>) {
   return (
-    <div role="status" aria-label="notice">
+    <output className="plan-notice" aria-label="notice">
       {props.text ?? ''}
-    </div>
+    </output>
   );
 }
 
@@ -154,6 +161,20 @@ function ChangeRow(
       </button>
     </li>
   );
+}
+
+type ListedChange = { key: string; entry: ChangeEntry; index: number };
+
+function listedChanges(entries: ChangeEntry[]): ListedChange[] {
+  const seen = new Map<string, number>();
+  const rows: ListedChange[] = [];
+  entries.forEach((entry, index) => {
+    const base = `${entry.sentence}\0${entry.stale ?? ''}`;
+    const count = (seen.get(base) ?? 0) + 1;
+    seen.set(base, count);
+    rows.push({ key: `${count}:${base}`, entry, index });
+  });
+  return rows;
 }
 
 export function ChangeList(
@@ -178,8 +199,8 @@ export function ChangeList(
         </button>
       </div>
       <ol>
-        {props.entries.map((entry, index) => (
-          <ChangeRow key={index} entry={entry} onPick={() => props.onPick(entry)} onRemove={() => props.onRemove(index)} />
+        {listedChanges(props.entries).map(row => (
+          <ChangeRow key={row.key} entry={row.entry} onPick={() => props.onPick(row.entry)} onRemove={() => props.onRemove(row.index)} />
         ))}
       </ol>
     </aside>
