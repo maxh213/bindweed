@@ -49,8 +49,8 @@ export function panelFromQuery(
 export type Tab = 'files' | 'arch';
 
 export type GraphState =
-  | { kind: 'loading' }
-  | { kind: 'message'; message: string }
+  | { kind: 'loading'; view?: undefined }
+  | { kind: 'message'; message: string; view?: undefined }
   | { kind: 'ok'; view: GraphView };
 
 export function tabFromLocation(location: Location): Tab {
@@ -114,9 +114,9 @@ function hashParts(hash: string): Map<string, string> {
   const parts = new Map<string, string>();
   if (!hash.startsWith('#')) return parts;
   for (const piece of hash.slice(1).split('&')) {
-    const eq = piece.indexOf('=');
-    if (eq === -1) continue;
-    parts.set(piece.slice(0, eq), piece.slice(eq + 1));
+    const [key, ...rest] = piece.split('=');
+    if (rest.length === 0) continue;
+    parts.set(key, rest.join('='));
   }
   return parts;
 }

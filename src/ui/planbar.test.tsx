@@ -1,7 +1,7 @@
 import { JSDOM } from 'jsdom';
 import { createElement, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PlanSummary } from '../domain/plan.ts';
 import { ChangeList, DeletePlanDialog, NewPlanDialog, NoteDialog, Notice, PlanSelect, ShownSwitch } from './PlanBar.tsx';
 
@@ -112,6 +112,12 @@ describe('the plan bar components', () => {
     return found;
   }
 
+  function textOf(selector: string): string | null {
+    const found = document.querySelector(selector);
+    if (found === null) return null;
+    return found.textContent;
+  }
+
   function input(label: string): HTMLElement {
     const found = document.querySelector(`input[aria-label="${label}"]`);
     if (found === null) throw new Error(`missing input ${label}`);
@@ -124,6 +130,7 @@ describe('the plan bar components', () => {
     const select = document.querySelector('select[aria-label="Plan"]') as HTMLSelectElement;
     expect(select.value).toBe('split-app-2');
     expect(Array.from(select.options).map(option => option.textContent)).toEqual(['No plan', 'Split app', 'Split app (split-app-2)']);
+    expect(select.closest('label')?.textContent).toBe('Plan No planSplit appSplit app (split-app-2)');
     await change(select, '');
     await change(select, 'split-app');
     expect(chosen).toEqual([null, 'split-app']);
@@ -140,13 +147,18 @@ describe('the plan bar components', () => {
     const cancelled: string[] = [];
     await show(createElement(NewPlanDialog, { error: null, onCreate: name => created.push(name), onCancel: () => cancelled.push('x') }));
     expect(document.querySelector('dialog')?.getAttribute('aria-label')).toBe('New plan');
+    expect(textOf('.plan-dialog label')).toBe('Name ');
     await click(button('Create'));
-    expect(document.querySelector('.plan-dialog-error')?.textContent).toBe('write a name');
+    expect(textOf('.plan-dialog-error')).toBe('write a name');
+    expect(created).toEqual([]);
+    await typeText(input('Name'), '   ');
+    await click(button('Create'));
+    expect(textOf('.plan-dialog-error')).toBe('write a name');
     expect(created).toEqual([]);
     await typeText(input('Name'), '  Split app  ');
     await click(button('Create'));
     expect(created).toEqual(['Split app']);
-    expect(document.querySelector('.plan-dialog-error')).toBeNull();
+    expect(textOf('.plan-dialog-error')).toBeNull();
     await click(button('Cancel'));
     expect(cancelled).toEqual(['x']);
   });
@@ -223,5 +235,19 @@ describe('the plan bar components', () => {
     await show(createElement(ChangeList, { entries: [], canUndo: false, canRedo: false, onUndo: () => undefined, onRedo: () => undefined, onPick: () => undefined, onRemove: () => undefined }));
     expect((button('Undo') as HTMLButtonElement).disabled).toBe(true);
     expect(document.querySelectorAll('li.change')).toHaveLength(0);
+  });
+
+  it('keys repeated sentences without duplicate-key warnings', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const entries = [
+      { sentence: 'Move a.ts to b', stale: null },
+      { sentence: 'Move a.ts to b', stale: null },
+      { sentence: 'Move a.ts to b', stale: 'gone' },
+    ];
+    await show(createElement(ChangeList, { entries, canUndo: true, canRedo: false, onUndo: () => undefined, onRedo: () => undefined, onPick: () => undefined, onRemove: () => undefined }));
+    expect(document.querySelectorAll('li.change')).toHaveLength(3);
+    const keyWarnings = spy.mock.calls.filter(args => String(args[0]).includes('same key'));
+    expect(keyWarnings).toEqual([]);
+    spy.mockRestore();
   });
 });

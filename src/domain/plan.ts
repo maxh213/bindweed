@@ -45,7 +45,7 @@ function trimDashes(value: string): string {
 }
 
 export function slugOf(name: string): string {
-  const dashed = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  const dashed = name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
   return trimDashes(dashed).slice(0, SLUG_MAX);
 }
 
@@ -69,9 +69,9 @@ function recordOf(raw: unknown): Record<string, unknown> | undefined {
   return Object.fromEntries(Object.entries(raw));
 }
 
-function exactKeys(rec: Record<string, unknown>, keys: string[]): boolean {
-  const own = Object.keys(rec);
-  return own.length === keys.length && keys.every(key => key in rec);
+function noExtraKeys(rec: Record<string, unknown>, keys: string[]): boolean {
+  const known = new Set(keys);
+  return Object.keys(rec).filter(key => !known.has(key)).length === 0;
 }
 
 function slugChecked(name: string): string | undefined {
@@ -84,7 +84,7 @@ function nameField(rec: Record<string, unknown>): string | undefined {
 
 export function planNameFrom(raw: unknown): string | undefined {
   const rec = recordOf(raw);
-  if (rec === undefined || !exactKeys(rec, ['name'])) return undefined;
+  if (rec === undefined || !noExtraKeys(rec, ['name'])) return undefined;
   const field = nameField(rec);
   if (field === undefined) return undefined;
   return slugChecked(field.trim());
@@ -125,13 +125,13 @@ function endpointsOf(rec: Record<string, unknown>): { from: string; to: string }
 }
 
 function moveEditFrom(rec: Record<string, unknown>): PlanEdit | undefined {
-  if (!exactKeys(rec, ['kind', 'file', 'to'])) return undefined;
+  if (!noExtraKeys(rec, ['kind', 'file', 'to'])) return undefined;
   if (typeof rec.file !== 'string' || typeof rec.to !== 'string') return undefined;
   return { kind: 'move-file', file: rec.file, to: rec.to };
 }
 
 function cutEditFrom(rec: Record<string, unknown>): PlanEdit | undefined {
-  if (!exactKeys(rec, ['kind', 'from', 'to', 'files'])) return undefined;
+  if (!noExtraKeys(rec, ['kind', 'from', 'to', 'files'])) return undefined;
   const ends = endpointsOf(rec);
   const files = pairsFrom(rec.files);
   if (ends === undefined || files === undefined) return undefined;
@@ -139,20 +139,20 @@ function cutEditFrom(rec: Record<string, unknown>): PlanEdit | undefined {
 }
 
 function addEditFrom(rec: Record<string, unknown>): PlanEdit | undefined {
-  if (!exactKeys(rec, ['kind', 'from', 'to'])) return undefined;
+  if (!noExtraKeys(rec, ['kind', 'from', 'to'])) return undefined;
   const ends = endpointsOf(rec);
   if (ends === undefined || ends.from === ends.to) return undefined;
   return { kind: 'add-edge', from: ends.from, to: ends.to };
 }
 
 function nodeTarget(rec: Record<string, unknown>): NoteTarget | undefined {
-  if (typeof rec.node !== 'string' || !exactKeys(rec, ['node'])) return undefined;
+  if (typeof rec.node !== 'string' || !noExtraKeys(rec, ['node'])) return undefined;
   return { node: rec.node };
 }
 
 function edgeTarget(rec: Record<string, unknown>): NoteTarget | undefined {
   const pair = stringPair(rec.edge);
-  if (pair === undefined || !exactKeys(rec, ['edge'])) return undefined;
+  if (pair === undefined || !noExtraKeys(rec, ['edge'])) return undefined;
   return { edge: pair };
 }
 
@@ -167,7 +167,7 @@ function textField(rec: Record<string, unknown>): string | undefined {
 }
 
 function noteEditFrom(rec: Record<string, unknown>): PlanEdit | undefined {
-  if (!exactKeys(rec, ['kind', 'target', 'text'])) return undefined;
+  if (!noExtraKeys(rec, ['kind', 'target', 'text'])) return undefined;
   const target = noteTargetFrom(rec.target);
   const text = textField(rec);
   if (target === undefined || text === undefined) return undefined;
@@ -211,7 +211,7 @@ function commitOk(value: unknown): boolean {
 }
 
 function docShapeOk(rec: Record<string, unknown>): boolean {
-  return exactKeys(rec, PLAN_KEYS) && rec.version === 1 && nameOk(rec.name) && typeof rec.slug === 'string';
+  return noExtraKeys(rec, PLAN_KEYS) && rec.version === 1 && nameOk(rec.name) && typeof rec.slug === 'string';
 }
 
 function docStampsOk(rec: Record<string, unknown>): boolean {

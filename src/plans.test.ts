@@ -64,6 +64,13 @@ describe('plans store', () => {
 
   it('lists nothing when the plans directory is absent', async () => {
     expect(await listPlans(root)).toEqual([]);
+    expect(await freePlanSlug(root, 'fresh')).toBe('fresh');
+  });
+
+  it('skips a non-json file even when a same-named plan exists', async () => {
+    await writePlan(root, docOf('evil', '2026-10-01T00:00:00.000Z'));
+    await writeFile(join(root, '.bindweed', 'plans', 'evilx.jso'), 'whatever');
+    expect(await listPlans(root)).toEqual([{ name: 'Split app', slug: 'evil', editCount: 0, createdAt: '2026-10-01T00:00:00.000Z' }]);
   });
 
   it('counts the edits, not the redo stack', async () => {

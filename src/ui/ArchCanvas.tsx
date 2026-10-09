@@ -26,7 +26,7 @@ import type { CutMarkInk, GhostBoxInk, Planning, RowInk } from './planpicture.ts
 
 export type MarkSel = { from: string; to: string; cut: boolean };
 
-export type FocusRequest = { kind: 'node'; id: string } | { kind: 'arrow'; from: string; to: string };
+export type FocusRequest = { id: string } | { from: string; to: string };
 
 type BoxData = {
   name: string;
@@ -49,7 +49,7 @@ type BoxData = {
 
 type BoxNode = Node<BoxData, 'box'>;
 
-type GhostData = { name: string; x: number; y: number };
+type GhostData = { name: string; x: number; y: number; kind: null };
 
 type GhostNode = Node<GhostData, 'ghost'>;
 
@@ -96,7 +96,6 @@ export type CanvasProps = {
 };
 
 const CONNECT_RADIUS = 260;
-const CUT_STYLE = { stroke: '#94a3b8', strokeWidth: 1, strokeDasharray: '4 4' };
 
 function boolAttr(value: boolean): 'true' | 'false' {
   return value ? 'true' : 'false';
@@ -156,18 +155,10 @@ function HealthBadge({ text, level }: Readonly<{ text: string | null; level: Lev
 type Noted = { key: string; text: string; at: number };
 
 function notedTexts(texts: string[]): Noted[] {
-  const seen = new Map<string, number>();
-  const marks: Noted[] = [];
-  texts.forEach((text, index) => {
-    const count = (seen.get(text) ?? 0) + 1;
-    seen.set(text, count);
-    marks.push({ key: `${count}:${text}`, text, at: index });
-  });
-  return marks;
+  return texts.map((text, index) => ({ key: String(index), text, at: index }));
 }
 
 function NoteMarks({ texts }: Readonly<{ texts: string[] }>) {
-  if (texts.length === 0) return null;
   return (
     <>
       {notedTexts(texts).map(mark => (
@@ -179,7 +170,7 @@ function NoteMarks({ texts }: Readonly<{ texts: string[] }>) {
   );
 }
 
-function BoxRow({ row, onOpen }: Readonly<{ row: RowInk; onOpen: ((path: string) => void) | undefined }>) {
+function BoxRow({ row, onOpen }: Readonly<{ row: RowInk; onOpen: (path: string) => void }>) {
   if (row.ghost) {
     return (
       <div className="box-row" data-ghost="true" data-path={row.path} onDoubleClick={event => event.stopPropagation()}>
@@ -195,7 +186,7 @@ function BoxRow({ row, onOpen }: Readonly<{ row: RowInk; onOpen: ((path: string)
       onDragStart={event => event.dataTransfer.setData(FILE_DRAG_MIME, row.path)}
       onDoubleClick={event => {
         event.stopPropagation();
-        onOpen?.(row.path);
+        onOpen(row.path);
       }}
     >
       {row.name}
@@ -203,7 +194,7 @@ function BoxRow({ row, onOpen }: Readonly<{ row: RowInk; onOpen: ((path: string)
   );
 }
 
-function BoxRows({ rows, onOpen }: Readonly<{ rows: RowInk[]; onOpen: ((path: string) => void) | undefined }>) {
+function BoxRows({ rows, onOpen }: Readonly<{ rows: RowInk[]; onOpen: (path: string) => void }>) {
   if (rows.length === 0) return null;
   return (
     <div className="box-rows">
@@ -263,10 +254,6 @@ function drawLabel(planning: Planning | null): string | undefined {
   return planning === null ? undefined : 'Draw dependency';
 }
 
-function rowOpener(planning: Planning | null): ((path: string) => void) | undefined {
-  return planning?.onOpenPlanned;
-}
-
 function Box({ id, data }: NodeProps<BoxNode>) {
   return (
     <div
@@ -287,7 +274,7 @@ function Box({ id, data }: NodeProps<BoxNode>) {
       <TestTag show={data.test} />
       <HealthBadge text={data.badge} level={data.level} />
       <NoteMarks texts={data.noteTexts} />
-      <BoxRows rows={data.rows} onOpen={rowOpener(data.planning)} />
+      {data.planning === null ? null : <BoxRows rows={data.rows} onOpen={data.planning.onOpenPlanned} />}
       {boxMenu(data, id)}
       <Handle type="source" position={Position.Bottom} aria-label={drawLabel(data.planning)} isConnectable={data.planning !== null} />
     </div>
@@ -326,7 +313,6 @@ function ArrowLabel({ label, x, y }: Readonly<{ label: string | null; x: number;
 }
 
 function ArrowNoteMarks({ texts, x, y }: Readonly<{ texts: string[]; x: number; y: number }>) {
-  if (texts.length === 0) return null;
   return (
     <>
       {notedTexts(texts).map(mark => (
@@ -416,7 +402,7 @@ function CutMark(props: EdgeProps<CutEdge>) {
       data-to={props.target}
       data-selected={boolAttr(props.data?.selected ?? false)}
     >
-      <BaseEdge id={props.id} path={path} style={CUT_STYLE} />
+      <BaseEdge id={props.id} path={path} style={{ stroke: '#94a3b8', strokeWidth: 1, strokeDasharray: '4 4' }} />
       <text x={labelX} y={labelY} className="cut-label">
         ✂
       </text>
@@ -525,7 +511,7 @@ function toGhost(ghost: GhostBoxInk): GhostNode {
     id: ghost.id,
     type: 'ghost',
     position: { x: ghost.x, y: ghost.y },
-    data: { name: ghost.name, x: ghost.x, y: ghost.y },
+    data: { name: ghost.name, x: ghost.x, y: ghost.y, kind: null },
     draggable: false,
   };
 }
@@ -643,7 +629,7 @@ function boxElement(id: string): HTMLElement | undefined {
 }
 
 function nodeKind(node: BoxNode | GhostNode): GraphNode['kind'] | null {
-  return node.type === 'ghost' ? null : node.data.kind;
+  return node.data.kind;
 }
 
 function measureBox(id: string): { width: number; height: number } {
@@ -660,7 +646,7 @@ function centreOf(id: string, spots: PlacedBox[]): { x: number; y: number } | nu
 }
 
 function focusPoint(focus: FocusRequest, spots: PlacedBox[]): { x: number; y: number } | null {
-  if (focus.kind === 'node') return centreOf(focus.id, spots);
+  if ('id' in focus) return centreOf(focus.id, spots);
   const from = centreOf(focus.from, spots);
   const to = centreOf(focus.to, spots);
   if (from === null || to === null) return null;

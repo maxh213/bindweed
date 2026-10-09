@@ -426,6 +426,8 @@ describe('fetchDetail', () => {
     expect(callAt(calls, 3).url).toBe('/api/graph?at=src&plan=split-app');
     expect(await fetchGraph('tok', 'src', fetcher, { plan: '' })).toEqual(RICH_GRAPH);
     expect(callAt(calls, 4).url).toBe('/api/graph?at=src');
+    expect(await fetchGraph('tok', 'src', fetcher, { plan: null })).toEqual(RICH_GRAPH);
+    expect(callAt(calls, 5).url).toBe('/api/graph?at=src');
   });
 
   it('maps a missing node, a bad body and a network failure', async () => {
@@ -475,7 +477,7 @@ describe('fetchPlans', () => {
   });
 });
 
-type PlanCall = { url: string; method: string | undefined; body: BodyInit | null | undefined };
+type PlanCall = { url: string; method: string | undefined; body: BodyInit | null | undefined; headers: HeadersInit | undefined };
 
 function planCall(calls: PlanCall[], index: number): PlanCall {
   const found = calls[index];
@@ -491,29 +493,43 @@ function planAnswer(method: string | undefined): unknown {
 function recordedPlan(calls: PlanCall[], url: string, init: RequestInit | undefined): Response {
   const method = init === undefined ? undefined : init.method;
   const body = init === undefined ? undefined : init.body;
-  calls.push({ url, method, body });
+  const headers = init === undefined ? undefined : init.headers;
+  calls.push({ url, method, body, headers });
   return jsonResponse(true, planAnswer(method));
 }
 
 describe('postPlan, fetchPlan, putPlan and deletePlan', () => {
   it('creates a plan by name', async () => {
-    const calls: { url: string; method: string | undefined; body: BodyInit | null | undefined }[] = [];
+    const calls: PlanCall[] = [];
     const fetcher = (async (url: string, init?: RequestInit) => {
-      calls.push({ url, method: init?.method, body: init?.body });
+      const method = init === undefined ? undefined : init.method;
+      const body = init === undefined ? undefined : init.body;
+      const headers = init === undefined ? undefined : init.headers;
+      calls.push({ url, method, body, headers });
       return jsonResponse(true, PLAN_DOC);
     }) as typeof fetch;
     expect(await postPlan('tok', 'Split app', fetcher)).toEqual(PLAN_DOC);
-    expect(calls).toEqual([{ url: '/api/plans', method: 'POST', body: JSON.stringify({ name: 'Split app' }) }]);
+    expect(calls).toEqual([
+      {
+        url: '/api/plans',
+        method: 'POST',
+        body: JSON.stringify({ name: 'Split app' }),
+        headers: { Authorization: 'Bearer tok', 'Content-Type': 'application/json' },
+      },
+    ]);
   });
 
   it('reads, replaces and removes a plan document', async () => {
-    const calls: { url: string; method: string | undefined; body: BodyInit | null | undefined }[] = [];
+    const calls: PlanCall[] = [];
     const fetcher = (async (url: string, init?: RequestInit) => recordedPlan(calls, url, init)) as typeof fetch;
     expect(await fetchPlan('tok', 'split-app', fetcher)).toEqual(PLAN_DOC);
     expect(await putPlan('tok', PLAN_DOC, fetcher)).toEqual(PLAN_DOC);
     expect(await deletePlan('tok', 'split-app', fetcher)).toEqual({ ok: true });
     expect(calls.map(call => `${call.method ?? 'GET'} ${call.url}`)).toEqual(['GET /api/plans/split-app', 'PUT /api/plans/split-app', 'DELETE /api/plans/split-app']);
+    expect(planCall(calls, 0).headers).toEqual({ Authorization: 'Bearer tok' });
     expect(planCall(calls, 1).body).toBe(JSON.stringify(PLAN_DOC));
+    expect(planCall(calls, 1).headers).toEqual({ Authorization: 'Bearer tok', 'Content-Type': 'application/json' });
+    expect(planCall(calls, 2).headers).toEqual({ Authorization: 'Bearer tok' });
   });
 
   it('maps refusals, bad documents and network failures', async () => {

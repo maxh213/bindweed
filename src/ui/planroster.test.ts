@@ -43,7 +43,8 @@ describe('planRoster', () => {
   it('names the plan from the list, then the document, then nothing', () => {
     const plans: PlanSummary[] = [{ name: 'Split app', slug: 'split-app', editCount: 0, createdAt: 'x' }];
     expect(planRoster({ plans }, null, null, 'split-app').deleteName).toBe('Split app');
-    expect(planRoster({ plans }, DOC, null, 'missing').deleteName).toBe('Split app');
+    expect(planRoster({ plans }, { ...DOC, name: 'Doc name' }, null, 'missing').deleteName).toBe('Doc name');
+    expect(planRoster({ plans }, { ...DOC, name: 'Doc name' }, null, null).deleteName).toBe('Doc name');
     expect(planRoster({ plans: [] }, null, null, null).deleteName).toBe('');
   });
 });

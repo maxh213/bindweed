@@ -160,6 +160,36 @@ describe('staleReasons', () => {
     expect(staleReasons(LAYERED, [{ kind: 'add-edge', from: 'src/app', to: 'src/gone' }])).toEqual(['no such box src/gone']);
   });
 
+  it('joins a planned edge only when both ends match', () => {
+    const joinTo: ScanResult = { ...LAYERED, planned: [{ from: 'src/infra', to: 'src/app' }] };
+    expect(staleReasons(joinTo, [{ kind: 'add-edge', from: 'src/domain', to: 'src/app' }])).toEqual([null]);
+    const joinFrom: ScanResult = { ...LAYERED, planned: [{ from: 'src/domain', to: 'src/infra' }] };
+    expect(staleReasons(joinFrom, [{ kind: 'add-edge', from: 'src/domain', to: 'src/app' }])).toEqual([null]);
+    const empty: ScanResult = { ...LAYERED, planned: [] };
+    expect(staleReasons(empty, [{ kind: 'add-edge', from: 'src/domain', to: 'src/app' }])).toEqual([null]);
+  });
+
+  it('counts a cut as covering a note only when both ends match', () => {
+    const scan: ScanResult = {
+      files: [
+        { path: 'a/x.ts', test: false },
+        { path: 'a/y.ts', test: false },
+        { path: 'b/z.ts', test: false },
+        { path: 'c/w.ts', test: false },
+      ],
+      edges: [{ from: 'a/x.ts', to: 'b/z.ts', kind: 'runtime' }],
+      externals: [],
+      workspaces: [],
+    };
+    const cut: PlanEdit = { kind: 'cut-edge', from: 'a', to: 'b', files: [['a/x.ts', 'b/z.ts']] };
+    const sameFrom: PlanEdit = { kind: 'note', target: { edge: ['a', 'c'] }, text: 'x' };
+    const sameTo: PlanEdit = { kind: 'note', target: { edge: ['c', 'b'] }, text: 'x' };
+    const both: PlanEdit = { kind: 'note', target: { edge: ['a', 'b'] }, text: 'x' };
+    expect(staleReasons(scan, [cut, sameFrom])).toEqual([null, 'no such arrow a → c']);
+    expect(staleReasons(scan, [cut, sameTo])).toEqual([null, 'no such arrow c → b']);
+    expect(staleReasons(scan, [cut, both])).toEqual([null, null]);
+  });
+
   it('marks a note on a missing node', () => {
     expect(staleReasons(LAYERED, [{ kind: 'note', target: { node: 'src/gone' }, text: 'x' }])).toEqual(['no such box src/gone']);
   });

@@ -323,6 +323,23 @@ describe('the plans api over the layered fixture', () => {
     expect(app.token).not.toBe(previous);
     expect(json(await hit(port, 'GET', '/api/plans/split-app', bearer))).toMatchObject({ slug: 'split-app', edits: [] });
   });
+
+  it('never reads a plan file whose name is not a slug', async () => {
+    const file = join(root, '.bindweed', 'plans', 'Split-App.json');
+    await writeFile(file, JSON.stringify({
+      version: 1,
+      name: 'Split app',
+      slug: 'split-app',
+      createdAt: '2026-10-01T00:00:00.000Z',
+      baseCommit: 'a'.repeat(40),
+      edits: [],
+      redo: [],
+    }));
+    const res = await hit(port, 'GET', '/api/plans/Split-App', bearer);
+    expect(res.status).toBe(404);
+    expect(json(res)).toEqual(NO_PLAN);
+    await rm(file);
+  });
 });
 
 describe('plan documents and the planned graph', () => {
@@ -540,8 +557,13 @@ describe('plan documents and the planned graph', () => {
     const noAt = await hit(port, 'GET', '/api/pairs?from=src/app&to=src/infra', bearer);
     expect(noAt.status).toBe(200);
     expect(json(noAt)).toEqual({ pairs: [] });
+    expect(json(await hit(port, 'GET', '/api/pairs?from=src&to=react&external=1', bearer))).toEqual({ pairs: [['src/infra/repo.ts', 'react']] });
+    expect(json(await hit(port, 'GET', '/api/pairs?from=src/app&to=react&at=src&external=1', bearer))).toEqual({ pairs: [] });
     const missingParam = await hit(port, 'GET', '/api/pairs?to=src/app', bearer);
     expect(missingParam.status).toBe(404);
+    const missingTo = await hit(port, 'GET', '/api/pairs?from=src/app', bearer);
+    expect(missingTo.status).toBe(404);
+    expect(json(missingTo)).toEqual(NOT_FOUND);
     expect(json(await hit(port, 'GET', '/api/pairs?from=src/app&to=src/infra&at=src&plan=missing', bearer))).toEqual(NO_PLAN);
     expect(json(await hit(port, 'GET', '/api/pairs?from=src/app&to=src/infra&at=src&plan=src/app', bearer))).toEqual(NO_PLAN);
   });

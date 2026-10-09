@@ -120,6 +120,11 @@ describe('package rows', () => {
       { path: 'a/x.ts', name: 'x.ts', ghost: false },
       { path: 'b/x.ts', name: 'x.ts', ghost: false },
     ]);
+    expect(picture({ shown: 'planned', packages: [{ id: 'src/app', now, planned: viewOf([]) }] }).ink.rows.get('src/app')).toEqual([
+      { path: 'src/app/a.ts', name: 'a.ts', ghost: true },
+      { path: 'src/app/b.ts', name: 'b.ts', ghost: true },
+      { path: 'src/app/save.ts', name: 'save.ts', ghost: true },
+    ]);
   });
 });
 
@@ -138,6 +143,7 @@ describe('ghosts, notes, cuts and added arrows', () => {
       { id: 'src/app/save.ts', name: 'save.ts', x: 520, y: 0 },
     ]);
     expect(picture({ nodes: [packageNode('src/app')], other: viewOf([packageNode('src/app')]) }).ink.ghosts).toEqual([]);
+    expect(picture({ nodes: [], other: viewOf([packageNode('src/app')]) }).ink.ghosts).toEqual([]);
     expect(picture({ nodes: [fileNode('src/app/a.ts')], other: undefined }).ink.ghosts).toEqual([]);
     expect(picture({ nodes: [fileNode('src/app/a.ts')], other: { error: 'no such directory' } }).ink.ghosts).toEqual([]);
     const partial = viewOf([fileNode('src/app/a.ts', 0, 0), fileNode('src/app/save.ts', 0, 1)]);
@@ -167,6 +173,13 @@ describe('ghosts, notes, cuts and added arrows', () => {
       { from: 'src/infra', to: 'src/app', runtime: 0, type: 0, cycle: false, planned: true },
     ]);
     expect(picture({ shown: 'now', edits: [ADD], stale: [null], edges, ids }).ink.added).toEqual([]);
+    const sameTo = [{ from: 'src/domain', to: 'src/app', runtime: 0, type: 0, cycle: false }];
+    expect(picture({ shown: 'now', edits: [ADD], stale: [null], edges: sameTo, ids }).ink.added).toEqual([
+      { from: 'src/infra', to: 'src/app', runtime: 0, type: 0, cycle: false, planned: true },
+    ]);
+    expect(picture({ shown: 'now', edits: [ADD], stale: [null], edges: undefined, ids }).ink.added).toEqual([
+      { from: 'src/infra', to: 'src/app', runtime: 0, type: 0, cycle: false, planned: true },
+    ]);
     expect(picture({ shown: 'now', edits: [ADD], stale: ['gone'], edges: [], ids }).ink.added).toEqual([]);
     expect(picture({ shown: 'planned', edits: [ADD], stale: [null], edges: [], ids }).ink.added).toEqual([]);
     expect(picture({ shown: 'now', edits: [CUT], stale: [null], ids: new Set(['src/app', 'src/domain']) }).ink.cuts).toEqual([{ from: 'src/app', to: 'src/domain' }]);

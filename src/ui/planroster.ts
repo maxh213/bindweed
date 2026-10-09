@@ -29,8 +29,8 @@ function planLabels(plans: PlanSummary[]): Map<string, string> {
 }
 
 function planChoice(slug: string | null, plans: PlanSummary[]): string {
-  if (slug === null) return '';
-  return plans.some(plan => plan.slug === slug) ? slug : '';
+  const listed = plans.find(plan => plan.slug === slug);
+  return listed?.slug ?? '';
 }
 
 function deleteNameOf(plans: PlanSummary[], slug: string | null, doc: PlanDoc | null): string {

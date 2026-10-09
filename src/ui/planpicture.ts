@@ -53,7 +53,7 @@ type PictureInput = {
   pins: Record<string, Pin>;
   edits: PlanEdit[];
   stale: (string | null)[] | undefined;
-  edges: ViewEdge[];
+  edges: ViewEdge[] | undefined;
   ids: Set<string>;
   packages: PackageRows[];
 };
@@ -75,12 +75,7 @@ function unmovedBy(path: string, edit: PlanEdit, stale: string | null): string {
 type UndoStep = { edit: PlanEdit; reason: string | null };
 
 function undoSteps(edits: PlanEdit[], stale: (string | null)[]): UndoStep[] {
-  const steps: UndoStep[] = [];
-  edits.forEach((edit, index) => {
-    steps.push({ edit, reason: stale[index] ?? null });
-  });
-  steps.reverse();
-  return steps;
+  return edits.map((edit, index) => ({ edit, reason: stale[index] ?? null })).reverse();
 }
 
 function diskPathOf(path: string, edits: PlanEdit[], stale: (string | null)[]): string {
@@ -112,8 +107,7 @@ function drilledFiles(view: PlanView): DrilledFile[] {
 }
 
 function byRowName(a: { name: string }, b: { name: string }): number {
-  if (a.name < b.name) return -1;
-  return a.name > b.name ? 1 : 0;
+  return a.name.localeCompare(b.name);
 }
 
 function rowOf(file: DrilledFile, ghost: boolean): RowInk {
@@ -139,18 +133,14 @@ function rowsMap(packages: PackageRows[], shown: ShownGraph): Map<string, RowInk
   return map;
 }
 
-function viewNodesOf(view: PlanView): GraphNode[] {
-  if (view === undefined || 'error' in view) return [];
-  return view.nodes;
-}
-
 function fileGhost(node: GraphNode, spot: PlacedBox, shown: boolean): GhostBoxInk | null {
   if (shown || node.kind !== 'file') return null;
   return { id: node.id, name: node.name, x: spot.x, y: spot.y };
 }
 
 function ghostBoxes(shown: GraphNode[], other: PlanView, pins: Record<string, Pin>): GhostBoxInk[] {
-  const others = viewNodesOf(other);
+  if (other === undefined || 'error' in other) return [];
+  const others = other.nodes;
   const shownIds = new Set(shown.map(node => node.id));
   const layers: LayerNode[] = others.map(node => ({ id: node.id, row: node.row, order: node.order }));
   const spots = arrange(layers, pins);
@@ -193,12 +183,9 @@ function noteInk(edits: PlanEdit[], stale: (string | null)[]): NoteInk {
 }
 
 function liveOf(edits: PlanEdit[], stale: (string | null)[], kind: 'cut-edge' | 'add-edge'): CutMarkInk[] {
-  const marks: CutMarkInk[] = [];
-  edits.forEach((edit, index) => {
-    if (stale[index] !== null || edit.kind !== kind) return;
-    marks.push({ from: edit.from, to: edit.to });
-  });
-  return marks;
+  return edits
+    .filter((edit, index): edit is CutMarkInk & PlanEdit => stale[index] === null && edit.kind === kind)
+    .map(edit => ({ from: edit.from, to: edit.to }));
 }
 
 function marksInView<T extends { from: string; to: string }>(marks: T[], ids: Set<string>): T[] {
@@ -209,13 +196,13 @@ function markerEdge(add: CutMarkInk): ViewEdge {
   return { from: add.from, to: add.to, runtime: 0, type: 0, cycle: false, planned: true };
 }
 
-function addedMarkers(edits: PlanEdit[], stale: (string | null)[], edges: ViewEdge[]): ViewEdge[] {
-  return liveOf(edits, stale, 'add-edge')
-    .filter(add => !edges.some(edge => edge.from === add.from && edge.to === add.to))
-    .map(markerEdge);
+function addedMarkers(edits: PlanEdit[], stale: (string | null)[], edges: ViewEdge[] | undefined): ViewEdge[] {
+  const live = liveOf(edits, stale, 'add-edge');
+  if (edges === undefined) return live.map(markerEdge);
+  return live.filter(add => !edges.some(edge => edge.from === add.from && edge.to === add.to)).map(markerEdge);
 }
 
-function addedOf(shown: ShownGraph, edits: PlanEdit[], stale: (string | null)[], edges: ViewEdge[], ids: Set<string>): ViewEdge[] {
+function addedOf(shown: ShownGraph, edits: PlanEdit[], stale: (string | null)[], edges: ViewEdge[] | undefined, ids: Set<string>): ViewEdge[] {
   if (shown !== 'now') return [];
   return marksInView(addedMarkers(edits, stale, edges), ids);
 }

@@ -351,12 +351,10 @@ async function serveRescan(app: App, graphs: GraphHolder, res: ServerResponse): 
   sendJson(res, 200, { files: graphs.scan.files.length, ms: Date.now() - started });
 }
 
-function parseJsonText(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
+async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+  return readBody(req)
+    .then(JSON.parse)
+    .catch(() => undefined);
 }
 
 async function servePlanList(app: App, res: ServerResponse): Promise<void> {
@@ -364,7 +362,7 @@ async function servePlanList(app: App, res: ServerResponse): Promise<void> {
 }
 
 async function postPlan(app: App, req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const name = planNameFrom(parseJsonText(await readBody(req)));
+  const name = planNameFrom(await readJsonBody(req));
   if (name === undefined) {
     sendJson(res, 400, { error: 'bad name' });
     return;
@@ -397,7 +395,7 @@ async function getPlan(app: App, req: IncomingMessage, res: ServerResponse, slug
 }
 
 async function putPlan(app: App, req: IncomingMessage, res: ServerResponse, slug: string): Promise<void> {
-  const doc = parsePlan(parseJsonText(await readBody(req)));
+  const doc = parsePlan(await readJsonBody(req));
   if (doc?.slug !== slug) {
     sendJson(res, 400, { error: 'bad plan' });
     return;

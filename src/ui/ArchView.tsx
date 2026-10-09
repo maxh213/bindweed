@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
-import type { Crumb, GraphNode, GraphView, NodeDetail, ViewEdge } from '../domain/graph.ts';
+import type { Crumb, GraphNode, GraphView, NodeDetail } from '../domain/graph.ts';
 import {
   arrange,
   emptySettings,
@@ -179,18 +179,16 @@ function packageBoxes(state: GraphState): MetricBox[] {
 }
 
 function viewOf(state: GraphState): GraphView | undefined {
-  if (state.kind !== 'ok') return undefined;
   return state.view;
 }
 
-function nodesOf(state: GraphState): GraphNode[] {
-  if (state.kind !== 'ok') return [];
-  return state.view.nodes;
+function noNodes(): GraphNode[] {
+  return JSON.parse('[]');
 }
 
-function edgesOf(state: GraphState): ViewEdge[] {
-  if (state.kind !== 'ok') return [];
-  return state.view.edges;
+function nodesOf(state: GraphState): GraphNode[] {
+  if (state.kind !== 'ok') return noNodes();
+  return state.view.nodes;
 }
 
 function readyOf(state: GraphState): boolean {
@@ -209,17 +207,12 @@ function showingPlanned(shown: Shown, slug: string | null): boolean {
   return shown === 'planned' && slug !== null;
 }
 
-function detailPlanOf(shown: Shown, slug: string | null): string {
-  if (shown !== 'planned' || slug === null) return '';
-  return slug;
+function detailPlanOf(shown: Shown, slug: string | null): string | null {
+  return shown === 'planned' ? slug : null;
 }
 
 function crumbDrops(slug: string | null, drop: CrumbDrop): CrumbDrop | null {
   return slug === null ? null : drop;
-}
-
-function plannedKey(slug: string | null): string {
-  return slug ?? '';
 }
 
 function plannedOn(layout: LayoutDoc | undefined, slug: string | null): boolean {
@@ -245,8 +238,8 @@ function ArchPane(props: Readonly<ArchViewProps & { slug: string | null }>) {
     enabled: layoutQuery.data !== undefined,
   });
   const plannedQuery = useQuery({
-    queryKey: ['graph', props.token, props.at, settings.tests, settings.external, plannedKey(slug)] as const,
-    queryFn: () => fetchGraph(props.token, props.at, props.fetcher, { ...settings, plan: plannedKey(slug) }),
+    queryKey: ['graph', props.token, props.at, settings.tests, settings.external, slug] as const,
+    queryFn: () => fetchGraph(props.token, props.at, props.fetcher, { ...settings, plan: slug }),
     enabled: plannedOn(layoutQuery.data, slug),
   });
   const [shown, setShown] = useState<Shown>('planned');
@@ -277,7 +270,7 @@ function ArchPane(props: Readonly<ArchViewProps & { slug: string | null }>) {
   }, [body]);
   const center = useCenterOn(spots);
   const pickNode = (id: string): void => {
-    setFocus({ kind: 'node', id });
+    setFocus({ id });
     setMarked(null);
     if (ids.has(id)) {
       setPicked(id);
@@ -290,7 +283,7 @@ function ArchPane(props: Readonly<ArchViewProps & { slug: string | null }>) {
     setMarked({ from, to, cut });
     setPicked(null);
     setArmed(null);
-    setFocus({ kind: 'arrow', from, to });
+    setFocus({ from, to });
   };
   const session = usePlanSession({
     token: props.token,
@@ -303,7 +296,7 @@ function ArchPane(props: Readonly<ArchViewProps & { slug: string | null }>) {
     shown,
     ready: readyOf(state),
     nodes: nodesOf(state),
-    edges: edgesOf(state),
+    edges: viewOf(state)?.edges,
     other: viewOf(otherState),
     planned: viewOf(plannedState),
     ids,
@@ -423,7 +416,7 @@ export function ArchView(props: Readonly<ArchViewProps>) {
   const slug = props.plan ?? null;
   return (
     <CanvasProvider>
-      <ArchPane key={slug ?? ''} {...props} slug={slug} />
+      <ArchPane key={slug} {...props} slug={slug} />
     </CanvasProvider>
   );
 }

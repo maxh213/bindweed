@@ -114,26 +114,33 @@ describe('parsePlanEdit', () => {
       { kind: 'fold', file: 'a' },
       { kind: 'move-file', file: 'a.ts' },
       { kind: 'move-file', file: 3, to: 'b' },
+      { kind: 'move-file', file: 'a.ts', to: 3 },
       { kind: 'move-file', file: 'a.ts', to: 'b', extra: 1 },
       { kind: 'add-edge', from: 'a', to: 'a' },
       { kind: 'add-edge', from: 1, to: 'b' },
       { kind: 'add-edge', from: 'a', to: 2 },
       { kind: 'add-edge', from: 'a' },
+      { kind: 'add-edge', from: 'a', to: 'b', extra: 1 },
       { kind: 'note', target: { node: 'n' }, text: '' },
       { kind: 'note', target: { node: 3 }, text: 't' },
       { kind: 'note', target: { node: 'n', edge: ['a', 'b'] }, text: 't' },
       { kind: 'note', target: { edge: ['a'] }, text: 't' },
       { kind: 'note', target: { edge: ['a', 'b', 'c'] }, text: 't' },
       { kind: 'note', target: { edge: ['a', 2] }, text: 't' },
+      { kind: 'note', target: { edge: [1, 'b'] }, text: 't' },
       { kind: 'note', target: {}, text: 't' },
       { kind: 'note', target: 'n', text: 't' },
       { kind: 'note', text: 't' },
+      { kind: 'note', target: { node: 'n' }, text: 't', extra: 1 },
       { kind: 'cut-edge', from: 'a', to: 'b', files: [] },
       { kind: 'cut-edge', from: 'a', to: 'b', files: [['a', 'b'], ['c']] },
       { kind: 'cut-edge', from: 'a', to: 'b', files: [['a', 2]] },
       { kind: 'cut-edge', from: 'a', to: 'b', files: 'a' },
       { kind: 'cut-edge', from: 'a', files: [['a', 'b']] },
+      { kind: 'cut-edge', from: 1, to: 'b', files: [['a', 'b']] },
+      { kind: 'cut-edge', from: 'a', to: 'b', files: [['a', 'b']], extra: 1 },
       { kind: 3 },
+      { kind: ['move-file'], file: 'a.ts', to: 'b' },
       { kind: 'note', target: { node: 'n' }, text: 4 },
     ];
     for (const body of bad) expect(parsePlanEdit(body)).toBeUndefined();
@@ -162,8 +169,16 @@ describe('parsePlan', () => {
       [],
       { ...base, version: 2 },
       { ...base, name: '' },
+      { ...base, name: ['x'] },
+      { ...base, slug: 3 },
       { ...base, createdAt: 'yesterday' },
+      { ...base, createdAt: [STAMP] },
       { ...base, baseCommit: 'abc' },
+      { ...base, baseCommit: [HEAD] },
+      { ...base, baseCommit: `x${HEAD}` },
+      { ...base, baseCommit: `${HEAD}x` },
+      { ...base, edits: 3 },
+      { ...base, redo: null },
       { ...base, edits: [{ kind: 'add-edge', from: 'src/app', to: 'src/app' }] },
       { ...base, edits: [{ kind: 'note', target: { node: 'src/domain' }, text: '' }] },
       { ...base, edits: [{ kind: 'cut-edge', from: 'src/app', to: 'src/domain', files: [] }] },
@@ -235,9 +250,11 @@ describe('plan document edits', () => {
   it('finds the non-stale add-edge for a pair', () => {
     const add: PlanEdit = { kind: 'add-edge', from: 'a', to: 'b' };
     const other: PlanEdit = { kind: 'add-edge', from: 'a', to: 'c' };
+    const wrongFrom: PlanEdit = { kind: 'add-edge', from: 'z', to: 'b' };
     expect(addEdgeIndex([move, add], [null, null], 'a', 'b')).toBe(1);
     expect(addEdgeIndex([add, add], ['x', null], 'a', 'b')).toBe(1);
     expect(addEdgeIndex([other], [null], 'a', 'b')).toBe(-1);
+    expect(addEdgeIndex([wrongFrom], [null], 'a', 'b')).toBe(-1);
     expect(addEdgeIndex([], [], 'a', 'b')).toBe(-1);
   });
 });

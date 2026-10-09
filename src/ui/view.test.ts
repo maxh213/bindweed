@@ -147,6 +147,11 @@ describe('tabFromLocation and atFromLocation', () => {
     expect(tabFromLocation(fakeLocation('http://127.0.0.1/#at=src&plan=split-app'))).toBe('arch');
     expect(atFromLocation(fakeLocation('http://127.0.0.1/#junk&at=src'))).toBe('src');
     expect(planFromLocation(fakeLocation('http://127.0.0.1/#at=src&junk'))).toBeNull();
+    expect(atFromLocation(fakeLocation('http://127.0.0.1/#atX'))).toBe('');
+    expect(tabFromLocation(fakeLocation('http://127.0.0.1/#at'))).toBe('files');
+    expect(atFromLocation(fakeLocation('http://127.0.0.1/#at=src=a'))).toBe('src=a');
+    expect(atFromLocation({ hash: 'Xat=src' } as Location)).toBe('');
+    expect(planFromLocation({ hash: 'Xplan=p' } as Location)).toBeNull();
   });
 });
 
@@ -261,10 +266,11 @@ describe('writeHistory', () => {
     writeHistory(historyApi, { kind: 'at', at: 'src', plan: 'split-app' });
     writeHistory(historyApi, { kind: 'at', at: '', plan: 'split-app' });
     writeHistory(historyApi, { kind: 'at', at: 'src', plan: null });
+    writeHistory(historyApi, { kind: 'at', at: 'src', plan: '' });
     writeHistory(historyApi, { kind: 'file', path: 'src/domain/model.ts', mode: 'push' });
     writeHistory(historyApi, { kind: 'path', pathname: '/layered' });
-    expect(pushed).toEqual(['#at=src/app', '#at=', '#at=src&plan=split-app', '#at=&plan=split-app', '#at=src', '#file=src/domain/model.ts', '/layered']);
-    expect(titles).toEqual(['', '', '', '', '', '', '']);
+    expect(pushed).toEqual(['#at=src/app', '#at=', '#at=src&plan=split-app', '#at=&plan=split-app', '#at=src', '#at=src', '#file=src/domain/model.ts', '/layered']);
+    expect(titles).toEqual(['', '', '', '', '', '', '', '']);
   });
 });
 

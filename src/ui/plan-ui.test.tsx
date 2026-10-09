@@ -55,6 +55,9 @@ vi.mock('@xyflow/react', async () => {
         key: node.id,
         className: 'fake-node',
         'data-node': node.id,
+        'data-px': String(node.position.x),
+        'data-py': String(node.position.y),
+        'data-draggable': String(node.draggable),
         onClick: () => props.onNodeClick?.({}, node),
         onDoubleClick: (event: unknown) => props.onNodeDoubleClick?.(event, node),
         onMouseUp: (event: { altKey: boolean; nativeEvent?: unknown }) => onMouseUp(props, node, event),
@@ -129,13 +132,15 @@ vi.mock('@xyflow/react', async () => {
     return props.children;
   }
 
+  const flowApi = {
+    setCenter: (x: number, y: number) => {
+      centers.push({ x, y });
+      return Promise.resolve(true);
+    },
+  };
+
   function useReactFlow() {
-    return {
-      setCenter: (x: number, y: number) => {
-        centers.push({ x, y });
-        return Promise.resolve(true);
-      },
-    };
+    return flowApi;
   }
 
   Object.assign(globalThis, {
@@ -153,7 +158,8 @@ vi.mock('@xyflow/react', async () => {
     ReactFlowProvider,
     useReactFlow,
     BaseEdge: baseEdge,
-    Handle: () => null,
+    Handle: (props: { type?: string; 'aria-label'?: string; isConnectable?: boolean }) =>
+      ce('span', { 'data-handle': props.type ?? '', 'data-connectable': String(props.isConnectable), 'aria-label': props['aria-label'] }),
     Position: { Top: 'top', Bottom: 'bottom' },
     MarkerType: { ArrowClosed: 'arrowclosed', Arrow: 'arrow' },
     ConnectionMode: { Loose: 'loose', Strict: 'strict' },
@@ -241,7 +247,10 @@ let corrupt = new Set<string>();
 let layout: LayoutDoc = emptyLayout();
 let deletes = 0;
 let puts = 0;
+let pairsCalls = 0;
+let layoutCalls = 0;
 let failPlain = false;
+let windowErrors = 0;
 
 function resetWorld(): void {
   scan = structuredClone(BASE_SCAN);
@@ -376,6 +385,7 @@ function detailBody(url: URL): Hit {
 }
 
 function pairsBody(url: URL): Hit {
+  pairsCalls += 1;
   const load = loadedPlan(planSlug(url));
   if (load === false) return missingPlan();
   const from = url.searchParams.get('from') ?? '';
@@ -413,7 +423,10 @@ function postRoute(url: URL, raw: unknown): Hit | null {
 
 function getRest(url: URL): Hit | null {
   if (url.pathname === '/api/pairs') return pairsBody(url);
-  if (url.pathname === '/api/layout') return { status: 200, body: layout };
+  if (url.pathname === '/api/layout') {
+    layoutCalls += 1;
+    return { status: 200, body: layout };
+  }
   return getLeaf(url);
 }
 
@@ -522,6 +535,9 @@ function armDrop(shift: { x: number; y: number } | null): void {
 function installDom(url: string): JSDOM {
   const dom = new JSDOM('<!DOCTYPE html><html><body><div id="root"></div></body></html>', { url, pretendToBeVisual: true });
   const w = dom.window;
+  w.addEventListener('error', () => {
+    windowErrors += 1;
+  });
   const style = w.document.createElement('style');
   style.textContent = sheet;
   w.document.head.appendChild(style);
@@ -621,6 +637,10 @@ describe('the plan canvas over a real server', () => {
     return document.querySelector(`.fake-edge-path[data-edge="${id}"]`)?.getAttribute('data-stroke') ?? '';
   }
 
+  function pathDash(id: string): string {
+    return document.querySelector(`.fake-edge-path[data-edge="${id}"]`)?.getAttribute('data-dash') ?? '';
+  }
+
   function button(text: string): HTMLElement {
     const el = Array.from(document.querySelectorAll('button')).find(item => item.textContent === text);
     if (el === undefined) throw new Error(`missing button ${text}`);
@@ -683,11 +703,22 @@ describe('the plan canvas over a real server', () => {
     });
   }
 
-  async function dragOver(target: Element): Promise<void> {
+  async function dropPrevented(target: Element, path: string): Promise<boolean> {
     const { fireEvent } = await import('@testing-library/dom');
+    let prevented = false;
     await actRun(() => {
-      fireEvent.dragOver(target);
+      prevented = !fireEvent.drop(target, { dataTransfer: { getData: () => path } });
     });
+    return prevented;
+  }
+
+  async function dragOverPrevented(target: Element): Promise<boolean> {
+    const { fireEvent } = await import('@testing-library/dom');
+    let prevented = false;
+    await actRun(() => {
+      prevented = !fireEvent.dragOver(target);
+    });
+    return prevented;
   }
 
   async function dragBox(id: string, under: Element[]): Promise<void> {
@@ -744,6 +775,7 @@ describe('the plan canvas over a real server', () => {
   beforeEach(async () => {
     await import('@xyflow/react');
     resetWorld();
+    windowErrors = 0;
     await api(token, 'PUT', '/api/layout', { version: 1, views: {}, settings: { tests: false, external: false } });
     await setPlan([]);
     centers().length = 0;
@@ -851,6 +883,12 @@ describe('the plan canvas over a real server', () => {
     return textOf(root.querySelector('.note-marker title'));
   }
 
+  function arrowMark(root: Element, index: number, name: string): string | null {
+    const mark = root.querySelectorAll('g.note-marker')[index];
+    if (mark === undefined) return null;
+    return mark.getAttribute(name);
+  }
+
   function edgeTitle(edge: Element): string | null {
     return textOf(edge.querySelector('title'));
   }
@@ -867,12 +905,6 @@ describe('the plan canvas over a real server', () => {
     const row = drawerRows().find(item => firstCell(item) === name);
     if (row === undefined) return [];
     return Array.from(row.querySelectorAll('td')).map(cell => cell.textContent);
-  }
-
-  function detailText(): string {
-    const text = textOf(document.querySelector('aside[aria-label="details"]'));
-    if (text === null) return '';
-    return text;
   }
 
   function headingOf(section: Element): string | null {
@@ -927,7 +959,17 @@ describe('the plan canvas over a real server', () => {
     await settle();
     expect(entries()).toHaveLength(0);
     expect(noticeText()).toBe('');
+    await key('Delete');
+    await settle();
+    expect(entries()).toHaveLength(0);
+    expect(noticeText()).toBe('');
+    expect(windowErrors).toBe(0);
     expect((button('Delete plan') as HTMLButtonElement).disabled).toBe(false);
+    expect((button('Undo') as HTMLButtonElement).disabled).toBe(true);
+    expect((button('Redo') as HTMLButtonElement).disabled).toBe(true);
+    expect(ariaOf('[data-handle="source"]')).toBe('Draw dependency');
+    expect(attrOf(document.querySelector('[data-handle="source"]'), 'data-connectable')).toBe('true');
+    expect(attrOf(document.querySelector('.fake-flow'), 'data-connectable')).toBe('true');
     expect(boxOf('src/app').textContent).toContain('3 files');
     expect(boxOf('src/app').querySelector('.box-menu')).toBeNull();
     await choosePlan('');
@@ -941,6 +983,21 @@ describe('the plan canvas over a real server', () => {
     await waitForText(() => expect(ghostRowsOf('src/app')).toEqual([]));
     expect(window.location.hash).toBe('#at=src&plan=split-app');
     expect(shownChecks()).toEqual([false, true]);
+  });
+
+  it('rows include test files when the tests flag is on', async () => {
+    await api(token, 'PUT', '/api/layout', { version: 1, views: {}, settings: { tests: true, external: false } });
+    await showApp('#at=src&plan=split-app');
+    await waitForText(() => expect(rowPathsOf('src/app')).toEqual(['src/app/a.test.ts', 'src/app/a.ts', 'src/app/b.ts', 'src/app/save.ts']));
+  });
+
+  it('ghosts a moved test file only once when the tests flag is on', async () => {
+    await api(token, 'PUT', '/api/layout', { version: 1, views: {}, settings: { tests: true, external: false } });
+    await setPlan([{ kind: 'move-file', file: 'src/app/a.test.ts', to: 'src/infra' }]);
+    await showApp('#at=src&plan=split-app');
+    await waitForText(() => expect(rowPathsOf('src/infra')).toEqual(['src/infra/a.test.ts', 'src/infra/db.ts', 'src/infra/repo.ts']));
+    expect(rowPathsOf('src/app')).toEqual(['src/app/a.ts', 'src/app/b.ts', 'src/app/save.ts']);
+    expect(ghostRowsOf('src/app')).toEqual(['src/app/a.test.ts']);
   });
 
   it('creates a plan through the dialogue and refuses empty and bad names', async () => {
@@ -967,6 +1024,38 @@ describe('the plan canvas over a real server', () => {
     expect(edgeBetween('src/app', 'src/domain')).not.toBeNull();
     expect(disabledFlag('option[value="crap"]')).toBe(true);
     expect(titleOf('option[value="crap"]')).toBe('no coverage data: run marestail gate');
+    expect(document.querySelector('output[aria-label="notice"]')).toBeNull();
+    expect(document.querySelectorAll('.box-rows')).toHaveLength(0);
+    expect(document.querySelectorAll('g.arrow')).toHaveLength(3);
+    expect(document.querySelectorAll('g.cutmark')).toHaveLength(1);
+    expect(document.querySelector('g.cutmark')?.getAttribute('data-selected')).toBe('false');
+    expect(ariaOf('[data-handle="source"]')).toBeNull();
+    expect(attrOf(document.querySelector('[data-handle="source"]'), 'data-connectable')).toBe('false');
+    expect(attrOf(document.querySelector('.fake-flow'), 'data-connectable')).toBe('false');
+    await click(boxOf('src/app'));
+    expect(boxOf('src/app').querySelector('.box-menu')).toBeNull();
+    await click(edgeBetween('src/app', 'src/domain'));
+    expect(document.querySelector('.arrow-menu')).toBeNull();
+    await actRun(() => connect('src/app', 'src/domain'));
+    await settle();
+    expect(document.querySelector('.arrow-menu')).toBeNull();
+    expect(await dropPrevented(crumb('src'), 'src/app/save.ts')).toBe(false);
+    expect(await dropPrevented(boxOf('src/infra'), 'src/app/save.ts')).toBe(false);
+    expect(windowErrors).toBe(0);
+    const pairsAtStart = pairsCalls;
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown): void => {
+      rejections.push(reason);
+    };
+    process.on('unhandledRejection', onRejection);
+    await key('Delete');
+    await settle();
+    await new Promise(resolve => setTimeout(resolve, 50));
+    process.off('unhandledRejection', onRejection);
+    expect(rejections).toEqual([]);
+    expect(pairsCalls).toBe(pairsAtStart);
+    expect(entries()).toHaveLength(0);
+    expect(windowErrors).toBe(0);
     armDrop({ x: 12, y: -200 });
     await dragBox('src/domain', []);
     await waitForText(() => expect(boxOf('src/domain').getAttribute('data-y')).toBe('-200'));
@@ -980,6 +1069,12 @@ describe('the plan canvas over a real server', () => {
     });
     armDrop(null);
     await key('z', { ctrl: true });
+    expect(entries()).toHaveLength(0);
+    await dblclick(boxOf('src/app'));
+    await waitForText(() => expect(nodeById('src/app/a.ts')).not.toBeNull());
+    await dragBox('src/app/a.ts', [crumb('src')]);
+    const pinnedLayout = parseLayout((await api(token, 'GET', '/api/layout')).body);
+    expect(pinnedLayout?.views['src/app']?.['src/app/a.ts']).toBeDefined();
     expect(entries()).toHaveLength(0);
     reactRoot.unmount();
     dom.window.close();
@@ -1001,9 +1096,11 @@ describe('the plan canvas over a real server', () => {
     await waitForText(() => expect(textAt('.plan-dialog-error')).toBe('bad name'));
     await click(button('Cancel'));
     await click(button('New plan…'));
+    expect(document.querySelector('.plan-dialog-error')).toBeNull();
     await typeInto('Name', '  Split app  ');
     await click(button('Create'));
     await waitForText(() => expect(planSelect().value).toBe('split-app'));
+    expect(document.querySelector('dialog')).toBeNull();
     expect(optionText(planSelect(), 1)).toBe('Split app');
     expect(window.location.hash).toBe('#at=src&plan=split-app');
     expect(shownChecks()).toEqual([false, true]);
@@ -1019,10 +1116,12 @@ describe('the plan canvas over a real server', () => {
       expect(rowPathsOf('src/app')).toEqual(['src/app/a.ts', 'src/app/b.ts', 'src/app/save.ts']);
       expect(ghostRowsOf('src/app')).toEqual([]);
     });
-    await dragOver(boxOf('src/infra'));
-    await dragOver(crumb('src'));
-    await dropRow(crumb('src'), '');
+    expect(await dragOverPrevented(boxOf('src/infra'))).toBe(true);
+    expect(await dragOverPrevented(crumb('src'))).toBe(true);
+    expect(await dropPrevented(crumb('src'), '')).toBe(true);
+    await settle();
     expect(entries()).toHaveLength(0);
+    expect(await serverDoc()).toEqual({ edits: [], redo: [] });
     await dropRow(crumb('src'), 'src/app/save.ts');
     await waitForText(() => expect(entrySentences()).toEqual(['Move src/app/save.ts to src']));
     await click(button('Undo'));
@@ -1035,9 +1134,10 @@ describe('the plan canvas over a real server', () => {
     });
     expect(seen).toEqual([['text/x-bindweed-file', 'src/app/save.ts']]);
     await dropRow(boxOf('src/app'), 'src/app/save.ts');
+    await settle();
     expect(entries()).toHaveLength(0);
-    await dropRow(boxOf('src/domain'), '');
-    expect(entries()).toHaveLength(0);
+    expect(await dropPrevented(boxOf('src/domain'), '')).toBe(true);
+    expect(await serverDoc()).toEqual({ edits: [], redo: [{ kind: 'move-file', file: 'src/app/save.ts', to: 'src' }] });
     await dropRow(boxOf('src/infra'), 'src/app/save.ts');
     await waitForText(() => {
       expect(entrySentences()).toEqual(['Move src/app/save.ts to src/infra']);
@@ -1047,7 +1147,9 @@ describe('the plan canvas over a real server', () => {
     expect(boxOf('src/app').textContent).toContain('2 files');
     expect(rowPathsOf('src/app')).toEqual(['src/app/a.ts', 'src/app/b.ts']);
     expect(ghostRowsOf('src/app')).toEqual(['src/app/save.ts']);
+    const layoutBefore = layoutCalls;
     await waitForDoc([MOVE]);
+    expect(layoutCalls).toBe(layoutBefore);
     const ghostRow = mustQuery(boxOf('src/app'), '.box-row[data-ghost="true"]', 'missing ghost row');
     expect(window.getComputedStyle(ghostRow).opacity).toBe('0.35');
     await dblclick(ghostRow);
@@ -1061,8 +1163,10 @@ describe('the plan canvas over a real server', () => {
     await waitForText(() => expect(ghostRowsOf('src/app')).toEqual(['src/app/save.ts']));
     expect(window.location.hash).toBe('#at=src&plan=split-app');
     await click(sentenceOf(entryRow('Move src/app/save.ts to src/infra')));
-    await waitForText(() => expect(window.location.hash).toBe('#at=src/infra&plan=split-app'));
-    expect(boxOf('src/infra/save.ts').getAttribute('data-selected')).toBe('true');
+    await waitForText(() => {
+      expect(window.location.hash).toBe('#at=src/infra&plan=split-app');
+      expect(boxOf('src/infra/save.ts').getAttribute('data-selected')).toBe('true');
+    });
     expect(boxOf('src/infra/save.ts').getAttribute('data-x')).toBe('520');
     expect(centers()).toContainEqual({ x: 520, y: 0 });
     await dblclick(boxOf('src/infra/save.ts'));
@@ -1087,6 +1191,8 @@ describe('the plan canvas over a real server', () => {
     await dragBox('src/app/save.ts', [crumb('src')]);
     await waitForText(() => expect(entrySentences()).toEqual(['Move src/app/save.ts to src']));
     await waitForDoc([{ kind: 'move-file', file: 'src/app/save.ts', to: 'src' }]);
+    const appViewPins = parseLayout((await api(token, 'GET', '/api/layout')).body)?.views['src/app'];
+    expect(appViewPins).toBeUndefined();
     await click(button('Undo'));
     await waitForText(() => expect(entries()).toHaveLength(0));
     expect(nodeEls().map(node => node.dataset.node)).toEqual(['src/app/a.ts', 'src/app/b.ts', 'src/app/save.ts']);
@@ -1101,6 +1207,7 @@ describe('the plan canvas over a real server', () => {
       expect(boxOf('save.ts').getAttribute('data-selected')).toBe('true');
     });
     expect(boxOf('src').textContent).toContain('6 files');
+    expect(boxOf('src').querySelector('.box-rows')).toBeNull();
     await click(button('Undo'));
     await waitForText(() => expect(entries()).toHaveLength(0));
     await click(button('Redo'));
@@ -1116,6 +1223,9 @@ describe('the plan canvas over a real server', () => {
     await waitForText(() => expect(entrySentences()).toEqual(['Move src/app/save.ts to .', 'Move save.ts to src']));
     await dblclick(boxOf('src'));
     await waitForText(() => expect(window.location.hash).toBe('#at=src&plan=split-app'));
+    await waitForText(() => expect(nodeById('src/app')).not.toBeNull());
+    await dragBox('src/app', [crumb('layered')]);
+    expect(entrySentences()).toHaveLength(2);
     await dblclick(boxOf('src/app'));
     await waitForText(() => {
       expect(window.location.hash).toBe('#at=src/app&plan=split-app');
@@ -1125,6 +1235,17 @@ describe('the plan canvas over a real server', () => {
     expect(ghost.getAttribute('data-ghost')).toBe('true');
     expect(ghost.getAttribute('data-x')).toBe('520');
     expect(ghost.getAttribute('data-y')).toBe('0');
+    expect(nodeById('src/app/save.ts').getAttribute('data-px')).toBe('520');
+    expect(nodeById('src/app/save.ts').getAttribute('data-py')).toBe('0');
+    expect(nodeById('src/app/save.ts').getAttribute('data-draggable')).toBe('false');
+    await dropRow(boxOf('src/app/a.ts'), 'src/app/b.ts');
+    expect(await serverDoc()).toEqual({
+      edits: [
+        { kind: 'move-file', file: 'src/app/save.ts', to: '.' },
+        { kind: 'move-file', file: 'save.ts', to: 'src' },
+      ],
+      redo: [],
+    });
     await dblclick(nodeById('src/app/save.ts'));
     expect(window.location.hash).toBe('#at=src/app&plan=split-app');
   });
@@ -1132,6 +1253,15 @@ describe('the plan canvas over a real server', () => {
   it('cuts an arrow with Delete and with the menu, and refuses a second cut', async () => {
     await showApp('#at=src&plan=split-app');
     await waitForText(() => expect(edgeBetween('src/app', 'src/domain')).not.toBeNull());
+    await click(edgeBetween('src/app', 'src/infra'));
+    expect(edgeBetween('src/app', 'src/infra').getAttribute('data-selected')).toBe('true');
+    expect(edgeBetween('src/app', 'src/domain').getAttribute('data-selected')).toBe('false');
+    expect(edgeBetween('src/infra', 'src/domain').getAttribute('data-selected')).toBe('false');
+    await key('x');
+    await settle();
+    expect(entries()).toHaveLength(0);
+    await click(edgeBetween('src/infra', 'src/domain'));
+    expect(edgeBetween('src/app', 'src/domain').getAttribute('data-selected')).toBe('false');
     await click(edgeBetween('src/app', 'src/domain'));
     expect(edgeBetween('src/app', 'src/domain').getAttribute('data-selected')).toBe('true');
     await key('Delete');
@@ -1139,18 +1269,22 @@ describe('the plan canvas over a real server', () => {
     expect(cutBetween('src/app', 'src/domain').getAttribute('data-cut')).toBe('true');
     expect(cutBetween('src/app', 'src/domain').textContent).toContain('✂');
     expect(pathStroke('cut:src/app->src/domain')).toBe('#94a3b8');
+    expect(pathDash('cut:src/app->src/domain')).toBe('4 4');
     expect(edgeEls().filter(edge => edge.dataset.from === 'src/app' && edge.dataset.to === 'src/domain')).toEqual([]);
     await waitForDoc([CUT]);
+    expect(cutBetween('src/app', 'src/domain').getAttribute('data-selected')).toBe('false');
     await click(cutBetween('src/app', 'src/domain'));
     expect(cutBetween('src/app', 'src/domain').getAttribute('data-selected')).toBe('true');
     await key('Delete');
     await settle();
     expect(entrySentences()).toEqual(['src/app must not import src/domain (1 import)']);
+    expect(windowErrors).toBe(0);
     await click(edgeBetween('src/infra', 'src/domain'));
     const arrow = edgeBetween('src/infra', 'src/domain');
     const menuButton = arrow.querySelector('button');
     if (menuButton === null) throw new Error('missing arrow menu');
     await click(menuButton);
+    expect((arrow.querySelector('.arrow-menu') as HTMLElement | null)?.style.transform).toBe('translate(-50%, -100%) translate(0px, 70px)');
     const cutItem = Array.from(arrow.querySelectorAll('[role="menu"] button')).find(el => el.textContent === 'Cut');
     if (cutItem === undefined) throw new Error('missing Cut');
     await click(cutItem);
@@ -1158,11 +1292,62 @@ describe('the plan canvas over a real server', () => {
       'src/app must not import src/domain (1 import)',
       'src/infra must not import src/domain (2 imports)',
     ]));
+    const pairsBefore = pairsCalls;
     await key('Delete');
     await waitForText(() => expect(noticeText()).toBe('no such arrow src/infra → src/domain'));
+    expect(pairsCalls).toBe(pairsBefore);
     await click(button('Undo'));
     await waitForText(() => expect(entrySentences()).toEqual(['src/app must not import src/domain (1 import)']));
     expect(cutBetween('src/app', 'src/domain')).not.toBeNull();
+    await click(edgeBetween('src/app', 'src/infra'));
+    await key('Delete');
+    await waitForText(() => expect(entrySentences()).toContain('src/app must not import src/infra (3 imports)'));
+    await click(edgeBetween('src/infra', 'src/domain'));
+    await key('Delete');
+    await waitForText(() => expect(entrySentences()).toHaveLength(3));
+    await click(cutBetween('src/app', 'src/domain'));
+    expect(cutBetween('src/app', 'src/infra').getAttribute('data-selected')).toBe('false');
+    expect(cutBetween('src/infra', 'src/domain').getAttribute('data-selected')).toBe('false');
+  });
+
+  it('refuses a repeat cut without asking the pairs endpoint', async () => {
+    await setPlan([ADD]);
+    await showApp('#at=src&plan=split-app');
+    await waitForText(() => expect(edgeBetween('src/infra', 'src/domain')).not.toBeNull());
+    await click(edgeBetween('src/infra', 'src/domain'));
+    await key('Delete');
+    await waitForText(() => expect(entrySentences()).toEqual(['src/infra should use src/app', 'src/infra must not import src/domain (2 imports)']));
+    const pairsBefore = pairsCalls;
+    await key('Delete');
+    await waitForText(() => expect(noticeText()).toBe('no such arrow src/infra → src/domain'));
+    expect(pairsCalls).toBe(pairsBefore);
+    expect(entrySentences()).toHaveLength(2);
+  });
+
+  it('cuts with pairs from the planned graph after a move', async () => {
+    await setPlan([{ kind: 'move-file', file: 'src/app/b.ts', to: 'src/infra' }]);
+    await showApp('#at=src&plan=split-app');
+    await waitForText(() => expect(edgeBetween('src/infra', 'src/app')).not.toBeNull());
+    await click(edgeBetween('src/infra', 'src/app'));
+    await key('Delete');
+    await waitForText(() => expect(entrySentences()).toEqual(['Move src/app/b.ts to src/infra', 'src/infra must not import src/app (1 import)']));
+    await waitForDoc([
+      { kind: 'move-file', file: 'src/app/b.ts', to: 'src/infra' },
+      { kind: 'cut-edge', from: 'src/infra', to: 'src/app', files: [['src/infra/b.ts', 'src/app/a.ts']] },
+    ]);
+  });
+
+  it('unsubscribes the key handler when the pane unmounts', async () => {
+    await setPlan([MOVE, CUT]);
+    await showApp('#at=src&plan=split-app');
+    await waitForText(() => expect(entrySentences()).toHaveLength(2));
+    await choosePlan('');
+    await choosePlan('split-app');
+    await waitForText(() => expect(entrySentences()).toHaveLength(2));
+    const before = puts;
+    await key('z', { ctrl: true });
+    await waitForDoc([MOVE], [CUT]);
+    expect(puts).toBe(before + 1);
   });
 
   it('draws an edge that cycles in red and refuses repeats and self-drops', async () => {
@@ -1194,12 +1379,32 @@ describe('the plan canvas over a real server', () => {
     expect(pathStroke('src/app->src/infra')).toBe('#dc2626');
     expect(edgeBetween('src/app', 'src/infra').querySelector('.arrow-label')?.textContent).toBe('3');
     expect(edgeBetween('src/app', 'src/infra').querySelector('title')?.textContent).toBe('app → infra → app');
+    expect(edgeBetween('src/app', 'src/infra').getAttribute('data-planned')).toBeNull();
     await actRun(() => connect('src/infra', 'src/app'));
     await waitForText(() => expect(noticeText()).toBe('src/infra already imports src/app'));
     expect(entrySentences()).toHaveLength(3);
     await actRun(() => connect('src/app', 'src/app'));
     await waitForText(() => expect(noticeText()).toBe('a box cannot depend on itself'));
     expect(entrySentences()).toHaveLength(3);
+    await actRun(() => connect('src/app', 'src/domain'));
+    await waitForDoc([MOVE, CUT, ADD, { kind: 'add-edge', from: 'src/app', to: 'src/domain' }]);
+    expect(noticeText()).toBe('');
+    await waitForText(() => expect(edgeBetween('src/app', 'src/domain')).not.toBeNull());
+    await actRun(() => connect('src/app', 'src/domain'));
+    await waitForText(() => expect(noticeText()).toBe('src/app already imports src/domain'));
+    await click(button('Undo'));
+    await waitForDoc([MOVE, CUT, ADD], [{ kind: 'add-edge', from: 'src/app', to: 'src/domain' }]);
+    expect(noticeText()).toBe('');
+    await actRun(() => connect('src/infra', 'src/app'));
+    await waitForText(() => expect(noticeText()).toBe('src/infra already imports src/app'));
+    await click(button('Redo'));
+    await waitForDoc([MOVE, CUT, ADD, { kind: 'add-edge', from: 'src/app', to: 'src/domain' }]);
+    expect(noticeText()).toBe('');
+    await actRun(() => connect('src/infra', 'src/app'));
+    await waitForText(() => expect(noticeText()).toBe('src/infra already imports src/app'));
+    await click(entryRow('src/app should use src/domain').querySelector('[aria-label="Remove"]') as Element);
+    await waitForDoc([MOVE, CUT, ADD]);
+    expect(noticeText()).toBe('');
   });
 
   it('removes the add-edge edit when the planned arrow is cut, keeping redo', async () => {
@@ -1271,6 +1476,21 @@ describe('the plan canvas over a real server', () => {
     await key('Delete', { target: planSelect() });
     await settle();
     expect(entrySentences()).toHaveLength(3);
+    const beforeEmptyRedo = puts;
+    await key('z', { ctrl: true, shift: true });
+    await settle();
+    expect(puts).toBe(beforeEmptyRedo);
+    await click(button('Undo'));
+    await waitForText(() => expect(entries()).toHaveLength(2));
+    await click(button('Undo'));
+    await waitForText(() => expect(entries()).toHaveLength(1));
+    await click(button('Undo'));
+    await waitForText(() => expect(entries()).toHaveLength(0));
+    const beforeEmptyUndo = puts;
+    await key('z', { ctrl: true });
+    await settle();
+    expect(puts).toBe(beforeEmptyUndo);
+    expect(entries()).toHaveLength(0);
   });
 
   it('pins notes on a box and on an arrow and shows them on hover', async () => {
@@ -1289,17 +1509,31 @@ describe('the plan canvas over a real server', () => {
     await typeInto('Note', 'pull an interface out here');
     await click(button('Add'));
     await waitForText(() => expect(entrySentences()).toEqual(['Note on src/domain: "pull an interface out here"']));
+    expect(document.querySelector('dialog')).toBeNull();
     expect(noteAttr(boxOf('src/domain'), 'aria-label')).toBe('note');
     expect(noteAttr(boxOf('src/domain'), 'title')).toBe('pull an interface out here');
+    expect(edgeBetween('src/infra', 'src/domain').querySelectorAll('.note-marker')).toHaveLength(0);
     await click(edgeBetween('src/app', 'src/infra'));
     const arrow = edgeBetween('src/app', 'src/infra');
     await click(mustQuery(arrow, 'button', 'missing arrow menu'));
     await click(menuItem(arrow, 'Add note'));
+    expect(arrow.querySelector('[role="menu"]')).toBeNull();
     await typeInto('Note', 'keep this');
     await click(button('Add'));
     await waitForText(() => expect(entrySentences()).toHaveLength(2));
     expect(entrySentences()[1]).toBe('Note on src/app → src/infra: "keep this"');
+    expect(document.querySelector('dialog')).toBeNull();
+    expect(arrowMark(arrow, 0, 'transform')).toBe('translate(14 70)');
+    expect(arrowMark(arrow, 0, 'title')).toBe('keep this');
     expect(noteTitle(edgeBetween('src/app', 'src/infra'))).toBe('keep this');
+    expect(boxOf('src/app').querySelectorAll('.note-marker')).toHaveLength(0);
+    await click(mustQuery(arrow, 'button', 'missing arrow menu'));
+    await click(menuItem(arrow, 'Add note'));
+    await typeInto('Note', 'second thought');
+    await click(button('Add'));
+    await waitForText(() => expect(edgeBetween('src/app', 'src/infra').querySelectorAll('g.note-marker')).toHaveLength(2));
+    expect(arrowMark(edgeBetween('src/app', 'src/infra'), 1, 'transform')).toBe('translate(28 70)');
+    expect(arrowMark(edgeBetween('src/app', 'src/infra'), 1, 'title')).toBe('second thought');
   });
 
   it('selects and centres the target of a clicked entry, drilling when needed', async () => {
@@ -1314,9 +1548,11 @@ describe('the plan canvas over a real server', () => {
       expect(centers()).toContainEqual({ x: 0, y: 70 });
     });
     centers().length = 0;
+    const historyBefore = window.history.length;
     await click(entryRow('src/app must not import src/domain (1 import)').querySelector('.change-sentence') as Element);
     await settle();
     expect(window.location.hash).toBe('#at=src&plan=split-app');
+    expect(window.history).toHaveLength(historyBefore);
     await dblclick(boxOf('src/app'));
     await waitForText(() => expect(window.location.hash).toBe('#at=src/app&plan=split-app'));
     await click(entryRow('src/infra should use src/app').querySelector('.change-sentence') as Element);
@@ -1341,8 +1577,10 @@ describe('the plan canvas over a real server', () => {
     expect(centers()).toContainEqual({ x: 0, y: 140 });
     await dblclick(boxOf('src/app'));
     await waitForText(() => expect(window.location.hash).toBe('#at=src/app&plan=split-app'));
+    const centresBefore = centers().length;
     await click(entryRow('Note on src/app/a.ts → src/infra/db.ts: "file edge"').querySelector('.change-sentence') as Element);
     await waitForText(() => expect(window.location.hash).toBe('#at=&plan=split-app'));
+    expect(centers()).toHaveLength(centresBefore);
   });
 
   it('stales the note on a moved file when the move is removed', async () => {
@@ -1395,8 +1633,14 @@ describe('the plan canvas over a real server', () => {
     expect(edgeTitle(marker)).toBe('0 runtime · 0 type-only · 0 extends/implements');
     expect(pathStroke('added:src/infra->src/app')).toBe('#2563eb');
     expect(noteAttr(boxOf('src/domain'), 'title')).toBe('pull an interface out here');
+    await click(boxOf('src/domain'));
+    await waitForText(() => expect(sectionButtons('Imported by')).toEqual(['app 0 runtime · 1 type-only · 0 extends/implements', 'infra 2 runtime · 0 type-only · 1 extends/implements']));
+    await click(edgeBetween('src/app', 'src/infra'));
+    expect(edgeBetween('src/app', 'src/infra').getAttribute('data-selected')).toBe('true');
     await click(button('Metrics'));
     await waitForText(() => expect(drawerRows().map(firstCell)).toEqual(['infra', 'app', 'domain']));
+    await click(drawerRows()[0] as Element);
+    expect(edgeBetween('src/app', 'src/infra').getAttribute('data-selected')).toBe('false');
     expect(cellsOf('app')).toEqual(['app', '3', '0', '2', '1.00', '0.00', '0.00', 'healthy', '–', '–', '–']);
     expect(cellsOf('domain')).toEqual(['domain', '2', '3', '0', '0.00', '1.00', '0.00', 'healthy', '–', '–', '–']);
     await chooseShown('Planned');
@@ -1405,8 +1649,7 @@ describe('the plan canvas over a real server', () => {
     expect(cellsOf('infra')).toEqual(['infra', '3', '2', '2', '0.50', '0.00', '0.50', 'healthy', '–', '–', '–']);
     expect(cellsOf('domain')[2]).toBe('2');
     await click(boxOf('src/domain'));
-    await waitForText(() => expect(detailText()).toContain('Imported by'));
-    expect(sectionButtons('Imported by')).toEqual(['infra 2 runtime · 0 type-only · 1 extends/implements']);
+    await waitForText(() => expect(sectionButtons('Imported by')).toEqual(['infra 2 runtime · 0 type-only · 1 extends/implements']));
   });
 
   it('marks the move stale after a rescan without the file and clears it when restored', async () => {
@@ -1468,12 +1711,14 @@ describe('the plan canvas over a real server', () => {
     await click(button('Delete plan'));
     expect(document.querySelector('dialog')?.textContent).toContain('Delete Split app?');
     await click(button('Cancel'));
+    expect(document.querySelector('dialog')).toBeNull();
     expect(planSelect().value).toBe('split-app');
     expect(window.location.hash).toContain('plan=split-app');
     await click(button('Delete plan'));
     await click(button('Delete'));
     await waitForText(() => expect(planSelect().value).toBe(''));
     expect(document.querySelector('dialog')).toBeNull();
+    await waitForText(() => expect(Array.from(planSelect().options).map(option => option.textContent)).toEqual(['No plan']));
     expect(window.location.hash).toBe('#at=src');
     expect(boxOf('src/app').textContent).toContain('3 files');
     expect(boxOf('src/app').querySelectorAll('.box-row')).toHaveLength(0);
@@ -1494,7 +1739,7 @@ describe('the plan canvas over a real server', () => {
     await api(token, 'DELETE', '/api/plans/split-app');
   });
 
-  it('keeps the open plan when a save or a delete is refused', async () => {
+  it('keeps the open plan when a save is refused', async () => {
     await showApp('#at=src&plan=split-app');
     await waitForText(() => expect(boxOf('src/domain')).not.toBeNull());
     markCorrupt('split-app');
@@ -1514,7 +1759,18 @@ describe('the plan canvas over a real server', () => {
     });
     expect(entries()).toHaveLength(0);
     expect(window.location.hash).toBe('#at=src&plan=split-app');
+    await key('z', { ctrl: true });
+    await settle();
+    expect(entries()).toHaveLength(0);
+    expect(noticeText()).toBe('no such plan');
     erasePlan('split-app');
+    await api(token, 'POST', '/api/plans', { name: 'Split app' });
+  });
+
+  it('keeps the open plan when a delete is refused', async () => {
+    await showApp('#at=src&plan=split-app');
+    await waitForText(() => expect(boxOf('src/domain')).not.toBeNull());
+    markCorrupt('split-app');
     const deletesBefore = deletes;
     await click(button('Delete plan'));
     await click(button('Delete'));
@@ -1524,6 +1780,7 @@ describe('the plan canvas over a real server', () => {
     });
     expect(document.querySelector('dialog')).not.toBeNull();
     expect(window.location.hash).toBe('#at=src&plan=split-app');
+    erasePlan('split-app');
     await api(token, 'POST', '/api/plans', { name: 'Split app' });
   });
 
@@ -1534,14 +1791,17 @@ describe('the plan canvas over a real server', () => {
     await key('z', { ctrl: true });
     await settle();
     expect(document.querySelector('.arch-canvas')?.textContent).toBe('no such plan');
+    expect(windowErrors).toBe(0);
     await choosePlan('');
     await waitForText(() => expect(boxOf('src/app').textContent).toContain('3 files'));
     expect(window.location.hash).toBe('#at=src');
     reactRoot.unmount();
     dom.window.close();
+    await setPlan([MOVE]);
     await showApp('#at=notes&plan=split-app');
     await waitForText(() => expect(document.querySelector('.arch-canvas')?.textContent).toBe('no such directory'));
     expect(document.querySelectorAll('.fake-node')).toHaveLength(0);
+    expect(entries()).toHaveLength(0);
   });
 
   it('draws the planned rows when the current graph fails', async () => {
@@ -1605,11 +1865,225 @@ describe('the plan canvas over a real server', () => {
     expect(entries()).toHaveLength(0);
     routes['/api/pairs'] = { error: 'nope' };
     await click(edgeBetween('src/app', 'src/domain'));
-    await key('Delete');
+    const arrowAgain = edgeBetween('src/app', 'src/domain');
+    await click(mustQuery(arrowAgain, 'button', 'missing arrow menu'));
+    await click(menuItem(arrowAgain, 'Cut'));
     await waitForText(() => expect(noticeText()).toBe('cannot reach bindweed'));
+    expect(arrowAgain.querySelector('[role="menu"]')).toBeNull();
     expect(entries()).toHaveLength(0);
     await choosePlan('');
     await settle();
     expect(planSelect().value).toBe('p');
+  });
+
+  it('moves the selection between boxes, arrows, cut marks and entry targets', async () => {
+    await setPlan([CUT, ADD, NOTE]);
+    await showApp('#at=src/app&plan=split-app');
+    await waitForText(() => expect(nodeById('src/app/a.ts')).not.toBeNull());
+    const noteEntry = () => sentenceOf(entryRow('Note on src/domain: "pull an interface out here"'));
+    const cutEntry = () => sentenceOf(entryRow('src/app must not import src/domain (1 import)'));
+    await click(noteEntry());
+    await waitForText(() => {
+      expect(window.location.hash).toBe('#at=src&plan=split-app');
+      expect(boxOf('src/domain').getAttribute('data-selected')).toBe('true');
+    });
+    await click(cutEntry());
+    await waitForText(() => expect(cutBetween('src/app', 'src/domain').getAttribute('data-selected')).toBe('true'));
+    expect(boxOf('src/domain').getAttribute('data-selected')).toBe('false');
+    await click(noteEntry());
+    await waitForText(() => expect(boxOf('src/domain').getAttribute('data-selected')).toBe('true'));
+    expect(cutBetween('src/app', 'src/domain').getAttribute('data-selected')).toBe('false');
+    await click(boxOf('src/app'));
+    expect(boxOf('src/app').getAttribute('data-selected')).toBe('true');
+    expect(boxOf('src/domain').getAttribute('data-selected')).toBe('false');
+    await click(noteEntry());
+    await waitForText(() => expect(boxOf('src/domain').getAttribute('data-selected')).toBe('true'));
+    expect(boxOf('src/app').getAttribute('data-selected')).toBe('false');
+    await click(sentenceOf(entryRow('src/infra should use src/app')));
+    await waitForText(() => expect(edgeBetween('src/infra', 'src/app').getAttribute('data-selected')).toBe('true'));
+    expect(boxOf('src/domain').getAttribute('data-selected')).toBe('false');
+    await click(boxOf('src/domain'));
+    await click(edgeBetween('src/app', 'src/infra'));
+    expect(boxOf('src/domain').getAttribute('data-selected')).toBe('false');
+    expect(edgeBetween('src/app', 'src/infra').getAttribute('data-selected')).toBe('true');
+    await click(boxOf('src/infra'));
+    expect(edgeBetween('src/app', 'src/infra').getAttribute('data-selected')).toBe('false');
+    expect(boxOf('src/infra').getAttribute('data-selected')).toBe('true');
+    await click(edgeBetween('src/app', 'src/infra'));
+    await click(mustQuery(document.body, '.fake-flow', 'missing flow'));
+    expect(edgeBetween('src/app', 'src/infra').getAttribute('data-selected')).toBe('false');
+    await dblclick(boxOf('src/app'));
+    await waitForText(() => expect(window.location.hash).toBe('#at=src/app&plan=split-app'));
+    await click(noteEntry());
+    await waitForText(() => expect(boxOf('src/domain').getAttribute('data-selected')).toBe('true'));
+    await click(edgeBetween('src/app', 'src/infra'));
+    expect(boxOf('src/domain').getAttribute('data-selected')).toBe('false');
+  });
+
+  it('centres a focus request and refires when the node set changes', async () => {
+    const { ArchCanvas, CanvasProvider } = await import('./ArchCanvas.tsx');
+    const viewFor = (ids: string[]): GraphView => ({
+      at: 'src',
+      crumbs: [{ name: 'layered', at: '' }],
+      nodes: ids.map(id => ({ id, kind: 'package' as const, name: id, path: id, files: 1, row: 0, order: 0, cycle: false })),
+      edges: [],
+      crapMax: 4,
+      coverage: 'off',
+      mutation: 'off',
+    });
+    const spots = [
+      { id: 'src/app', x: 0, y: 0 },
+      { id: 'src/infra', x: 260, y: 0 },
+    ];
+    const focusArrow = { kind: 'arrow' as const, from: 'src/app', to: 'src/infra' };
+    dom = installDom(`${BASE}/?token=tok#at=src`);
+    const el = document.getElementById('root');
+    if (el === null) throw new Error('missing root');
+    reactRoot = createRoot(el);
+    const render = (ids: string[], focus: { kind: 'arrow'; from: string; to: string }): void => {
+      reactRoot.render(
+        createElement(
+          CanvasProvider,
+          null,
+          createElement(ArchCanvas, {
+            view: viewFor(ids),
+            spots,
+            hover: null,
+            chosen: null,
+            marked: null,
+            overlay: 'none',
+            crapMax: 4,
+            planning: null,
+            focus,
+            onHover: () => undefined,
+            onSelect: () => undefined,
+            onSelectMark: () => undefined,
+            onClear: () => undefined,
+            onOpen: () => undefined,
+            onDropNode: () => undefined,
+          }),
+        ),
+      );
+    };
+    await actRun(() => render(['src/app', 'src/infra'], focusArrow));
+    expect(centers()).toContainEqual({ x: 130, y: 0 });
+    const before = centers().length;
+    await actRun(() => render(['src/app', 'src/infra'], { kind: 'arrow', from: 'src/app', to: 'src/gone' }));
+    expect(centers()).toHaveLength(before);
+    await actRun(() => render(['src/app', 'src/infra'], { kind: 'arrow', from: 'src/gone', to: 'src/infra' }));
+    expect(centers()).toHaveLength(before);
+    await actRun(() => render(['a', 'bc'], focusArrow));
+    expect(centers()).toHaveLength(before + 1);
+    await actRun(() => render(['ab', 'c'], focusArrow));
+    expect(centers()).toHaveLength(before + 2);
+  });
+
+  it('gates the planned fetch on the layout and never queries rows for files', async () => {
+    const doc = { version: 1, name: 'P', slug: 'p', createdAt: '2026-10-01T00:00:00.000Z', baseCommit: 'a'.repeat(40), edits: [], redo: [] };
+    const node = (id: string, kind: 'package' | 'file') => ({ id, kind, name: id, path: id, files: 1, row: 0, order: 0, cycle: false });
+    const graphFor = (at: string) => ({
+      at,
+      crumbs: [{ name: 'layered', at: '' }],
+      nodes: at === 'src' ? [node('src/app', 'package')] : [node('src/app/a.ts', 'file')],
+      edges: [],
+      crapMax: 4,
+      coverage: 'off',
+      mutation: 'off',
+      stale: [],
+    });
+    const bodies: Record<string, unknown> = {
+      '/api/layout': { version: 1, views: {}, settings: { tests: true, external: false } },
+      '/api/plans': { plans: [{ name: 'P', slug: 'p', editCount: 0, createdAt: 'x' }] },
+      '/api/plans/p': doc,
+    };
+    const calls: { at: string | null; tests: string | null; plan: string | null }[] = [];
+    const planDocCalls: string[] = [];
+    const bodyFor = (u: URL): unknown => {
+      if (u.pathname === '/api/graph') return graphFor(u.searchParams.get('at') ?? '');
+      return bodies[u.pathname] ?? { error: 'no such node' };
+    };
+    const fake = (async (url: string | URL | Request) => {
+      const u = new URL(String(url), BASE);
+      if (u.pathname === '/api/graph') calls.push({ at: u.searchParams.get('at'), tests: u.searchParams.get('tests'), plan: u.searchParams.get('plan') });
+      if (u.pathname.startsWith('/api/plans/')) planDocCalls.push(u.pathname);
+      return { ok: true, json: async () => bodyFor(u) } as Response;
+    }) as typeof fetch;
+    dom = installDom(`${BASE}/?token=tok#at=src`);
+    const el = document.getElementById('root');
+    if (el === null) throw new Error('missing root');
+    reactRoot = createRoot(el);
+    const { ArchView } = await import('./ArchView.tsx');
+    const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, networkMode: 'always' } } });
+    const render = (at: string, plan: string | undefined): void => {
+      reactRoot.render(
+        createElement(
+          QueryClientProvider,
+          { client },
+          createElement(ArchView, { token: 'tok', at, plan, fetcher: fake, onDrill: () => undefined, onOpenFile: () => undefined }),
+        ),
+      );
+    };
+    await actRun(() => render('src', 'p'));
+    await waitForText(() => expect(nodeById('src/app')).not.toBeNull());
+    const viewCalls = calls.filter(call => call.at === 'src' && call.plan === 'p');
+    expect(viewCalls.length).toBeGreaterThan(0);
+    for (const call of viewCalls) expect(call.tests).toBe('1');
+    await actRun(() => render('src/app', 'p'));
+    await waitForText(() => expect(nodeById('src/app/a.ts')).not.toBeNull());
+    expect(calls.filter(call => call.at !== 'src' && call.at !== 'src/app')).toEqual([]);
+    await actRun(() => render('src', undefined));
+    await settle();
+    expect(planDocCalls).toEqual(['/api/plans/p']);
+  });
+
+  it('pins a file dragged onto a package box when no plan is open', async () => {
+    const layoutWrites: unknown[] = [];
+    const graph = {
+      at: 'src',
+      crumbs: [
+        { name: 'layered', at: '' },
+        { name: 'src', at: 'src' },
+      ],
+      nodes: [
+        { id: 'src/app', kind: 'package', name: 'app', path: 'src/app', files: 1, row: 0, order: 0, cycle: false },
+        { id: 'src/loose.ts', kind: 'file', name: 'loose.ts', path: 'src/loose.ts', row: 1, order: 0, cycle: false },
+      ],
+      edges: [],
+      crapMax: 4,
+      coverage: 'off',
+      mutation: 'off',
+    };
+    const routes: Record<string, unknown> = {
+      '/api/layout': { version: 1, views: {}, settings: { tests: false, external: false } },
+      '/api/plans': { plans: [] },
+      '/api/graph': graph,
+    };
+    const fake = (async (url: string | URL | Request, init?: RequestInit) => {
+      const u = new URL(String(url), BASE);
+      if (u.pathname === '/api/layout' && init?.method === 'PUT') layoutWrites.push(readRaw(init.body));
+      return { ok: true, json: async () => routes[u.pathname] ?? { error: 'no such node' } } as Response;
+    }) as typeof fetch;
+    dom = installDom(`${BASE}/?token=tok#at=src`);
+    const el = document.getElementById('root');
+    if (el === null) throw new Error('missing root');
+    reactRoot = createRoot(el);
+    const { ArchView } = await import('./ArchView.tsx');
+    const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
+    const { act } = await import('react');
+    await act(async () => {
+      reactRoot.render(
+        createElement(
+          QueryClientProvider,
+          { client: new QueryClient({ defaultOptions: { queries: { retry: false, networkMode: 'always' } } }) },
+          createElement(ArchView, { token: 'tok', at: 'src', fetcher: fake, onDrill: () => undefined, onOpenFile: () => undefined }),
+        ),
+      );
+    });
+    await waitForText(() => expect(nodeById('src/loose.ts')).not.toBeNull());
+    await dragBox('src/loose.ts', [boxOf('src/app')]);
+    await waitForText(() => expect(layoutWrites).toHaveLength(1));
+    expect(parseLayout(layoutWrites[0])?.views['src']?.['src/loose.ts']).toBeDefined();
+    expect(document.querySelector('aside[aria-label="changes"]')).toBeNull();
   });
 });

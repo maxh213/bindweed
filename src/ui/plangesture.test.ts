@@ -40,10 +40,20 @@ describe('planDropTarget', () => {
     Object.defineProperty(globalThis, 'MouseEvent', { value: dom.window.MouseEvent, configurable: true });
   });
 
-  function atPoint(elements: Element[]): MouseEvent {
-    document.elementsFromPoint = () => elements;
+  function atPoint(elements: (Element | Text)[]): MouseEvent {
+    document.elementsFromPoint = () => elements as Element[];
     return new window.MouseEvent('mouseup', { clientX: 5, clientY: 6 });
   }
+
+  it('asks the document for the elements at the event point', () => {
+    let seen: number[] = [];
+    document.elementsFromPoint = (x: number, y: number) => {
+      seen = [x, y];
+      return [];
+    };
+    expect(planDropTarget(new window.MouseEvent('mouseup', { clientX: 5, clientY: 6 }))).toBeNull();
+    expect(seen).toEqual([5, 6]);
+  });
 
   it('reads the crumb, then the package, under the drop point', () => {
     const crumb = document.createElement('button');
@@ -54,9 +64,15 @@ describe('planDropTarget', () => {
     const plain = document.createElement('div');
     const ghost = document.createElement('div');
     ghost.className = 'box package';
+    const stray = document.createElement('div');
+    stray.dataset.id = 'src/stray';
+    const text = document.createTextNode('word');
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     expect(planDropTarget(atPoint([svg, plain, crumb, box]))).toBe('src');
     expect(planDropTarget(atPoint([svg, plain, ghost, box]))).toBe('src/infra');
+    expect(planDropTarget(atPoint([text, crumb]))).toBe('src');
+    expect(planDropTarget(atPoint([text, box]))).toBe('src/infra');
+    expect(planDropTarget(atPoint([stray, box]))).toBe('src/infra');
     expect(planDropTarget(atPoint([svg, plain]))).toBeNull();
     expect(planDropTarget(atPoint([]))).toBeNull();
     expect(planDropTarget({})).toBeNull();

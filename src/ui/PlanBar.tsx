@@ -167,15 +167,7 @@ function ChangeRow(props: Readonly<{ entry: ChangeLine; onPick: () => void; onRe
 type ListedChange<T extends ChangeLine> = { key: string; entry: T; index: number };
 
 function listedChanges<T extends ChangeLine>(entries: T[]): ListedChange<T>[] {
-  const seen = new Map<string, number>();
-  const rows: ListedChange<T>[] = [];
-  entries.forEach((entry, index) => {
-    const base = `${entry.sentence}\0${entry.stale ?? ''}`;
-    const count = (seen.get(base) ?? 0) + 1;
-    seen.set(base, count);
-    rows.push({ key: `${count}:${base}`, entry, index });
-  });
-  return rows;
+  return entries.map((entry, index) => ({ key: `${index}:${entry.sentence}`, entry, index }));
 }
 
 export function ChangeList<T extends ChangeLine>(

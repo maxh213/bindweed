@@ -767,6 +767,30 @@ describe('edgePairs', () => {
     ]);
     expect(edgePairs(scan, 'src', 'src/app', 'react')).toEqual([]);
     expect(edgePairs(scan, 'src', 'src/app', 'react', { tests: false, external: true })).toEqual([['src/app/a.ts', 'react']]);
+    expect(edgePairs(scan, 'src', 'src/lib', 'react', { tests: false, external: true })).toEqual([]);
+  });
+
+  it('sorts the pairs by importer then imported', () => {
+    const scan: ScanResult = {
+      files: [
+        { path: 'src/app/a.ts', test: false },
+        { path: 'src/app/b.ts', test: false },
+        { path: 'src/infra/db.ts', test: false },
+        { path: 'src/infra/repo.ts', test: false },
+      ],
+      edges: [
+        { from: 'src/app/b.ts', to: 'src/infra/repo.ts', kind: 'runtime' },
+        { from: 'src/app/b.ts', to: 'src/infra/db.ts', kind: 'runtime' },
+        { from: 'src/app/a.ts', to: 'src/infra/repo.ts', kind: 'runtime' },
+      ],
+      externals: [],
+      workspaces: [],
+    };
+    expect(edgePairs(scan, 'src', 'src/app', 'src/infra')).toEqual([
+      ['src/app/a.ts', 'src/infra/repo.ts'],
+      ['src/app/b.ts', 'src/infra/db.ts'],
+      ['src/app/b.ts', 'src/infra/repo.ts'],
+    ]);
   });
 
   it('finds no pairs behind a planned arrow', () => {

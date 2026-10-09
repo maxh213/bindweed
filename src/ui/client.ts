@@ -166,7 +166,7 @@ function parseBody<T>(schema: z.ZodType<T>, raw: unknown, ok: boolean): T | { er
   return parsed.success ? parsed.data : { error: 'cannot reach bindweed' };
 }
 
-export type GraphQuery = { tests?: boolean; external?: boolean; plan?: string };
+export type GraphQuery = { tests?: boolean; external?: boolean; plan?: string | null };
 
 function withFlag(params: URLSearchParams, name: string, on: boolean | undefined): void {
   if (on === true) params.set(name, '1');
@@ -176,7 +176,7 @@ function queryUrl(path: string, params: Record<string, string>, query: GraphQuer
   const search = new URLSearchParams(params);
   withFlag(search, 'tests', query.tests);
   withFlag(search, 'external', query.external);
-  if (query.plan !== undefined && query.plan !== '') search.set('plan', query.plan);
+  if (typeof query.plan === 'string' && query.plan !== '') search.set('plan', query.plan);
   return `${path}?${search.toString()}`;
 }
 

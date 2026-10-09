@@ -11,11 +11,9 @@ function planFile(root: string, slug: string): string {
 }
 
 export async function readPlan(root: string, slug: string): Promise<PlanDoc | undefined> {
-  try {
-    return parsePlan(JSON.parse(await readFile(planFile(root, slug), 'utf8')));
-  } catch {
-    return undefined;
-  }
+  return readFile(planFile(root, slug))
+    .then(bytes => parsePlan(JSON.parse(bytes.toString('utf8'))))
+    .catch(() => undefined);
 }
 
 export async function writePlan(root: string, doc: PlanDoc): Promise<void> {
@@ -32,12 +30,8 @@ export async function removePlan(root: string, slug: string): Promise<boolean> {
   }
 }
 
-async function planFileNames(root: string): Promise<string[]> {
-  try {
-    return await readdir(plansDir(root));
-  } catch {
-    return [];
-  }
+async function planFileNames(root: string): Promise<string[] | undefined> {
+  return readdir(plansDir(root)).catch(() => undefined);
 }
 
 async function readListed(root: string, file: string): Promise<PlanDoc | undefined> {
@@ -46,8 +40,7 @@ async function readListed(root: string, file: string): Promise<PlanDoc | undefin
 }
 
 function byText(a: string, b: string): number {
-  if (a < b) return -1;
-  return a > b ? 1 : 0;
+  return a.localeCompare(b);
 }
 
 function byCreatedThenSlug(a: PlanSummary, b: PlanSummary): number {
@@ -55,8 +48,10 @@ function byCreatedThenSlug(a: PlanSummary, b: PlanSummary): number {
 }
 
 export async function listPlans(root: string): Promise<PlanSummary[]> {
+  const names = await planFileNames(root);
+  if (names === undefined) return [];
   const docs: PlanDoc[] = [];
-  for (const file of await planFileNames(root)) {
+  for (const file of names) {
     const doc = await readListed(root, file);
     if (doc !== undefined) docs.push(doc);
   }

@@ -35,7 +35,7 @@ type PlanSessionProps = {
   shown: ShownGraph;
   ready: boolean;
   nodes: GraphNode[];
-  edges: ViewEdge[];
+  edges: ViewEdge[] | undefined;
   other: GraphView | undefined;
   planned: GraphView | undefined;
   ids: Set<string>;
@@ -60,89 +60,56 @@ type PlanSessionView = {
   dropOnCrumb: (event: { preventDefault(): void; dataTransfer: { getData(mime: string): string } }, at: string) => void;
 };
 
-type RowResult = { data?: GraphView | { error: string } };
-
-function slugKey(slug: string | null): string {
-  return slug ?? '';
-}
-
 function editsOf(doc: PlanDoc | null): PlanEdit[] {
   if (doc === null) return [];
   return doc.edits;
 }
 
-function readyEdits(ready: boolean, doc: PlanDoc | null): PlanEdit[] {
-  if (!ready) return [];
-  return editsOf(doc);
-}
-
-function packageIds(slug: string | null, ready: boolean, nodes: GraphNode[]): string[] {
-  if (slug === null || !ready) return [];
+function packageIds(nodes: GraphNode[]): string[] {
   return nodes.filter(node => node.kind === 'package').map(node => node.id);
 }
 
-function rowQuery(token: string, fetcher: typeof fetch, id: string, tests: boolean, external: boolean, plan: string) {
+type RowPair = { id: string; now: GraphView | { error: string }; planned: GraphView | { error: string } };
+
+type RowResult = { data?: RowPair };
+
+function rowQueryFor(token: string, fetcher: typeof fetch, id: string, tests: boolean, external: boolean, slug: string) {
   return {
-    queryKey: ['graph', token, id, tests, external, plan] as const,
-    queryFn: () => fetchGraph(token, id, fetcher, { tests, external, plan }),
+    queryKey: ['graph', 'rows', token, id, tests, external, slug] as const,
+    queryFn: async (): Promise<RowPair> => {
+      const [now, planned] = await Promise.all([
+        fetchGraph(token, id, fetcher, { tests, external }),
+        fetchGraph(token, id, fetcher, { tests, external, plan: slug }),
+      ]);
+      return { id, now, planned };
+    },
   };
 }
 
-function rowQueriesFor(token: string, fetcher: typeof fetch, id: string, tests: boolean, external: boolean, slug: string) {
-  return [rowQuery(token, fetcher, id, tests, external, ''), rowQuery(token, fetcher, id, tests, external, slug)];
+function rowPackages(results: readonly RowResult[]): RowPair[] {
+  return results.map(result => result.data).filter((data): data is RowPair => data !== undefined);
 }
 
-function rowData(results: readonly RowResult[], index: number): GraphView | { error: string } | undefined {
-  return results[index]?.data;
+function rowQueriesFor(token: string, fetcher: typeof fetch, nodes: GraphNode[], tests: boolean, external: boolean, slug: string | null) {
+  if (slug === null) return [];
+  return packageIds(nodes).map(id => rowQueryFor(token, fetcher, id, tests, external, slug));
 }
 
-function zipped(ids: string[], results: readonly RowResult[]) {
-  return ids.map((id, index) => ({ id, now: rowData(results, index * 2), planned: rowData(results, index * 2 + 1) }));
-}
-
-function loadedPicture(slug: string | null, input: Parameters<typeof planPicture>[0]): Picture | null {
-  if (slug === null) return null;
-  return planPicture(input);
-}
-
-function visibleInk(ready: boolean, picture: Picture | null): PlanInk | null {
-  if (!ready || picture === null) return null;
-  return picture.ink;
-}
-
-function visibleEntries(ready: boolean, picture: Picture | null): Picture['entries'] {
-  if (!ready || picture === null) return [];
+function visibleEntries(ready: boolean, picture: Picture): Picture['entries'] {
+  if (!ready) return [];
   return picture.entries;
 }
 
-function reasonsOf(ready: boolean, picture: Picture | null): (string | null)[] {
-  return visibleEntries(ready, picture).map(entry => entry.stale);
-}
-
-function identityPath(path: string): string {
-  return path;
-}
-
-function diskOf(picture: Picture | null): (path: string) => string {
-  if (picture === null) return identityPath;
-  return picture.diskPath;
-}
-
-function planActive(slug: string | null, ink: PlanInk | null): boolean {
-  return slug !== null && ink !== null;
-}
-
-function pathFor(active: boolean, disk: (path: string) => string, path: string): string {
-  if (!active) return identityPath(path);
-  return disk(path);
+function reasonsOf(entries: Picture['entries']): (string | null)[] {
+  return entries.map(entry => entry.stale);
 }
 
 function movedTo(dir: string): string {
   return dir === '' ? '.' : dir;
 }
 
-function planningOf(slug: string | null, ink: PlanInk | null, handlers: Omit<Planning, 'ink'>): Planning | null {
-  if (slug === null || ink === null) return null;
+function planningOf(slug: string | null, ink: PlanInk, handlers: Omit<Planning, 'ink'>): Planning | null {
+  if (slug === null) return null;
   return { ink, ...handlers };
 }
 
@@ -243,6 +210,10 @@ function PlanDialogs(
   );
 }
 
+function plannedHas(planned: GraphView | undefined, from: string, to: string): boolean {
+  return planned !== undefined && planned.edges.some(edge => edge.from === from && edge.to === to);
+}
+
 function dropTargetOf(slug: string | null, kind: GraphNode['kind'] | null, event: unknown): string | null {
   if (slug === null || kind !== 'file') return null;
   return planDropTarget(event);
@@ -260,8 +231,8 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     queryFn: () => fetchPlans(props.token, props.fetcher),
   });
   const planQuery = useQuery({
-    queryKey: ['plan', props.token, slugKey(slug)] as const,
-    queryFn: () => fetchPlan(props.token, slugKey(slug), props.fetcher),
+    queryKey: ['plan', props.token, slug] as const,
+    queryFn: () => fetchPlan(props.token, String(slug), props.fetcher),
     enabled: slug !== null,
   });
   const [notice, setNotice] = useState<string | null>(null);
@@ -271,12 +242,11 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
   const [noteTarget, setNoteTarget] = useState<NoteTarget | null>(null);
   const roster = planRoster(plansQuery.data, planQuery.data, slug, deleteTarget);
   const doc = roster.doc;
-  const edits = readyEdits(props.ready, doc);
-  const packages = packageIds(slug, props.ready, props.nodes);
+  const edits = editsOf(doc);
   const rowResults = useQueries({
-    queries: packages.flatMap(id => rowQueriesFor(props.token, props.fetcher, id, props.tests, props.external, slugKey(slug))),
+    queries: rowQueriesFor(props.token, props.fetcher, props.nodes, props.tests, props.external, slug),
   });
-  const picture = loadedPicture(slug, {
+  const picture = planPicture({
     shown: props.shown,
     nodes: props.nodes,
     other: props.other,
@@ -285,14 +255,11 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     stale: props.planned?.stale,
     edges: props.edges,
     ids: props.ids,
-    packages: zipped(packages, rowResults),
+    packages: rowPackages(rowResults),
   });
-  const ink = visibleInk(props.ready, picture);
-  const active = planActive(slug, ink);
-  const disk = diskOf(picture);
+  const disk = picture.diskPath;
   const entries = visibleEntries(props.ready, picture);
-  const stale = reasonsOf(props.ready, picture);
-  const plannedEdges = props.planned?.edges ?? [];
+  const stale = reasonsOf(entries);
 
   const savePlan = (next: PlanDoc): void => {
     void putPlan(props.token, next, props.fetcher).then(async saved => {
@@ -301,8 +268,7 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
         return;
       }
       await queryClient.invalidateQueries({ queryKey: ['graph'] });
-      queryClient.setQueryData(['plan', props.token, slugKey(slug)], saved);
-      void queryClient.invalidateQueries({ queryKey: ['plans'] });
+      queryClient.setQueryData(['plan', props.token, slug], saved);
     });
   };
   const withDoc = (action: (current: PlanDoc) => void): void => {
@@ -341,11 +307,11 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     return true;
   };
   const cutRealArrow = async (from: string, to: string): Promise<void> => {
-    if (!plannedEdges.some(edge => edge.from === from && edge.to === to)) {
+    if (!plannedHas(props.planned, from, to)) {
       setNotice(`no such arrow ${from} → ${to}`);
       return;
     }
-    const pairs = await fetchPairs(props.token, from, to, props.at, { tests: props.tests, external: props.external, plan: slugKey(slug) }, props.fetcher);
+    const pairs = await fetchPairs(props.token, from, to, props.at, { tests: props.tests, external: props.external, plan: slug }, props.fetcher);
     if ('error' in pairs) {
       setNotice(pairs.error);
       return;
@@ -357,7 +323,6 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     editPlan({ kind: 'cut-edge', from, to, files: pairs.pairs });
   };
   const cutArrow = async (from: string, to: string): Promise<void> => {
-    if (slug === null) return;
     const added = addEdgeIndex(edits, stale, from, to);
     if (added !== -1) {
       removeEdit(added);
@@ -370,7 +335,7 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
       setNotice('a box cannot depend on itself');
       return;
     }
-    if (plannedEdges.some(edge => edge.from === from && edge.to === to)) {
+    if (plannedHas(props.planned, from, to)) {
       setNotice(`${from} already imports ${to}`);
       return;
     }
@@ -381,7 +346,7 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     setNoteTarget(null);
   };
   const openFile = (path: string): void => {
-    props.onOpenFile(pathFor(active, disk, path));
+    props.onOpenFile(disk(path));
   };
   const pickArrow = (from: string, to: string, cut: boolean): void => {
     props.onPickArrow(from, to, cut);
@@ -410,8 +375,6 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
       setNewPlanError(created.error);
       return;
     }
-    setNewPlanOpen(false);
-    await queryClient.invalidateQueries({ queryKey: ['plans'] });
     props.onPlanChange(created.slug);
   };
   const removeCurrentPlan = async (target: string): Promise<void> => {
@@ -421,7 +384,6 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
       return;
     }
     props.onPlanChange(null);
-    await queryClient.invalidateQueries({ queryKey: ['plans'] });
   };
   const dropTarget = (kind: GraphNode['kind'] | null, event: unknown): string | null => dropTargetOf(slug, kind, event);
   const dropOnCrumb = (event: { preventDefault(): void; dataTransfer: { getData(mime: string): string } }, at: string): void => {
@@ -444,9 +406,9 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  });
 
-  const planning = planningOf(slug, ink, {
+  const planning = planningOf(slug, picture.ink, {
     onDropFile: moveFile,
     onDrawEdge: drawEdge,
     onCutEdge: cutArrow,

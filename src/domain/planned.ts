@@ -66,7 +66,9 @@ function fileEdgeJoins(scan: ScanResult, from: string, to: string): boolean {
 }
 
 function plannedJoins(scan: ScanResult, from: string, to: string): boolean {
-  return (scan.planned ?? []).some(edge => edge.from === from && edge.to === to);
+  const planned = scan.planned;
+  if (planned === undefined) return false;
+  return planned.some(edge => edge.from === from && edge.to === to);
 }
 
 function edgeJoins(scan: ScanResult, from: string, to: string): boolean {
@@ -109,10 +111,7 @@ function remapped(value: string, file: string, dest: string): string {
 }
 
 function movedEdge<T extends { from: string; to: string }>(edge: T, file: string, dest: string): T {
-  const from = remapped(edge.from, file, dest);
-  const to = remapped(edge.to, file, dest);
-  if (from === edge.from && to === edge.to) return edge;
-  return { ...edge, from, to };
+  return { ...edge, from: remapped(edge.from, file, dest), to: remapped(edge.to, file, dest) };
 }
 
 function movedFile(file: ScannedFile, path: string, dest: string): ScannedFile {
@@ -120,8 +119,7 @@ function movedFile(file: ScannedFile, path: string, dest: string): ScannedFile {
 }
 
 function movedExternal<T extends { from: string }>(ext: T, file: string, dest: string): T {
-  if (ext.from !== file) return ext;
-  return { ...ext, from: dest };
+  return { ...ext, from: remapped(ext.from, file, dest) };
 }
 
 function applyMove(scan: ScanResult, edit: MoveEdit): ScanResult {
@@ -146,30 +144,25 @@ function applyAdd(scan: ScanResult, edit: AddEdit): ScanResult {
   return { ...scan, planned: [...(scan.planned ?? []), { from: edit.from, to: edit.to }] };
 }
 
-function appliedEdit(scan: ScanResult, edit: PlanEdit): ScanResult {
-  if (edit.kind === 'move-file') return applyMove(scan, edit);
-  if (edit.kind === 'cut-edge') return applyCut(scan, edit);
-  if (edit.kind === 'add-edge') return applyAdd(scan, edit);
-  return scan;
-}
+type WalkState = { scan: ScanResult; cuts: CutRef[] };
 
-function trackCut(cuts: CutRef[], edit: PlanEdit): CutRef[] {
-  if (edit.kind !== 'cut-edge') return cuts;
-  return [...cuts, { from: edit.from, to: edit.to }];
+function appliedEdit(state: WalkState, edit: PlanEdit): WalkState {
+  if (edit.kind === 'move-file') return { ...state, scan: applyMove(state.scan, edit) };
+  if (edit.kind === 'cut-edge') return { scan: applyCut(state.scan, edit), cuts: [...state.cuts, { from: edit.from, to: edit.to }] };
+  if (edit.kind === 'add-edge') return { ...state, scan: applyAdd(state.scan, edit) };
+  return state;
 }
 
 function walkPlan(scan: ScanResult, edits: PlanEdit[]): WalkOut {
   const stale: (string | null)[] = [];
-  let current = scan;
-  let cuts: CutRef[] = [];
+  let state: WalkState = { scan, cuts: [] };
   for (const edit of edits) {
-    const reason = staleReason(current, fileSet(current), cuts, edit);
+    const reason = staleReason(state.scan, fileSet(state.scan), state.cuts, edit);
     stale.push(reason);
     if (reason !== null) continue;
-    cuts = trackCut(cuts, edit);
-    current = appliedEdit(current, edit);
+    state = appliedEdit(state, edit);
   }
-  return { scan: current, stale };
+  return { scan: state.scan, stale };
 }
 
 export function applyPlan(scan: ScanResult, edits: PlanEdit[]): ScanResult {
