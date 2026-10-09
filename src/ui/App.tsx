@@ -13,6 +13,7 @@ import {
   openSelection,
   pageFromLocation,
   panelFromQuery,
+  planFromLocation,
   selectedFromLocation,
   tabFromLocation,
   treeParts,
@@ -99,6 +100,7 @@ function BrowserApp(props: Readonly<AppProps>) {
   const [selected, setSelected] = useState(() => selectedFromLocation(props.location));
   const [tab, setTab] = useState(() => tabFromLocation(props.location));
   const [at, setAt] = useState(() => atFromLocation(props.location));
+  const [plan, setPlan] = useState(() => planFromLocation(props.location));
 
   const treeQuery = useQuery({
     queryKey: ['tree', props.token] as const,
@@ -113,7 +115,7 @@ function BrowserApp(props: Readonly<AppProps>) {
 
   const events = props.events ?? window;
   useEffect(() => {
-    const onPop = () => applyPage({ setTab, setAt, setSelected, setExpanded }, pageFromLocation(props.location));
+    const onPop = () => applyPage({ setTab, setAt, setSelected, setExpanded, setPlan }, pageFromLocation(props.location));
     events.addEventListener('popstate', onPop);
     return () => events.removeEventListener('popstate', onPop);
   }, [events, props.location]);
@@ -126,13 +128,18 @@ function BrowserApp(props: Readonly<AppProps>) {
 
   const showArch = () => {
     setTab('arch');
-    writeHistory(props.historyApi, { kind: 'at', at });
+    writeHistory(props.historyApi, { kind: 'at', at, plan });
   };
 
   const drillTo = (dir: string) => {
     setTab('arch');
     setAt(dir);
-    writeHistory(props.historyApi, { kind: 'at', at: dir });
+    writeHistory(props.historyApi, { kind: 'at', at: dir, plan });
+  };
+
+  const changePlan = (next: string | null) => {
+    setPlan(next);
+    writeHistory(props.historyApi, { kind: 'at', at, plan: next });
   };
 
   const openFile = (path: string) => {
@@ -163,7 +170,7 @@ function BrowserApp(props: Readonly<AppProps>) {
           onSelect={selectFile}
         />
       ) : (
-        <ArchView token={props.token} at={at} fetcher={props.fetcher} onDrill={drillTo} onOpenFile={openFile} />
+        <ArchView token={props.token} at={at} plan={plan} fetcher={props.fetcher} onDrill={drillTo} onOpenFile={openFile} onPlanChange={changePlan} />
       )}
     </div>
   );

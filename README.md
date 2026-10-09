@@ -27,6 +27,8 @@ Status: being built by marestail, one slice per file in `tasks/`.
 | `/api/rescan` | live |
 | `/api/layout` | live |
 | `/api/detail` | live |
+| `/api/plans` | live |
+| `/api/pairs` | live |
 
 ## Environment
 

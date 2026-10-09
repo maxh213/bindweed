@@ -4,7 +4,7 @@ export type RawNode =
   | ({ id: string; kind: 'package'; name: string; path: string; files: number } & Mark)
   | ({ id: string; kind: 'file'; name: string; path: string } & Mark);
 
-export type RawEdge = { from: string; to: string; runtime: number; type: number; heritage?: number };
+export type RawEdge = { from: string; to: string; runtime: number; type: number; heritage?: number; planned?: true };
 
 type NodeBase = {
   id: string;
@@ -25,6 +25,7 @@ export type ViewEdge = {
   runtime: number;
   type: number;
   heritage?: number;
+  planned?: true;
   cycle: boolean;
   cycleText?: string;
 };
@@ -245,7 +246,7 @@ function inSameCycle(edge: RawEdge, comp: Record<string, number>, sizes: number[
 }
 
 function pushWithin(map: Record<string, string[]>, edge: RawEdge, compId: number, comp: Record<string, number>): void {
-  if (comp[edge.from] !== compId) return;
+  if (comp[edge.from] !== compId || comp[edge.to] !== compId) return;
   const existing = map[edge.from];
   if (existing === undefined) {
     map[edge.from] = [edge.to];
@@ -304,8 +305,8 @@ function cycleTextFor(edge: RawEdge, edges: RawEdge[], comp: Record<string, numb
 
 export function toViewEdge(edge: RawEdge, cycle: boolean): ViewEdge {
   const base = { from: edge.from, to: edge.to, runtime: edge.runtime, type: edge.type, cycle };
-  if (edge.heritage === undefined) return base;
-  return { ...base, heritage: edge.heritage };
+  const counted = edge.heritage === undefined ? base : { ...base, heritage: edge.heritage };
+  return edge.planned === true ? { ...counted, planned: true } : counted;
 }
 
 function finishEdge(edge: RawEdge, edges: RawEdge[], comp: Record<string, number>, sizes: number[], names: Record<string, string>): ViewEdge {

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { GraphView, NodeDetail } from '../domain/graph.ts';
 import { emptyLayout, parseLayout, type LayoutDoc } from '../domain/layout.ts';
+import { parsePlan, type PlanDoc, type PlanSummary } from '../domain/plan.ts';
 import type { TreeEntry } from '../domain/tree.ts';
 
 const treeEntrySchema: z.ZodType<TreeEntry> = z.lazy(() =>
@@ -99,6 +100,7 @@ const graphEdgeSchema = z.object({
   runtime: z.number(),
   type: z.number(),
   heritage: z.number().optional(),
+  planned: z.literal(true).optional(),
   cycle: z.boolean(),
   cycleText: z.string().optional(),
 });
@@ -133,9 +135,16 @@ const graphJsonSchema: z.ZodType<GraphView> = z.object({
   crapMax: z.number().default(4),
   coverage: reportFlag.default('off'),
   mutation: reportFlag.default('off'),
+  stale: z.array(z.string().nullable()).optional(),
 });
 
 const rescanJsonSchema = z.object({ files: z.number(), ms: z.number() });
+
+const planListSchema = z.object({
+  plans: z.array(z.object({ name: z.string(), slug: z.string(), editCount: z.number(), createdAt: z.string() })),
+});
+
+const pairsSchema = z.object({ pairs: z.array(z.tuple([z.string(), z.string()])) });
 
 export type RescanJson = z.infer<typeof rescanJsonSchema>;
 
@@ -157,7 +166,7 @@ function parseBody<T>(schema: z.ZodType<T>, raw: unknown, ok: boolean): T | { er
   return parsed.success ? parsed.data : { error: 'cannot reach bindweed' };
 }
 
-export type GraphQuery = { tests?: boolean; external?: boolean };
+export type GraphQuery = { tests?: boolean; external?: boolean; plan?: string };
 
 function withFlag(params: URLSearchParams, name: string, on: boolean | undefined): void {
   if (on === true) params.set(name, '1');
@@ -167,6 +176,7 @@ function queryUrl(path: string, params: Record<string, string>, query: GraphQuer
   const search = new URLSearchParams(params);
   withFlag(search, 'tests', query.tests);
   withFlag(search, 'external', query.external);
+  if (query.plan !== undefined && query.plan !== '') search.set('plan', query.plan);
   return `${path}?${search.toString()}`;
 }
 
@@ -252,6 +262,83 @@ export async function postRescan(token: string, fetcher: typeof fetch = fetch): 
   try {
     const res = await fetcher('/api/rescan', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
     return parseBody(rescanJsonSchema, await res.json(), res.ok);
+  } catch {
+    return { error: 'cannot reach bindweed' };
+  }
+}
+
+function planBody(raw: unknown, ok: boolean): PlanDoc | { error: string } {
+  if (!ok) return errorFrom(raw);
+  const doc = parsePlan(raw);
+  return doc === undefined ? { error: 'cannot reach bindweed' } : doc;
+}
+
+export async function fetchPlans(token: string, fetcher: typeof fetch = fetch): Promise<{ plans: PlanSummary[] } | { error: string }> {
+  try {
+    const res = await fetcher('/api/plans', { headers: { Authorization: `Bearer ${token}` } });
+    return parseBody(planListSchema, await res.json(), res.ok);
+  } catch {
+    return { error: 'cannot reach bindweed' };
+  }
+}
+
+export async function postPlan(token: string, name: string, fetcher: typeof fetch = fetch): Promise<PlanDoc | { error: string }> {
+  try {
+    const res = await fetcher('/api/plans', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    return planBody(await res.json(), res.ok);
+  } catch {
+    return { error: 'cannot reach bindweed' };
+  }
+}
+
+export async function fetchPlan(token: string, slug: string, fetcher: typeof fetch = fetch): Promise<PlanDoc | { error: string }> {
+  try {
+    const res = await fetcher(`/api/plans/${slug}`, { headers: { Authorization: `Bearer ${token}` } });
+    return planBody(await res.json(), res.ok);
+  } catch {
+    return { error: 'cannot reach bindweed' };
+  }
+}
+
+export async function putPlan(token: string, doc: PlanDoc, fetcher: typeof fetch = fetch): Promise<PlanDoc | { error: string }> {
+  try {
+    const res = await fetcher(`/api/plans/${doc.slug}`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(doc),
+    });
+    return planBody(await res.json(), res.ok);
+  } catch {
+    return { error: 'cannot reach bindweed' };
+  }
+}
+
+export async function deletePlan(token: string, slug: string, fetcher: typeof fetch = fetch): Promise<{ ok: true } | { error: string }> {
+  try {
+    const res = await fetcher(`/api/plans/${slug}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+    const raw: unknown = await res.json();
+    if (!res.ok) return errorFrom(raw);
+    return { ok: true };
+  } catch {
+    return { error: 'cannot reach bindweed' };
+  }
+}
+
+export async function fetchPairs(
+  token: string,
+  from: string,
+  to: string,
+  at: string,
+  query: GraphQuery = {},
+  fetcher: typeof fetch = fetch,
+): Promise<{ pairs: [string, string][] } | { error: string }> {
+  try {
+    const res = await fetcher(queryUrl('/api/pairs', { from, to, at }, query), { headers: { Authorization: `Bearer ${token}` } });
+    return parseBody(pairsSchema, await res.json(), res.ok);
   } catch {
     return { error: 'cannot reach bindweed' };
   }

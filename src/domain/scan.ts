@@ -8,11 +8,14 @@ export type ExternalRef = { from: string; name: string; kind: 'runtime' | 'type'
 
 export type WorkspacePackage = { dir: string; name: string };
 
+type PlannedEdge = { from: string; to: string };
+
 export type ScanResult = {
   files: ScannedFile[];
   edges: ScanEdge[];
   externals: ExternalRef[];
   workspaces: WorkspacePackage[];
+  planned?: PlannedEdge[];
 };
 
 const TEST_DIR = /(^|\/)(__tests__|test|tests|e2e)(\/|$)/;

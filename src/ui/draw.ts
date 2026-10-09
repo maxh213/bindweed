@@ -64,3 +64,7 @@ export function chosenId(picked: string | null, armed: string | null, ids: Reado
 export function arrowColor(red: boolean): string {
   return red ? '#dc2626' : '#64748b';
 }
+
+export function plannedColor(red: boolean): string {
+  return red ? '#dc2626' : '#2563eb';
+}

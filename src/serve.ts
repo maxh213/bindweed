@@ -4,12 +4,15 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { basename, dirname, extname, join } from 'node:path';
 import { z } from 'zod';
-import { graphView, nodeDetail, type GraphFlags } from './domain/graph.ts';
+import { edgePairs, graphView, nodeDetail, type GraphFlags, type GraphView } from './domain/graph.ts';
 import { emptyLayout, parseLayout, type LayoutDoc } from './domain/layout.ts';
+import { PLAN_SLUG_PATTERN, parsePlan, planNameFrom, slugOf, type PlanDoc } from './domain/plan.ts';
+import { applyPlan, staleReasons } from './domain/planned.ts';
 import type { ScanResult } from './domain/scan.ts';
 import { buildTree, filePathSet, type TreeRoot } from './domain/tree.ts';
+import { freePlanSlug, listPlans, readPlan, removePlan, writePlan } from './plans.ts';
 import { readHealth } from './reports.ts';
-import { listedRegularFiles } from './repo.ts';
+import { gitHead, listedRegularFiles } from './repo.ts';
 
 export type PortChoice = { mode: 'fixed' | 'range'; port: number };
 
@@ -40,6 +43,7 @@ const JSON_TYPE = 'application/json; charset=utf-8';
 const TEXT_TYPE = 'text/plain; charset=utf-8';
 const HTML_TYPE = 'text/html; charset=utf-8';
 const NOT_FOUND = { error: 'not found' };
+const NO_SUCH_PLAN = { error: 'no such plan' };
 const NO_SUCH_FILE: FileResult = { status: 404, body: { error: 'no such file' } };
 const TOO_LARGE: FileResult = { status: 413, body: { error: 'file too large to show' } };
 const ADDR_IN_USE = z.object({ code: z.literal('EADDRINUSE') });
@@ -197,14 +201,51 @@ function healthOf(root: string, scan: ScanResult) {
   return readHealth(root, scan.files.map(file => file.path));
 }
 
+type PlanLoad = { ok: true; doc: PlanDoc } | { ok: false };
+
+function planQueryOf(url: URL): string | null {
+  const plan = url.searchParams.get('plan');
+  return plan === null || plan === '' ? null : plan;
+}
+
+async function loadPlan(app: App, url: URL): Promise<PlanLoad | null> {
+  const slug = planQueryOf(url);
+  if (slug === null) return null;
+  if (!PLAN_SLUG_PATTERN.test(slug)) return { ok: false };
+  const doc = await readPlan(app.repoRoot, slug);
+  return doc === undefined ? { ok: false } : { ok: true, doc };
+}
+
+function planFailed(load: PlanLoad | null): boolean {
+  return load !== null && load.ok === false;
+}
+
+function plannedScanOf(scan: ScanResult, load: PlanLoad | null): ScanResult {
+  return load !== null && load.ok === true ? applyPlan(scan, load.doc.edits) : scan;
+}
+
+function sendView(res: ServerResponse, view: GraphView, scan: ScanResult, load: PlanLoad | null): void {
+  if (load !== null && load.ok === true) {
+    sendJson(res, 200, { ...view, stale: staleReasons(scan, load.doc.edits) });
+    return;
+  }
+  sendJson(res, 200, view);
+}
+
 async function serveGraph(app: App, graphs: GraphHolder, res: ServerResponse, url: URL): Promise<void> {
   const scan = await readyScan(app, graphs);
-  const view = graphView(scan, url.searchParams.get('at') ?? '', basename(app.repoRoot), graphFlags(url), healthOf(app.repoRoot, scan));
+  const load = await loadPlan(app, url);
+  if (planFailed(load)) {
+    sendJson(res, 404, NO_SUCH_PLAN);
+    return;
+  }
+  const planned = plannedScanOf(scan, load);
+  const view = graphView(planned, url.searchParams.get('at') ?? '', basename(app.repoRoot), graphFlags(url), healthOf(app.repoRoot, planned));
   if (view === null) {
     sendJson(res, 404, { error: 'no such directory' });
     return;
   }
-  sendJson(res, 200, view);
+  sendView(res, view, scan, load);
 }
 
 function layoutFile(root: string): string {
@@ -273,13 +314,141 @@ function sendDetail(res: ServerResponse, detail: ReturnType<typeof nodeDetail>):
 
 async function serveDetail(app: App, graphs: GraphHolder, res: ServerResponse, url: URL): Promise<void> {
   const scan = await readyScan(app, graphs);
-  sendDetail(res, detailFor(scan, url, basename(app.repoRoot), healthOf(app.repoRoot, scan)));
+  const load = await loadPlan(app, url);
+  if (planFailed(load)) {
+    sendJson(res, 404, NO_SUCH_PLAN);
+    return;
+  }
+  const planned = plannedScanOf(scan, load);
+  sendDetail(res, detailFor(planned, url, basename(app.repoRoot), healthOf(app.repoRoot, planned)));
+}
+
+function pairEnds(url: URL): { from: string; to: string } | null {
+  const from = url.searchParams.get('from');
+  const to = url.searchParams.get('to');
+  return from === null || to === null ? null : { from, to };
+}
+
+async function servePairs(app: App, graphs: GraphHolder, res: ServerResponse, url: URL): Promise<void> {
+  const ends = pairEnds(url);
+  if (ends === null) {
+    sendJson(res, 404, NOT_FOUND);
+    return;
+  }
+  const scan = await readyScan(app, graphs);
+  const load = await loadPlan(app, url);
+  if (planFailed(load)) {
+    sendJson(res, 404, NO_SUCH_PLAN);
+    return;
+  }
+  const planned = plannedScanOf(scan, load);
+  sendJson(res, 200, { pairs: edgePairs(planned, url.searchParams.get('at') ?? '', ends.from, ends.to, graphFlags(url)) });
 }
 
 async function serveRescan(app: App, graphs: GraphHolder, res: ServerResponse): Promise<void> {
   const started = Date.now();
   graphs.scan = await scanFor(app);
   sendJson(res, 200, { files: graphs.scan.files.length, ms: Date.now() - started });
+}
+
+function parseJsonText(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+async function servePlanList(app: App, res: ServerResponse): Promise<void> {
+  sendJson(res, 200, { plans: await listPlans(app.repoRoot) });
+}
+
+async function postPlan(app: App, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const name = planNameFrom(parseJsonText(await readBody(req)));
+  if (name === undefined) {
+    sendJson(res, 400, { error: 'bad name' });
+    return;
+  }
+  const head = await gitHead(app.repoRoot);
+  if (head === undefined) {
+    sendJson(res, 400, { error: 'no commit' });
+    return;
+  }
+  const doc: PlanDoc = {
+    version: 1,
+    name,
+    slug: await freePlanSlug(app.repoRoot, slugOf(name)),
+    createdAt: new Date().toISOString(),
+    baseCommit: head,
+    edits: [],
+    redo: [],
+  };
+  await writePlan(app.repoRoot, doc);
+  sendJson(res, 201, doc);
+}
+
+async function getPlan(app: App, req: IncomingMessage, res: ServerResponse, slug: string): Promise<void> {
+  const doc = await readPlan(app.repoRoot, slug);
+  if (doc === undefined) {
+    sendJson(res, 404, NO_SUCH_PLAN);
+    return;
+  }
+  sendJson(res, 200, doc);
+}
+
+async function putPlan(app: App, req: IncomingMessage, res: ServerResponse, slug: string): Promise<void> {
+  const doc = parsePlan(parseJsonText(await readBody(req)));
+  if (doc === undefined || doc.slug !== slug) {
+    sendJson(res, 400, { error: 'bad plan' });
+    return;
+  }
+  if ((await readPlan(app.repoRoot, slug)) === undefined) {
+    sendJson(res, 404, NO_SUCH_PLAN);
+    return;
+  }
+  await writePlan(app.repoRoot, doc);
+  sendJson(res, 200, doc);
+}
+
+async function deletePlan(app: App, req: IncomingMessage, res: ServerResponse, slug: string): Promise<void> {
+  if (!(await removePlan(app.repoRoot, slug))) {
+    sendJson(res, 404, NO_SUCH_PLAN);
+    return;
+  }
+  sendJson(res, 200, { ok: true });
+}
+
+type PlanVerb = (app: App, req: IncomingMessage, res: ServerResponse, slug: string) => Promise<void>;
+
+const PLAN_DOC_VERBS: Record<string, PlanVerb> = { GET: getPlan, PUT: putPlan, DELETE: deletePlan };
+
+const PLANS_PREFIX = '/api/plans/';
+
+async function servePlanDoc(app: App, req: IncomingMessage, res: ServerResponse, slug: string): Promise<void> {
+  if (!PLAN_SLUG_PATTERN.test(slug)) {
+    sendJson(res, 404, NO_SUCH_PLAN);
+    return;
+  }
+  const handler = PLAN_DOC_VERBS[String(req.method)];
+  if (handler === undefined) {
+    sendJson(res, 404, NOT_FOUND);
+    return;
+  }
+  await handler(app, req, res, slug);
+}
+
+function planSlugSegment(pathname: string): string | null {
+  if (!pathname.startsWith(PLANS_PREFIX)) return null;
+  return pathname.slice(PLANS_PREFIX.length);
+}
+
+async function dispatchMiss(app: App, req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+  const slug = planSlugSegment(url.pathname);
+  if (slug === null || slug.includes('/')) {
+    sendJson(res, 404, NOT_FOUND);
+    return;
+  }
+  await servePlanDoc(app, req, res, slug);
 }
 
 function routesFor(app: App, graphs: GraphHolder): Routes {
@@ -304,6 +473,9 @@ function routesFor(app: App, graphs: GraphHolder): Routes {
   router.put('/api/layout', (req, res) => putLayout(app, req, res));
   router.get('/api/detail', (_req, res, url) => serveDetail(app, graphs, res, url));
   router.post('/api/rescan', (_req, res) => serveRescan(app, graphs, res));
+  router.get('/api/plans', (_req, res) => servePlanList(app, res));
+  router.post('/api/plans', (req, res) => postPlan(app, req, res));
+  router.get('/api/pairs', (_req, res, url) => servePairs(app, graphs, res, url));
   return table;
 }
 
@@ -324,7 +496,7 @@ async function dispatch(app: App, routes: Routes, req: IncomingMessage, res: Ser
   }
   const handler = routeFor(routes, String(req.method), url.pathname);
   if (handler === undefined) {
-    sendJson(res, 404, NOT_FOUND);
+    await dispatchMiss(app, req, res, url);
     return;
   }
   await handler(req, res, url);

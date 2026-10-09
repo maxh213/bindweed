@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { arrowColor, boxCenter, chosenId, countLine, detailId, detailOn, edgeLabel, edgeTitle, filesLabel, headOf, lineOf, parentDir } from './draw.ts';
+import { arrowColor, boxCenter, chosenId, countLine, detailId, detailOn, edgeLabel, edgeTitle, filesLabel, headOf, lineOf, parentDir, plannedColor } from './draw.ts';
 
 describe('edge drawing', () => {
   it('picks the line, the head, the label and the colour from the counts', () => {
@@ -13,6 +13,8 @@ describe('edge drawing', () => {
     expect(countLine(2, 1, 0)).toBe('2 runtime · 1 type-only · 0 extends/implements');
     expect(arrowColor(true)).toBe('#dc2626');
     expect(arrowColor(false)).toBe('#64748b');
+    expect(plannedColor(true)).toBe('#dc2626');
+    expect(plannedColor(false)).toBe('#2563eb');
   });
 
   it('lets an upward arrow replace the cycle tooltip', () => {

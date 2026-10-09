@@ -25,6 +25,7 @@ export type GraphView = {
   crapMax: number;
   coverage: ReportFlag;
   mutation: ReportFlag;
+  stale?: (string | null)[];
 };
 
 type NodeCount = { isFile: boolean; files: number; abstract: boolean; test: boolean };
@@ -342,10 +343,20 @@ function orderOf(scan: ScanResult): WorkspaceOrder {
   };
 }
 
+function plannedRaw(scan: ScanResult, at: string, nodeIds: Set<string>, ws: WorkspaceOrder): RawEdge[] {
+  const out: RawEdge[] = [];
+  for (const edge of scan.planned ?? []) {
+    const ends = endpointsVisible(nodeIdFor(edge.from, at, ws), nodeIdFor(edge.to, at, ws), nodeIds);
+    if (ends !== undefined) out.push({ from: ends[0], to: ends[1], runtime: 0, type: 0, planned: true });
+  }
+  return out;
+}
+
 function assemble(scan: ScanResult, dir: string, rootName: string, nodes: RawNode[], flags: GraphFlags, ws: WorkspaceOrder, health: Health): GraphView {
   const nodeIds = new Set(nodes.map(node => node.id));
   const includeTests = flagOn(flags, 'tests');
-  const placed = placeView(nodes, viewEdges(scan, dir, nodeIds, includeTests, ws));
+  const raw = [...viewEdges(scan, dir, nodeIds, includeTests, ws), ...plannedRaw(scan, dir, nodeIds, ws)].sort(byEndpoints);
+  const placed = placeView(nodes, raw);
   const ext = flagOn(flags, 'external') ? externalEdges(scan, dir, nodeIds, includeTests, ws) : [];
   const index = martinIndex(scan);
   const drawn = withExternals(
@@ -502,4 +513,43 @@ export function nodeDetail(
 ): NodeDetail | null {
   if (typeof id !== 'string') return { ...MISSING_DETAIL, ...hotList(emptyHealth(), undefined) };
   return resolvedDetail(scan, findNode(scan, at, rootName, flags, id, health), at, flags, health);
+}
+
+type PairOut = { pairs: [string, string][]; seen: Set<string> };
+
+function pushPair(out: PairOut, importer: string, imported: string): void {
+  const key = `${importer}\n${imported}`;
+  if (out.seen.has(key)) return;
+  out.seen.add(key);
+  out.pairs.push([importer, imported]);
+}
+
+function pairMatches(edge: ScanEdge, dir: string, from: string, to: string, ws: WorkspaceOrder): boolean {
+  return nodeIdFor(edge.from, dir, ws) === from && nodeIdFor(edge.to, dir, ws) === to;
+}
+
+function filePairs(scan: ScanResult, dir: string, from: string, to: string, includeTests: boolean, ws: WorkspaceOrder, out: PairOut): void {
+  for (const edge of shownEdges(scan, includeTests)) {
+    if (pairMatches(edge, dir, from, to, ws)) pushPair(out, edge.from, edge.to);
+  }
+}
+
+function externalPairs(scan: ScanResult, dir: string, from: string, to: string, includeTests: boolean, ws: WorkspaceOrder, out: PairOut): void {
+  for (const ext of shownExternals(scan, includeTests)) {
+    if (nodeIdFor(ext.from, dir, ws) === from && ext.name === to) pushPair(out, ext.from, ext.name);
+  }
+}
+
+function byPair(a: [string, string], b: [string, string]): number {
+  return byStrings(a[0], b[0]) || byStrings(a[1], b[1]);
+}
+
+export function edgePairs(scan: ScanResult, at: string, from: string, to: string, flags: GraphFlags = CLOSED_FLAGS): [string, string][] {
+  const dir = stripTrailingSlashes(at);
+  const ws = orderOf(scan);
+  const includeTests = flagOn(flags, 'tests');
+  const out: PairOut = { pairs: [], seen: new Set<string>() };
+  filePairs(scan, dir, from, to, includeTests, ws, out);
+  if (flagOn(flags, 'external')) externalPairs(scan, dir, from, to, includeTests, ws, out);
+  return out.pairs.sort(byPair);
 }

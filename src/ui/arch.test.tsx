@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@xyflow/react', async () => {
-  const { createElement: ce, useState } = await import('react');
+  const { createElement: ce, useEffect, useState } = await import('react');
 
   type FakeNode = {
     id: string;
@@ -28,13 +28,19 @@ vi.mock('@xyflow/react', async () => {
     panOnDrag?: boolean;
     zoomOnScroll?: boolean;
     zoomOnDoubleClick?: boolean;
+    connectionMode?: string;
+    connectionRadius?: number;
     onNodeClick?: (event: unknown, node: FakeNode) => void;
     onNodeDoubleClick?: (event: unknown, node: FakeNode) => void;
     onNodeDragStop?: (event: unknown, node: FakeNode) => void;
+    onEdgeClick?: (event: unknown, edge: FakeEdge) => void;
+    onPaneClick?: (event: unknown) => void;
+    onConnect?: (connection: { source: string; target: string }) => void;
   };
 
   let flowMounts = 0;
   let dropAt: { x: number; y: number } | null = null;
+  let lastFlow: FakeFlowProps | null = null;
   const centers: { x: number; y: number }[] = [];
 
   function dropPosition(node: FakeNode): { x: number; y: number } {
@@ -68,24 +74,35 @@ vi.mock('@xyflow/react', async () => {
 
   function fakeEdgeView(props: FakeFlowProps, edge: FakeEdge) {
     const Arrow = props.edgeTypes[edge.type];
-    return ce(Arrow as (props: Record<string, unknown>) => ReactElement | null, {
-      key: edge.id,
-      id: edge.id,
-      source: edge.source,
-      target: edge.target,
-      data: edge.data,
-      sourceX: 0,
-      sourceY: 0,
-      targetX: 0,
-      targetY: 140,
-      sourcePosition: 'bottom',
-      targetPosition: 'top',
-      markerEnd: edge.markerEnd,
-    });
+    return ce(
+      'g',
+      { key: edge.id, onClick: () => props.onEdgeClick?.({}, edge) },
+      ce(Arrow as (props: Record<string, unknown>) => ReactElement | null, {
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        data: edge.data,
+        sourceX: 0,
+        sourceY: 0,
+        targetX: 0,
+        targetY: 140,
+        sourcePosition: 'bottom',
+        targetPosition: 'top',
+        markerEnd: edge.markerEnd,
+      }),
+    );
+  }
+
+  function paneClick(props: FakeFlowProps, event: { target?: unknown; currentTarget?: unknown }): void {
+    if (event.target !== event.currentTarget) return;
+    props.onPaneClick?.(event);
   }
 
   function ReactFlow(props: FakeFlowProps) {
     const [stamp] = useState(() => ++flowMounts);
+    useEffect(() => {
+      lastFlow = props;
+    });
     const probe = fakeEdgeView(props, { id: 'probe', source: '', target: '', type: 'arrow' });
     return ce(
       'div',
@@ -99,6 +116,7 @@ vi.mock('@xyflow/react', async () => {
         'data-zoom-on-scroll': String(props.zoomOnScroll),
         'data-zoom-on-double-click': String(props.zoomOnDoubleClick),
         'data-mount-stamp': String(stamp),
+        onClick: (event: { target?: unknown; currentTarget?: unknown }) => paneClick(props, event),
       },
       props.nodes.map(node => fakeNodeView(props, node)),
       ce('svg', { className: 'fake-edges' }, ...props.edges.map(edge => fakeEdgeView(props, edge)), probe),
@@ -151,6 +169,9 @@ vi.mock('@xyflow/react', async () => {
       dropAt = shift;
     },
     flowCenters: centers,
+    flowConnect: (source: string, target: string) => {
+      lastFlow?.onConnect?.({ source, target });
+    },
   });
 
   return {
@@ -161,6 +182,8 @@ vi.mock('@xyflow/react', async () => {
     Handle: () => null,
     Position: { Top: 'top', Bottom: 'bottom' },
     MarkerType: { ArrowClosed: 'arrowclosed', Arrow: 'arrow' },
+    ConnectionMode: { Loose: 'loose', Strict: 'strict' },
+    EdgeLabelRenderer: (props: { children: ReactElement }) => props.children,
     getBezierPath: () => ['M0,0 L0,140', 0, 70],
   };
 });

@@ -10,6 +10,7 @@ import {
   graphStateOf,
   pageFromLocation,
   panelFromQuery,
+  planFromLocation,
   selectedFromLocation,
   tabFromLocation,
   treeParts,
@@ -142,22 +143,50 @@ describe('tabFromLocation and atFromLocation', () => {
     expect(atFromLocation(fakeLocation('http://127.0.0.1/#at='))).toBe('');
     expect(atFromLocation(fakeLocation('http://127.0.0.1/#at=src/app'))).toBe('src/app');
     expect(atFromLocation(fakeLocation('http://127.0.0.1/#at=src/%C5%BC%C3%B3%C5%82w'))).toBe('src/żółw');
+    expect(atFromLocation(fakeLocation('http://127.0.0.1/#at=src&plan=split-app'))).toBe('src');
+    expect(tabFromLocation(fakeLocation('http://127.0.0.1/#at=src&plan=split-app'))).toBe('arch');
+    expect(atFromLocation(fakeLocation('http://127.0.0.1/#junk&at=src'))).toBe('src');
+    expect(planFromLocation(fakeLocation('http://127.0.0.1/#at=src&junk'))).toBeNull();
   });
 });
 
 describe('pageFromLocation', () => {
   it('maps hashes to page state', () => {
-    expect(pageFromLocation(fakeLocation('http://127.0.0.1/'))).toEqual({ tab: 'files', at: '', selected: null });
+    expect(pageFromLocation(fakeLocation('http://127.0.0.1/'))).toEqual({ tab: 'files', at: '', selected: null, plan: null });
     expect(pageFromLocation(fakeLocation('http://127.0.0.1/#file=src/a.ts'))).toEqual({
       tab: 'files',
       at: '',
       selected: 'src/a.ts',
+      plan: null,
     });
     expect(pageFromLocation(fakeLocation('http://127.0.0.1/#at=src/app'))).toEqual({
       tab: 'arch',
       at: 'src/app',
       selected: null,
+      plan: null,
     });
+    expect(pageFromLocation(fakeLocation('http://127.0.0.1/#at=src&plan=split-app'))).toEqual({
+      tab: 'arch',
+      at: 'src',
+      selected: null,
+      plan: 'split-app',
+    });
+    expect(pageFromLocation(fakeLocation('http://127.0.0.1/#at=&plan=split-app'))).toEqual({
+      tab: 'arch',
+      at: '',
+      selected: null,
+      plan: 'split-app',
+    });
+  });
+});
+
+describe('planFromLocation', () => {
+  it('reads the plan slug from the hash', () => {
+    expect(planFromLocation(fakeLocation('http://127.0.0.1/#at=src&plan=split-app'))).toBe('split-app');
+    expect(planFromLocation(fakeLocation('http://127.0.0.1/#at=src'))).toBeNull();
+    expect(planFromLocation(fakeLocation('http://127.0.0.1/#at=src&plan='))).toBeNull();
+    expect(planFromLocation(fakeLocation('http://127.0.0.1/#file=src/a.ts'))).toBeNull();
+    expect(planFromLocation(fakeLocation('http://127.0.0.1/'))).toBeNull();
   });
 });
 
@@ -172,20 +201,27 @@ function recordingActions(): PageActions & { calls: string[] } {
       const next = update(new Set());
       calls.push(`expanded:${[...next].sort().join(',')}`);
     },
+    setPlan: plan => calls.push(`plan:${String(plan)}`),
   };
 }
 
 describe('applyPage', () => {
   it('applies an architecture page without touching the file selection', () => {
     const actions = recordingActions();
-    applyPage(actions, { tab: 'arch', at: 'src', selected: null });
-    expect(actions.calls).toEqual(['tab:arch', 'at:src']);
+    applyPage(actions, { tab: 'arch', at: 'src', selected: null, plan: null });
+    expect(actions.calls).toEqual(['tab:arch', 'at:src', 'plan:null']);
+  });
+
+  it('applies an architecture page with a plan', () => {
+    const actions = recordingActions();
+    applyPage(actions, { tab: 'arch', at: 'src', selected: null, plan: 'split-app' });
+    expect(actions.calls).toEqual(['tab:arch', 'at:src', 'plan:split-app']);
   });
 
   it('applies a file page and opens its folders', () => {
     const actions = recordingActions();
-    applyPage(actions, { tab: 'files', at: '', selected: 'src/lib/util.ts' });
-    expect(actions.calls).toEqual(['tab:files', 'at:', 'selected:src/lib/util.ts', 'expanded:,src,src/lib']);
+    applyPage(actions, { tab: 'files', at: '', selected: 'src/lib/util.ts', plan: null });
+    expect(actions.calls).toEqual(['tab:files', 'at:', 'plan:null', 'selected:src/lib/util.ts', 'expanded:,src,src/lib']);
   });
 });
 
@@ -222,10 +258,13 @@ describe('writeHistory', () => {
     } as unknown as History;
     writeHistory(historyApi, { kind: 'at', at: 'src/app' });
     writeHistory(historyApi, { kind: 'at', at: '' });
+    writeHistory(historyApi, { kind: 'at', at: 'src', plan: 'split-app' });
+    writeHistory(historyApi, { kind: 'at', at: '', plan: 'split-app' });
+    writeHistory(historyApi, { kind: 'at', at: 'src', plan: null });
     writeHistory(historyApi, { kind: 'file', path: 'src/domain/model.ts', mode: 'push' });
     writeHistory(historyApi, { kind: 'path', pathname: '/layered' });
-    expect(pushed).toEqual(['#at=src/app', '#at=', '#file=src/domain/model.ts', '/layered']);
-    expect(titles).toEqual(['', '', '', '']);
+    expect(pushed).toEqual(['#at=src/app', '#at=', '#at=src&plan=split-app', '#at=&plan=split-app', '#at=src', '#file=src/domain/model.ts', '/layered']);
+    expect(titles).toEqual(['', '', '', '', '', '', '']);
   });
 });
 

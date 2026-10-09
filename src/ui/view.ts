@@ -62,11 +62,17 @@ export function atFromLocation(location: Location): string {
   return encoded === null ? '' : decodeHashPath(encoded);
 }
 
-export type PageState = { tab: Tab; at: string; selected: string | null };
+export function planFromLocation(location: Location): string | null {
+  const encoded = planHashFrom(location);
+  if (encoded === null || encoded === '') return null;
+  return decodeHashPath(encoded);
+}
+
+export type PageState = { tab: Tab; at: string; selected: string | null; plan: string | null };
 
 export function pageFromLocation(location: Location): PageState {
-  if (atHashFrom(location) !== null) return { tab: 'arch', at: atFromLocation(location), selected: null };
-  return { tab: 'files', at: '', selected: selectedFromLocation(location) };
+  if (atHashFrom(location) !== null) return { tab: 'arch', at: atFromLocation(location), selected: null, plan: planFromLocation(location) };
+  return { tab: 'files', at: '', selected: selectedFromLocation(location), plan: null };
 }
 
 export type PageActions = {
@@ -74,6 +80,7 @@ export type PageActions = {
   setAt(at: string): void;
   setSelected(path: string | null): void;
   setExpanded(update: (current: Set<string>) => Set<string>): void;
+  setPlan(plan: string | null): void;
 };
 
 export function openSelection(actions: Pick<PageActions, 'setSelected' | 'setExpanded'>, selected: string): void {
@@ -84,6 +91,7 @@ export function openSelection(actions: Pick<PageActions, 'setSelected' | 'setExp
 export function applyPage(actions: PageActions, page: PageState): void {
   actions.setTab(page.tab);
   actions.setAt(page.at);
+  actions.setPlan(page.plan);
   if (page.selected === null) return;
   openSelection(actions, page.selected);
 }
@@ -99,28 +107,43 @@ const AT_HASH_PREFIX = '#at=';
 
 type HistoryWrite =
   | { kind: 'file'; path: string; mode: 'push' | 'replace' }
-  | { kind: 'at'; at: string }
+  | { kind: 'at'; at: string; plan?: string | null }
   | { kind: 'path'; pathname: string };
 
-function hashValue(hash: string, prefix: string): string | null {
-  if (!hash.startsWith(prefix)) return null;
-  return hash.slice(prefix.length);
+function hashParts(hash: string): Map<string, string> {
+  const parts = new Map<string, string>();
+  if (!hash.startsWith('#')) return parts;
+  for (const piece of hash.slice(1).split('&')) {
+    const eq = piece.indexOf('=');
+    if (eq === -1) continue;
+    parts.set(piece.slice(0, eq), piece.slice(eq + 1));
+  }
+  return parts;
+}
+
+function hashValue(location: Location, key: string): string | null {
+  return hashParts(location.hash).get(key) ?? null;
 }
 
 function fileHashFrom(location: Location): string | null {
-  return hashValue(location.hash, FILE_HASH_PREFIX);
+  return hashValue(location, 'file');
 }
 
 function atHashFrom(location: Location): string | null {
-  return hashValue(location.hash, AT_HASH_PREFIX);
+  return hashValue(location, 'at');
+}
+
+function planHashFrom(location: Location): string | null {
+  return hashValue(location, 'plan');
 }
 
 function fileHash(path: string): string {
   return `${FILE_HASH_PREFIX}${encodeHashPath(path)}`;
 }
 
-function atHash(at: string): string {
-  return `${AT_HASH_PREFIX}${encodeHashPath(at)}`;
+function atHash(at: string, plan?: string | null): string {
+  const base = `${AT_HASH_PREFIX}${encodeHashPath(at)}`;
+  return plan === undefined || plan === null || plan === '' ? base : `${base}&plan=${encodeHashPath(plan)}`;
 }
 
 function pushState(history: History, url: string): void {
@@ -134,7 +157,7 @@ function replaceState(history: History, url: string): void {
 function pushOther(history: History, write: Exclude<HistoryWrite, { kind: 'file' }>): void {
   switch (write.kind) {
     case 'at':
-      pushState(history, atHash(write.at));
+      pushState(history, atHash(write.at, write.plan));
       return;
     case 'path':
       pushState(history, write.pathname);

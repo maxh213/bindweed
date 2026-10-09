@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { graphView, nodeDetail, type GraphFlags, type GraphView, type NodeDetail } from './domain/graph.ts';
+import { edgePairs, graphView, nodeDetail, type GraphFlags, type GraphView, type NodeDetail } from './domain/graph.ts';
 import { emptyHealth, type Health } from './domain/health.ts';
 import { isTestPath, type ScanResult, type WorkspacePackage } from './domain/scan.ts';
 
@@ -672,5 +672,109 @@ describe('health membership', () => {
     const detail = nodeDetail(scan, 'pkg', '', 'repo');
     expect(detail?.kind).toBe('package');
     expect(detail?.hot).toBeUndefined();
+  });
+});
+
+describe('planned edges in the view', () => {
+  const withPlan: ScanResult = { ...LAYERED, planned: [{ from: 'src/infra', to: 'src/app' }] };
+
+  it('draws the added arrow as planned, runs cycle detection on it, and keeps Martin numbers', () => {
+    const planned = view(withPlan, 'src');
+    const added = planned.edges.find(edge => edge.from === 'src/infra' && edge.to === 'src/app');
+    expect(added).toMatchObject({ runtime: 0, type: 0, planned: true, cycle: true, cycleText: 'infra → app → infra' });
+    const back = planned.edges.find(edge => edge.from === 'src/app' && edge.to === 'src/infra');
+    expect(back).toMatchObject({ runtime: 2, type: 0, cycle: true, cycleText: 'app → infra → app' });
+    expect(back?.planned).toBeUndefined();
+    expect(planned.edges.map(edge => `${edge.from}->${edge.to}`)).toEqual([
+      'src/app->src/domain',
+      'src/app->src/infra',
+      'src/infra->src/app',
+      'src/infra->src/domain',
+    ]);
+    const app = planned.nodes.find(node => node.id === 'src/app');
+    const infra = planned.nodes.find(node => node.id === 'src/infra');
+    expect(app).toMatchObject({ cycle: true });
+    expect(infra).toMatchObject({ cycle: true });
+    const plain = view(LAYERED, 'src');
+    expect(planned.nodes.map(node => ({ id: node.id, ca: node.ca, ce: node.ce, i: node.i, a: node.a, d: node.d }))).toEqual(
+      plain.nodes.map(node => ({ id: node.id, ca: node.ca, ce: node.ce, i: node.i, a: node.a, d: node.d })),
+    );
+  });
+
+  it('collapses the planned arrow to self at the root and drops it when drilled', () => {
+    expect(view(withPlan, '').edges).toEqual([]);
+    expect(view(withPlan, 'src/infra').edges).toEqual([]);
+  });
+
+  it('shows the planned arrow between file boxes in a drilled view', () => {
+    const scan: ScanResult = {
+      files: [
+        { path: 'src/app/a.ts', test: false },
+        { path: 'src/app/b.ts', test: false },
+      ],
+      edges: [],
+      externals: [],
+      workspaces: [],
+      planned: [{ from: 'src/app/b.ts', to: 'src/app/a.ts' }],
+    };
+    const drilled = view(scan, 'src/app');
+    expect(drilled.edges).toEqual([{ from: 'src/app/b.ts', to: 'src/app/a.ts', runtime: 0, type: 0, planned: true, cycle: false }]);
+    expect(view(scan, 'src').edges).toEqual([]);
+    const plain = view(LAYERED, 'src');
+    expect(plain.edges.every(edge => edge.planned === undefined)).toBe(true);
+  });
+});
+
+describe('edgePairs', () => {
+  it('lists the file pairs behind an arrow, sorted by importer then imported', () => {
+    expect(edgePairs(LAYERED, 'src', 'src/app', 'src/domain')).toEqual([['src/app/a.ts', 'src/domain/model.ts']]);
+    expect(edgePairs(LAYERED, 'src', 'src/app', 'src/infra')).toEqual([
+      ['src/app/a.ts', 'src/infra/db.ts'],
+      ['src/app/b.ts', 'src/infra/db.ts'],
+    ]);
+  });
+
+  it('dedupes a pair that carries both kinds', () => {
+    const scan = scanOf(
+      ['src/a.ts', 'src/b.ts'],
+      [
+        ['src/a.ts', 'src/b.ts'],
+        ['src/a.ts', 'src/b.ts', 'type'],
+      ],
+    );
+    expect(edgePairs(scan, 'src', 'src/a.ts', 'src/b.ts')).toEqual([['src/a.ts', 'src/b.ts']]);
+    expect(edgePairs(scan, '', 'src', 'src')).toEqual([['src/a.ts', 'src/b.ts']]);
+  });
+
+  it('follows the tests and external flags', () => {
+    const scan: ScanResult = {
+      files: [
+        { path: 'src/app/a.ts', test: false },
+        { path: 'src/app/a.test.ts', test: true },
+        { path: 'src/lib/x.ts', test: false },
+      ],
+      edges: [
+        { from: 'src/app/a.test.ts', to: 'src/lib/x.ts', kind: 'runtime' },
+        { from: 'src/app/a.ts', to: 'src/lib/x.ts', kind: 'runtime' },
+      ],
+      externals: [{ from: 'src/app/a.ts', name: 'react', kind: 'runtime' }],
+      workspaces: [],
+    };
+    expect(edgePairs(scan, 'src', 'src/app', 'src/lib')).toEqual([['src/app/a.ts', 'src/lib/x.ts']]);
+    expect(edgePairs(scan, 'src', 'src/app', 'src/lib', { tests: true, external: false })).toEqual([
+      ['src/app/a.test.ts', 'src/lib/x.ts'],
+      ['src/app/a.ts', 'src/lib/x.ts'],
+    ]);
+    expect(edgePairs(scan, 'src', 'src/app', 'react')).toEqual([]);
+    expect(edgePairs(scan, 'src', 'src/app', 'react', { tests: false, external: true })).toEqual([['src/app/a.ts', 'react']]);
+  });
+
+  it('finds no pairs behind a planned arrow', () => {
+    const withPlan: ScanResult = { ...LAYERED, planned: [{ from: 'src/infra', to: 'src/app' }] };
+    expect(edgePairs(withPlan, 'src', 'src/infra', 'src/app')).toEqual([]);
+  });
+
+  it('matches a file arrow in a drilled view', () => {
+    expect(edgePairs(LAYERED, 'src/app', 'src/app/a.ts', 'src/app/b.ts')).toEqual([['src/app/a.ts', 'src/app/b.ts']]);
   });
 });

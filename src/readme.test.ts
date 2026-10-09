@@ -19,6 +19,7 @@ describe('README routes', () => {
     expect(table).toContain('| `/api/rescan` | live |');
     expect(table).toContain('| `/api/layout` | live |');
     expect(table).toContain('| `/api/detail` | live |');
+    expect(table).toContain('| `/api/plans` | live |');
   });
 
   it('lists every live route and BINDWEED_PORT', () => {
@@ -31,6 +32,7 @@ describe('README routes', () => {
     expect(text).toContain('| `/api/rescan` | live |');
     expect(text).toContain('| `/api/layout` | live |');
     expect(text).toContain('| `/api/detail` | live |');
+    expect(text).toContain('| `/api/plans` | live |');
     expect(text).toContain('BINDWEED_PORT');
   });
 });

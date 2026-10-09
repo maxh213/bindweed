@@ -47,6 +47,10 @@ export function gitToplevel(path: string): Promise<string | undefined> {
   return runGit(['rev-parse', '--show-toplevel'], path).then(out => out.trim(), () => undefined);
 }
 
+export function gitHead(repoRoot: string): Promise<string | undefined> {
+  return runGit(['rev-parse', 'HEAD'], repoRoot).then(out => out.trim(), () => undefined);
+}
+
 export async function listedRegularFiles(repoRoot: string): Promise<string[]> {
   const listing = await runGit(['ls-files', '-z', '--cached', '--others', '--exclude-standard'], repoRoot);
   const kept: string[] = [];
