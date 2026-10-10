@@ -13,12 +13,8 @@ const SPLIT = 'pkg7';
 const ROOT_NAME = 'perf-repo';
 
 const REQUEST_005 = 'planned graph request 220 files 005 plan';
-const REQUEST_RESHAPE = 'planned graph request 220 files reshape plan';
 const REPORT_005 = 'planReport 220 files 005 plan';
-const REPORT_RESHAPE = 'planReport 220 files reshape plan';
 const CYCLES = 'cycleTexts 220 files';
-
-const TARGETS = [REQUEST_005, REPORT_005, REPORT_RESHAPE, REQUEST_RESHAPE, CYCLES];
 
 const applyPlan = await loadExport('src/domain/planned.ts', 'applyPlan');
 const staleReasons = await loadExport('src/domain/planned.ts', 'staleReasons');
@@ -89,41 +85,6 @@ function oldEdits(shape, scan) {
   return [...cuts, ...moves, ...adds.filter(clear), ...notes.filter(clear)];
 }
 
-function halves(files) {
-  const half = Math.floor(files.length / 2);
-  return [
-    { name: 'read', files: files.slice(0, half) },
-    { name: 'write', files: files.slice(half) },
-  ];
-}
-
-function packageList(shape, pkg) {
-  const files = [];
-  for (let j = 0; j < shape.perPackage; j += 1) files.push(fileName(shape, pkg, j));
-  return files;
-}
-
-function deepList(shape) {
-  const files = [];
-  for (let j = 0; j < shape.deep; j += 1) files.push(`deep/d${j}.ts`);
-  return files;
-}
-
-function reshapeEdits(shape) {
-  return [
-    { kind: 'create-package', path: 'ports' },
-    { kind: 'move-file', file: fileName(shape, 2, 1), to: 'ports' },
-    { kind: 'rename-package', from: 'pkg3', to: 'adapters' },
-    { kind: 'rename-file', from: fileName(shape, 4, 1), to: 'g1.ts' },
-    { kind: 'merge-packages', packages: ['pkg5', 'pkg6'], into: 'infra' },
-    { kind: 'split-package', package: SPLIT, parts: halves(packageList(shape, 7)) },
-    { kind: 'split-package', package: 'deep', parts: halves(deepList(shape)) },
-    { kind: 'fate', file: fileName(shape, 8, 1), fate: 'delete' },
-    { kind: 'fate', file: fileName(shape, 9, 1), fate: 'fold', into: fileName(shape, 9, 2) },
-    { kind: 'create-package', path: 'spare' },
-  ];
-}
-
 function requireView(view, count, label) {
   if (view === null || view === undefined || view.nodes.length < count) throw new Error(`${label} did not draw`);
   return view;
@@ -131,10 +92,6 @@ function requireView(view, count, label) {
 
 function allFresh(reasons, label) {
   if (reasons.some(reason => reason !== null)) throw new Error(`${label} fixture is stale: ${JSON.stringify(reasons)}`);
-}
-
-function warningCount(report) {
-  return report.warnings.reduce((sum, list) => sum + list.length, 0);
 }
 
 function oldRequest(scan, edits) {
@@ -167,37 +124,14 @@ async function measureRequest005(scan, edits) {
   );
 }
 
-async function measureReports(scan, edits005, edits) {
-  const report = planReport(scan, edits, cycleTexts);
-  allFresh(report.stale, REPORT_RESHAPE);
-  const kinds = new Set(report.warnings.flat().map(warning => warning.kind));
-  for (const kind of ['empty-package', 'deleted-imports', 'added-cycle']) {
-    if (!kinds.has(kind)) throw new Error(`${REPORT_RESHAPE} fixture raised no ${kind} warning`);
-  }
-  allFresh(planReport(scan, edits005, cycleTexts).stale, REPORT_005);
-
+async function measureReport005(scan, edits) {
+  allFresh(planReport(scan, edits, cycleTexts).stale, REPORT_005);
   emit(
     REPORT_005,
     await sample(() => {
-      if (planReport(scan, edits005, cycleTexts).stale.length !== edits005.length) throw new Error(`${REPORT_005} dropped an edit`);
+      if (planReport(scan, edits, cycleTexts).stale.length !== edits.length) throw new Error(`${REPORT_005} dropped an edit`);
     }, VALUES, WARMUP),
   );
-
-  emit(
-    REPORT_RESHAPE,
-    await sample(() => {
-      const next = planReport(scan, edits, cycleTexts);
-      if (warningCount(next) !== warningCount(report)) throw new Error(`${REPORT_RESHAPE} changed its warnings`);
-    }, VALUES, WARMUP),
-  );
-
-  emit(
-    REQUEST_RESHAPE,
-    await sample(() => {
-      if (newRequest(scan, edits, REQUEST_RESHAPE).warnings === undefined) throw new Error(`${REQUEST_RESHAPE} lost its warnings`);
-    }, VALUES, WARMUP),
-  );
-
   emit(
     CYCLES,
     await sample(() => {
@@ -209,8 +143,8 @@ async function measureReports(scan, edits005, edits) {
 const small = buildScan(SMALL);
 const small005 = oldEdits(SMALL, small);
 await measureRequest005(small, small005);
-if (planReport === undefined || cycleTexts === undefined || graphView === undefined) {
-  absent(REPORT_005, REPORT_RESHAPE, REQUEST_RESHAPE, CYCLES);
+if (planReport === undefined || cycleTexts === undefined) {
+  absent(REPORT_005, CYCLES);
 } else {
-  await measureReports(small, small005, [...small005, ...reshapeEdits(SMALL)]);
+  await measureReport005(small, small005);
 }

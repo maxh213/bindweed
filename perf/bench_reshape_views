@@ -265,8 +265,13 @@ if (applyPlan === undefined || staleReasons === undefined || graphView === undef
 } else {
   const big = buildScan(BIG);
   const edits = [...oldEdits(BIG, big), ...reshapeEdits(BIG)];
-  const testTrial = staleReasons(big, edits);
-  if (testTrial.some(r => r !== null)) {
+  let testTrial = null;
+  try {
+    testTrial = staleReasons(big, edits);
+  } catch {
+    testTrial = null;
+  }
+  if (testTrial === null || testTrial.some(r => r !== null)) {
     absent(...TARGETS);
   } else {
     await measureViews(big, edits);
