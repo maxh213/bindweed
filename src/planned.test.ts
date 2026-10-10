@@ -338,8 +338,9 @@ describe('package edits and file fates in the walk', () => {
         { kind: 'merge-packages', packages: ['src/app', 'src/gone'], into: 'src/x' },
         { kind: 'merge-packages', packages: ['src/app', 'src/infra'], into: 'src/domain' },
         { kind: 'merge-packages', packages: ['src/app', 'src/infra'], into: 'src/domain/model.ts' },
+        { kind: 'merge-packages', packages: ['src/app', 'src/infra'], into: 'src/app/a.ts' },
       ]),
-    ).toEqual(['no such directory src/gone', 'src/domain already exists', 'src/domain/model.ts already exists']);
+    ).toEqual(['no such directory src/gone', 'src/domain already exists', 'src/domain/model.ts already exists', 'src/app/a.ts already exists']);
     const twins: ScanResult = { ...LAYERED, files: [{ path: 'x/a.ts', test: false }, { path: 'y/a.ts', test: false }], edges: [], externals: [] };
     expect(staleReasons(twins, [{ kind: 'merge-packages', packages: ['x', 'y'], into: 'z' }])).toEqual(['z/a.ts already exists']);
     expect(staleReasons(twins, [{ kind: 'merge-packages', packages: ['x', 'y'], into: 'x' }])).toEqual(['x/a.ts already exists']);
@@ -420,6 +421,17 @@ describe('package edits and file fates in the walk', () => {
     expect(pathsOf(partial)).toContain('src/app/read/a.ts');
     expect(pathsOf(partial)).toContain('src/app/b.ts');
     expect(partial.declared).toEqual(['src/app/read', 'src/app/write']);
+    const beside = applyPlan(LAYERED, [{
+      kind: 'split-package',
+      package: 'src/app',
+      parts: [
+        { name: 'read', files: ['src/app/a.ts', 'src/app/a.test.ts', 'src/app/save.ts'] },
+        { name: 'b', files: [] },
+      ],
+    }]);
+    const atApp = graphView(beside, 'src/app', 'layered');
+    expect(atApp?.nodes.find(node => node.id === 'src/app/b')).toMatchObject({ kind: 'package', files: 0 });
+    expect(atApp?.nodes.map(node => node.id)).toContain('src/app/b.ts');
     expect(partial).not.toHaveProperty('hidden');
     const full = applyPlan(LAYERED, [SPLIT_APP]);
     expect(full.hidden).toEqual(['src/app']);

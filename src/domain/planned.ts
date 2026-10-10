@@ -155,9 +155,13 @@ function strayUnder(look: Look, edit: MergeEdit): boolean {
   return look.scan.files.some(file => within(edit.into, file.path) && !listedUnder(edit, file.path));
 }
 
+function intoOccupied(look: Look, edit: MergeEdit): boolean {
+  return look.files.has(edit.into) || strayUnder(look, edit);
+}
+
 function intoStale(look: Look, edit: MergeEdit): string | null {
   if (edit.packages.includes(edit.into)) return null;
-  return strayUnder(look, edit) ? `${edit.into} already exists` : null;
+  return intoOccupied(look, edit) ? `${edit.into} already exists` : null;
 }
 
 function firstRepeat(paths: string[]): string | undefined {

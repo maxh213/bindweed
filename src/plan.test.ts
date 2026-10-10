@@ -164,6 +164,7 @@ describe('package edits and file fates', () => {
       { kind: 'rename-package', from: 'util', to: 'text' },
       { kind: 'rename-file', from: 'src/app/x.ts', to: 'y.ts' },
       { kind: 'merge-packages', packages: ['src/io', 'src/net'], into: 'src/infra' },
+      { kind: 'merge-packages', packages: ['src/infra', 'src/infra2'], into: 'src/core' },
       { kind: 'merge-packages', packages: ['src/app/read', 'src/app/write'], into: 'src/app/read' },
       { kind: 'split-package', package: 'src/app', parts: [{ name: 'read', files: ['src/app/a.ts'] }, { name: 'spare', files: [] }] },
       { kind: 'fate', file: 'src/legacy.ts', fate: 'delete' },

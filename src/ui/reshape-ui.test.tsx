@@ -101,6 +101,8 @@ const BASE = 'http://127.0.0.1';
 const HEAD = 'a'.repeat(40);
 const sheet = process.getBuiltinModule('node:fs').readFileSync(new URL('./app.css', import.meta.url), 'utf8');
 
+let extraFiles: { path: string; test: boolean }[] = [];
+
 const BASE_SCAN = {
   files: [
     { path: 'src/app/a.ts', test: false },
@@ -129,6 +131,11 @@ const BASE_SCAN = {
   ],
   workspaces: [] as { dir: string; name: string }[],
 };
+
+function workspaceScan() {
+  if (extraFiles.length === 0) return BASE_SCAN;
+  return { ...BASE_SCAN, files: [...BASE_SCAN.files, ...extraFiles] };
+}
 
 type Hit = { status: number; body: unknown };
 
@@ -159,7 +166,7 @@ function warned(report: ReturnType<typeof planReport>): { warnings?: unknown } {
 }
 
 function graphFor(url: URL, edits: PlanEdit[]): Hit {
-  const report = planReport(BASE_SCAN, edits, cycleTexts);
+  const report = planReport(workspaceScan(), edits, cycleTexts);
   const view = graphView(report.scan, atOf(url), 'layered', flagsOf(url));
   if (view === null) return { status: 404, body: { error: 'no such directory' } };
   return { status: 200, body: { ...view, stale: report.stale, ...warned(report) } };
@@ -169,12 +176,12 @@ function graphBody(url: URL): Hit {
   const load = loaded(url);
   if (load === false) return { status: 404, body: { error: 'no such plan' } };
   if (load !== null) return graphFor(url, load.edits);
-  return { status: 200, body: graphView(BASE_SCAN, atOf(url), 'layered', flagsOf(url)) };
+  return { status: 200, body: graphView(workspaceScan(), atOf(url), 'layered', flagsOf(url)) };
 }
 
 function plannedScan(url: URL) {
   const load = loaded(url);
-  return applyPlan(BASE_SCAN, load === null || load === false ? [] : load.edits);
+  return applyPlan(workspaceScan(), load === null || load === false ? [] : load.edits);
 }
 
 function detailBody(url: URL): Hit {
@@ -451,6 +458,7 @@ describe('the page reshapes packages and files', () => {
 
   beforeEach(async () => {
     plans.clear();
+    extraFiles = [];
     layout = emptyLayout();
     await seed('Reshape', 'reshape', []);
   });
@@ -971,6 +979,53 @@ describe('the page reshapes packages and files', () => {
     await click(button('Split'));
     await waitFor(() => expect(lastSentence()).toBe(SPLIT_SENTENCE));
     expect(storedEdits()).toHaveLength(2);
+  });
+
+  it('lets a split name a grouped ancestor and still refuses the declared package under it', async () => {
+    extraFiles = [{ path: 'src/infra/deep/nested/x.ts', test: false }];
+    await seed('Reshape', 'reshape', [
+      { kind: 'create-package', path: 'src/infra/de' },
+      { kind: 'create-package', path: 'src/infra/deep/empty' },
+      { kind: 'move-file', file: 'src/infra/deep/nested/x.ts', to: 'src/domain' },
+    ]);
+    await showApp('#at=src/infra&plan=reshape');
+    await waitFor(() => expect(boxOf('src/infra/deep').textContent).toContain('0 files'));
+    await menu('src/infra/deep', 'Split');
+    await waitFor(() => expect(dialogLabel()).toBe('Split package'));
+    await typeInto('Part 1', 'empty');
+    await typeInto('Part 2', 'other');
+    await click(button('Split'));
+    expect(dialogError()).toBe('src/infra/deep/empty already exists');
+    expect(sentences()).toEqual([
+      'Create package src/infra/de',
+      'Create package src/infra/deep/empty',
+      'Move src/infra/deep/nested/x.ts to src/domain',
+    ]);
+    await click(button('Cancel'));
+    await crumb('src');
+    await waitFor(() => expect(boxIds()).toContain('src/infra'));
+    await menu('src/infra', 'Split');
+    await waitFor(() => expect(dialogLabel()).toBe('Split package'));
+    await typeInto('Part 1', 'de');
+    await typeInto('Part 2', 'other');
+    await choose('db.ts', 'other');
+    await choose('repo.ts', 'other');
+    await click(button('Split'));
+    expect(dialogError()).toBe('src/infra/de already exists');
+    expect(sentences()).toHaveLength(3);
+    await typeInto('Part 1', 'deep');
+    await click(button('Split'));
+    const sentence = 'Split src/infra into src/infra/deep (0 files) and src/infra/other (2 files)';
+    await waitFor(() => expect(lastSentence()).toBe(sentence));
+    expect(entryRow(sentence).dataset.stale).toBeUndefined();
+    expect(storedEdits().at(-1)).toEqual({
+      kind: 'split-package',
+      package: 'src/infra',
+      parts: [
+        { name: 'deep', files: [] },
+        { name: 'other', files: ['src/infra/db.ts', 'src/infra/repo.ts'] },
+      ],
+    });
   });
 
   it('The cycle badge stays at the root and inside app', async () => {
