@@ -1,0 +1,200 @@
+#!/usr/bin/env node
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import {
+  VALUES,
+  WARMUP,
+  absent,
+  cleanup,
+  emit,
+  fixtureUi,
+  gitFixture,
+  hit,
+  keepAliveAgent,
+  loadExport,
+  loadModule,
+  sample,
+} from './harness.mjs';
+
+const HTTP_PACKAGES = 8;
+const HTTP_PER_PACKAGE = 50;
+
+const HTTP_MOVES = ['GET /api/graph?plan=moves 400 files', 'GET /api/graph?at=src&plan=moves 400 files'];
+const HTTP_RESHAPE = [
+  'GET /api/graph?plan=reshape 400 files',
+  'GET /api/graph?at=src&plan=reshape 400 files',
+  'GET /api/detail?plan=reshape 400 files',
+  'GET /api/pairs?plan=reshape 400 files',
+  'PUT /api/plans/reshape',
+];
+
+function httpSource(pkg, index) {
+  const lines = [];
+  if (index < HTTP_PER_PACKAGE - 1) {
+    lines.push(`import { a } from './f${pkg * HTTP_PER_PACKAGE + index + 1}';`);
+  }
+  if (pkg < HTTP_PACKAGES - 1) {
+    const targetIndex = pkg === 5 && index === 0 ? 0 : index;
+    lines.push(`import { b } from '../p${pkg + 1}/f${(pkg + 1) * HTTP_PER_PACKAGE + targetIndex}';`);
+  }
+  lines.push('export const a = 1;', 'export const b = 1;');
+  return `${lines.join('\n')}\n`;
+}
+
+function httpFile(pkg, index) {
+  return `src/p${pkg}/f${pkg * HTTP_PER_PACKAGE + index}.ts`;
+}
+
+async function httpRepo() {
+  const root = await mkdtemp(join(tmpdir(), 'bw-perf-reshape-http-'));
+  const writes = [];
+  for (let i = 0; i < HTTP_PACKAGES; i += 1) {
+    for (let j = 0; j < HTTP_PER_PACKAGE; j += 1) {
+      const path = join(root, ...httpFile(i, j).split('/'));
+      writes.push(mkdir(dirname(path), { recursive: true }).then(() => writeFile(path, httpSource(i, j))));
+    }
+  }
+  await Promise.all(writes);
+  await writeFile(join(root, 'README.md'), '# reshape\n');
+  await gitFixture(root);
+  return root;
+}
+
+function halves(files) {
+  const half = Math.floor(files.length / 2);
+  return [
+    { name: 'read', files: files.slice(0, half) },
+    { name: 'write', files: files.slice(half) },
+  ];
+}
+
+function firstEdgeFrom(view, id) {
+  const edge = view.edges.find(item => item.from === id && view.nodes.some(node => node.id === item.to));
+  if (edge === undefined) throw new Error(`no arrow from ${id}`);
+  return edge.to;
+}
+
+function httpMoves() {
+  const edits = [];
+  for (let j = 1; j <= 5; j += 1) edits.push({ kind: 'move-file', file: httpFile(0, j), to: 'src/p1' });
+  edits.push({ kind: 'add-edge', from: 'src/p2', to: 'src/p6' });
+  edits.push({ kind: 'note', target: { node: 'src/p2' }, text: 'seam' });
+  return edits;
+}
+
+function httpReshape() {
+  const p3 = [];
+  for (let j = 0; j < HTTP_PER_PACKAGE; j += 1) p3.push(httpFile(3, j));
+  return [
+    { kind: 'create-package', path: 'src/ports' },
+    { kind: 'move-file', file: httpFile(0, 0), to: 'src/ports' },
+    { kind: 'rename-package', from: 'src/p1', to: 'src/adapters' },
+    { kind: 'rename-file', from: httpFile(2, 0), to: 'g100.ts' },
+    { kind: 'split-package', package: 'src/p3', parts: halves(p3) },
+    { kind: 'merge-packages', packages: ['src/p4', 'src/p5'], into: 'src/infra' },
+    { kind: 'fate', file: httpFile(6, 0), fate: 'delete' },
+    { kind: 'fate', file: httpFile(7, 0), fate: 'fold', into: httpFile(7, 1) },
+    { kind: 'create-package', path: 'src/spare' },
+  ];
+}
+
+function readJson(res) {
+  return JSON.parse(res.body.toString('utf8'));
+}
+
+async function storePlan(call, name, edits) {
+  const created = await call('POST', '/api/plans', JSON.stringify({ name }));
+  if (created.status !== 201) throw new Error(`POST /api/plans ${name} -> ${created.status} ${created.body.toString('utf8')}`);
+  const doc = { ...readJson(created), edits, redo: [] };
+  const body = JSON.stringify(doc);
+  const stored = await call('PUT', `/api/plans/${doc.slug}`, body);
+  return { slug: doc.slug, body, ok: stored.status === 200 };
+}
+
+function getter(call, label, path, check = () => true) {
+  return async () => {
+    const res = await call('GET', path);
+    if (res.status !== 200 || !check(res)) throw new Error(`${label} -> ${res.status} ${res.body.toString('utf8').slice(0, 200)}`);
+  };
+}
+
+async function measureMoves(call) {
+  const moves = await storePlan(call, 'Moves', httpMoves());
+  if (!moves.ok) throw new Error('PUT /api/plans/moves refused the 005 plan');
+  const freshCheck = res => readJson(res).stale.every(reason => reason === null);
+  const graph = getter(call, HTTP_MOVES[0], `/api/graph?plan=${moves.slug}`, freshCheck);
+  const graphAt = getter(call, HTTP_MOVES[1], `/api/graph?at=src&plan=${moves.slug}`, freshCheck);
+  await graph();
+  await graphAt();
+  emit(HTTP_MOVES[0], await sample(graph, VALUES, WARMUP));
+  emit(HTTP_MOVES[1], await sample(graphAt, VALUES, WARMUP));
+}
+
+async function measureReshapeHttp(call) {
+  const reshape = await storePlan(call, 'Reshape', httpReshape());
+  if (!reshape.ok) {
+    absent(...HTTP_RESHAPE);
+    return;
+  }
+  const warnedCheck = res => {
+    const body = readJson(res);
+    return body.stale.every(reason => reason === null) && Array.isArray(body.warnings);
+  };
+  const graph = getter(call, HTTP_RESHAPE[0], `/api/graph?plan=${reshape.slug}`, warnedCheck);
+  const graphAt = getter(call, HTTP_RESHAPE[1], `/api/graph?at=src&plan=${reshape.slug}`, warnedCheck);
+  await graph();
+  await graphAt();
+  const atSrc = readJson(await call('GET', `/api/graph?at=src&plan=${reshape.slug}`));
+  for (const id of ['src/infra', 'src/adapters', 'src/ports', 'src/spare', 'src/p3/read']) {
+    if (!atSrc.nodes.some(node => node.id === id)) throw new Error(`${HTTP_RESHAPE[1]} did not draw ${id}`);
+  }
+  const pairTo = firstEdgeFrom(atSrc, 'src/infra');
+  const detail = getter(call, HTTP_RESHAPE[2], `/api/detail?id=src/infra&at=src&plan=${reshape.slug}`);
+  const pairs = getter(call, HTTP_RESHAPE[3], `/api/pairs?from=src/infra&to=${pairTo}&at=src&plan=${reshape.slug}`, res => readJson(res).pairs.length > 0);
+  async function put() {
+    const res = await call('PUT', `/api/plans/${reshape.slug}`, reshape.body);
+    if (res.status !== 200) throw new Error(`${HTTP_RESHAPE[4]} -> ${res.status}`);
+  }
+  emit(HTTP_RESHAPE[0], await sample(graph, VALUES, WARMUP));
+  emit(HTTP_RESHAPE[1], await sample(graphAt, VALUES, WARMUP));
+  emit(HTTP_RESHAPE[2], await sample(detail, VALUES, WARMUP));
+  emit(HTTP_RESHAPE[3], await sample(pairs, VALUES, WARMUP));
+  emit(HTTP_RESHAPE[4], await sample(put, VALUES, WARMUP));
+}
+
+async function measureHttp() {
+  const serve = await loadModule('src/serve.ts');
+  if (serve === undefined || typeof serve.bindApp !== 'function') {
+    absent(...HTTP_MOVES, ...HTTP_RESHAPE);
+    return;
+  }
+  const prepareBindweed = await loadExport('src/repo.ts', 'prepareBindweed');
+  const repo = await httpRepo();
+  const ui = await fixtureUi();
+  const agent = keepAliveAgent();
+  let server;
+  try {
+    if (prepareBindweed !== undefined) await prepareBindweed(repo);
+    const bound = await serve.bindApp({ repoRoot: repo, uiDir: ui }, { mode: 'fixed', port: 0 });
+    if ('error' in bound) throw new Error(`bindApp failed: ${JSON.stringify(bound.error)}`);
+    server = bound.server;
+    const addr = server.address();
+    if (addr === null || typeof addr === 'string') throw new Error('no port');
+    const auth = { Authorization: `Bearer ${bound.token}` };
+    const call = (method, path, body = null) => hit(agent, addr.port, method, path, auth, body);
+    const probe = await call('GET', '/api/plans');
+    if (probe.status !== 200) {
+      absent(...HTTP_MOVES, ...HTTP_RESHAPE);
+      return;
+    }
+    await measureMoves(call);
+    await measureReshapeHttp(call);
+  } finally {
+    agent.destroy();
+    if (server) await new Promise(resolve => server.close(() => resolve()));
+    await cleanup(repo, ui);
+  }
+}
+
+await measureHttp();

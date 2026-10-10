@@ -1,0 +1,176 @@
+#!/usr/bin/env node
+import {
+  VALUES,
+  WARMUP,
+  absent,
+  emit,
+  loadModule,
+  sample,
+} from './harness.mjs';
+
+const BIG = { packages: 20, perPackage: 200, deep: 100 };
+const SPLIT = 'pkg7';
+const ROOT_NAME = 'perf-repo';
+
+const PARSE = 'parsePlan 50 reshape edits';
+const DIALOG = 'reshape dialog rules 200 files';
+const FETCH = 'fetchGraph planned with warnings 500 nodes';
+
+const CREATED_AT = '2026-10-09T12:00:00.000Z';
+const COMMIT = 'ab'.repeat(20);
+
+const planMod = await loadModule('src/domain/plan.ts');
+const reshapeMod = await loadModule('src/ui/reshape.ts');
+const client = await loadModule('src/ui/client.ts');
+
+function hasFn(mod, name) {
+  return mod !== undefined && typeof mod[name] === 'function';
+}
+
+function fileName(shape, pkg, index) {
+  return `pkg${pkg}/f${pkg * shape.perPackage + index}.ts`;
+}
+
+function packageList(shape, pkg) {
+  const files = [];
+  for (let j = 0; j < shape.perPackage; j += 1) files.push(fileName(shape, pkg, j));
+  return files;
+}
+
+function deepList(shape) {
+  const files = [];
+  for (let j = 0; j < shape.deep; j += 1) files.push(`deep/d${j}.ts`);
+  return files;
+}
+
+function halves(files) {
+  const half = Math.floor(files.length / 2);
+  return [
+    { name: 'read', files: files.slice(0, half) },
+    { name: 'write', files: files.slice(half) },
+  ];
+}
+
+function reshapeEdits(shape) {
+  return [
+    { kind: 'create-package', path: 'ports' },
+    { kind: 'move-file', file: fileName(shape, 2, 1), to: 'ports' },
+    { kind: 'rename-package', from: 'pkg3', to: 'adapters' },
+    { kind: 'rename-file', from: fileName(shape, 4, 1), to: 'g1.ts' },
+    { kind: 'merge-packages', packages: ['pkg5', 'pkg6'], into: 'infra' },
+    { kind: 'split-package', package: SPLIT, parts: halves(packageList(shape, 7)) },
+    { kind: 'split-package', package: 'deep', parts: halves(deepList(shape)) },
+    { kind: 'fate', file: fileName(shape, 8, 1), fate: 'delete' },
+    { kind: 'fate', file: fileName(shape, 9, 1), fate: 'fold', into: fileName(shape, 9, 2) },
+    { kind: 'create-package', path: 'spare' },
+  ];
+}
+
+function planDocument(slug, name, edits) {
+  return { version: 1, name, slug, createdAt: CREATED_AT, baseCommit: COMMIT, edits, redo: [] };
+}
+
+async function measureParse(edits) {
+  if (!hasFn(planMod, 'parsePlan') || !hasFn(planMod, 'sentenceOf')) {
+    absent(PARSE);
+    return;
+  }
+  const raw = planDocument('reshape', 'Reshape', edits);
+  const trial = planMod.parsePlan(raw);
+  if (trial === undefined || trial.edits.length !== edits.length) {
+    absent(PARSE);
+    return;
+  }
+  emit(
+    PARSE,
+    await sample(() => {
+      const parsed = planMod.parsePlan(raw);
+      if (parsed === undefined || parsed.edits.length !== edits.length) throw new Error(`${PARSE} rejected the document`);
+      let text = 0;
+      for (const edit of parsed.edits) text += planMod.sentenceOf(edit).length;
+      if (text === 0) throw new Error(`${PARSE} sentence`);
+    }, VALUES, WARMUP),
+  );
+}
+
+async function measureDialog() {
+  if (!hasFn(reshapeMod, 'nameEdit') || !hasFn(reshapeMod, 'splitEdit') || !hasFn(reshapeMod, 'splitRows')) {
+    absent(DIALOG);
+    return;
+  }
+  const files = packageList(BIG, 7);
+  const taken = new Set(files);
+  for (let i = 0; i < BIG.packages; i += 1) taken.add(`pkg${i}`);
+  const assigned = {};
+  files.forEach((file, index) => {
+    assigned[file] = index < BIG.perPackage / 2 ? 'read' : 'write';
+  });
+  const scene = { at: '', taken, selected: [{ id: 'pkg5', name: 'pkg5' }, { id: 'pkg6', name: 'pkg6' }] };
+  const form = { pkg: 'pkg7', names: ['read', 'write', ''], files, assigned, taken: new Set(taken) };
+  emit(
+    DIALOG,
+    await sample(() => {
+      const outcomes = [
+        reshapeMod.nameEdit({ mode: 'create' }, 'ports', scene),
+        reshapeMod.nameEdit({ mode: 'rename', id: 'pkg3', kind: 'package' }, 'adapters', scene),
+        reshapeMod.nameEdit({ mode: 'rename', id: fileName(BIG, 4, 0), kind: 'file' }, 'g800', scene),
+        reshapeMod.nameEdit({ mode: 'merge' }, 'infra', scene),
+        reshapeMod.splitEdit(form),
+      ];
+      if (outcomes.some(outcome => !('edit' in outcome) || outcome.edit === null)) {
+        throw new Error(`${DIALOG} refused: ${JSON.stringify(outcomes.map(o => o.problem))}`);
+      }
+      if (reshapeMod.splitRows('pkg7', files).length !== files.length) throw new Error(`${DIALOG} dropped a row`);
+    }, VALUES, WARMUP),
+  );
+}
+
+function warnedGraphBody() {
+  const nodes = [];
+  const edges = [];
+  for (let i = 0; i < 500; i += 1) {
+    const node = { id: `pkg${i}/f${i}.ts`, kind: 'file', name: `f${i}.ts`, path: `pkg${i}/f${i}.ts`, row: 0, order: i, cycle: false };
+    nodes.push(i % 10 === 0 ? { ...node, fate: 'delete' } : node);
+    if (i === 0) continue;
+    const edge = { from: `pkg${i - 1}/f${i - 1}.ts`, to: `pkg${i}/f${i}.ts`, runtime: 1, type: 0, cycle: i % 17 === 0 };
+    edges.push(i % 5 === 0 ? { ...edge, planned: true } : edge);
+  }
+  const stale = [];
+  const warnings = [];
+  for (let i = 0; i < 50; i += 1) {
+    stale.push(null);
+    const importers = [];
+    for (let j = 0; j < 20; j += 1) importers.push(`pkg${j}/f${j}.ts`);
+    if (i % 3 === 0) warnings.push([{ kind: 'deleted-imports', file: `pkg${i}/f${i}.ts`, importers }]);
+    else if (i % 3 === 1) warnings.push([{ kind: 'empty-package', path: `pkg${i}/part` }]);
+    else warnings.push([{ kind: 'added-cycle', cycle: `pkg${i} → pkg${i + 1} → pkg${i}` }]);
+  }
+  return { at: 'pkg0', crumbs: [{ name: ROOT_NAME, at: '' }], nodes, edges, crapMax: 4, coverage: 'off', mutation: 'off', stale, warnings };
+}
+
+async function measureFetch() {
+  if (!hasFn(client, 'fetchGraph')) {
+    absent(FETCH);
+    return;
+  }
+  const body = warnedGraphBody();
+  const fetcher = async () => ({ ok: true, json: async () => body });
+  const trial = await client.fetchGraph('token', 'pkg0', fetcher, { plan: 'reshape' });
+  if (trial === null || typeof trial !== 'object' || 'error' in trial) {
+    absent(FETCH);
+    return;
+  }
+  const warned = trial.warnings !== undefined;
+  emit(
+    FETCH,
+    await sample(async () => {
+      const parsed = await client.fetchGraph('token', 'pkg0', fetcher, { plan: 'reshape' });
+      if ('error' in parsed || parsed.nodes.length !== 500) throw new Error(`${FETCH} rejected the body`);
+      if (warned && parsed.warnings.length !== 50) throw new Error(`${FETCH} dropped a warning`);
+    }, VALUES, WARMUP),
+  );
+}
+
+await measureParse(reshapeEdits(BIG));
+await measureDialog();
+await measureFetch();
