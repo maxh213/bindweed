@@ -970,6 +970,27 @@ describe('the page reshapes packages and files', () => {
     await waitFor(() => expect(boxOf('src/ports').textContent).toContain('5 files'));
   });
 
+  it('lists a nested test file when splitting a package', async () => {
+    extraFiles = [{ path: 'src/app/sub/a.test.ts', test: true }];
+    await showApp('#at=src&plan=reshape');
+    await waitFor(() => expect(boxIds()).toContain('src/app'));
+    await menu('src/app', 'Split');
+    await waitFor(() => expect(dialogLabel()).toBe('Split package'));
+    expect(selects().map(item => item.getAttribute('aria-label'))).toEqual(['a.test.ts', 'a.ts', 'b.ts', 'save.ts', 'sub/a.test.ts']);
+  });
+
+  it('stores nothing when a file is renamed to the same name', async () => {
+    await showApp('#at=src/app&plan=reshape');
+    await waitFor(() => expect(boxIds()).toContain('src/app/save.ts'));
+    await menu('src/app/save.ts', 'Rename');
+    await named('save', 'Rename');
+    await waitFor(() => expect(document.querySelector('dialog')).toBeNull());
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(notice()).toBe('');
+    expect(sentences()).toEqual([]);
+    expect(storedEdits()).toEqual([]);
+  });
+
   it('refuses a split part that names a declared empty package', async () => {
     await seed('Reshape', 'reshape', [{ kind: 'create-package', path: 'src/app/spare' }]);
     await showApp('#at=src&plan=reshape');

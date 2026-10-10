@@ -300,8 +300,15 @@ function withoutFile(state: WalkState, file: string): WalkState {
   return { ...state, scan: { ...state.scan, files: state.scan.files.filter(item => item.path !== file) }, marks: { ...state.marks, deleted } };
 }
 
+function keptPair(edge: { from: string; to: string }): boolean {
+  return edge.from !== edge.to;
+}
+
 function withoutSelfEdges(state: WalkState): WalkState {
-  return { ...state, scan: { ...state.scan, edges: state.scan.edges.filter(edge => edge.from !== edge.to) } };
+  const edges = state.scan.edges.filter(keptPair);
+  const planned = state.scan.planned;
+  const scan = planned === undefined ? { ...state.scan, edges } : { ...state.scan, edges, planned: planned.filter(keptPair) };
+  return { ...state, scan };
 }
 
 function applyFold(state: WalkState, file: string, into: string): WalkState {

@@ -380,6 +380,15 @@ describe('package edits and file fates in the walk', () => {
     expect(edgesOf(planned)).toEqual(['src/core/b.ts>src/core/deep/a.ts']);
   });
 
+  it('refuses a merge into a directory whose only outside file is nested', () => {
+    const scan: ScanResult = { ...LAYERED, files: [...LAYERED.files, { path: 'src/probe/deep/x.ts', test: false }] };
+    const edit: PlanEdit = { kind: 'merge-packages', packages: ['src/app', 'src/domain'], into: 'src/probe' };
+    expect(staleReasons(scan, [edit])).toEqual(['src/probe already exists']);
+    const planned = applyPlan(scan, [edit]);
+    expect(pathsOf(planned)).toContain('src/app/a.ts');
+    expect(pathsOf(planned)).toContain('src/probe/deep/x.ts');
+  });
+
   it('leaves a prefix sibling unmoved and refuses a merge into that sibling', () => {
     const beside: ScanResult = { ...LAYERED, files: [...LAYERED.files, { path: 'src/infra2/x.ts', test: false }] };
     const merged = applyPlan(beside, [{ kind: 'merge-packages', packages: ['src/infra', 'src/app'], into: 'src/core' }]);
@@ -421,6 +430,23 @@ describe('package edits and file fates in the walk', () => {
     ).toEqual(['no such directory src/gone', 'no such file src/infra/db.ts', 'no such file src/app/gone.ts', 'src/app/a.ts already exists']);
     const apple: ScanResult = { ...LAYERED, files: [...LAYERED.files, { path: 'src/apple/x.ts', test: false }] };
     expect(staleReasons(apple, [{ kind: 'split-package', package: 'src/app', parts: parts(['src/apple/x.ts']) }])).toEqual(['no such file src/apple/x.ts']);
+  });
+
+  it('refuses a split part that is only an ancestor of a file', () => {
+    const scan: ScanResult = { ...LAYERED, files: [...LAYERED.files, { path: 'src/app/deep/x.ts', test: false }] };
+    const edit: PlanEdit = {
+      kind: 'split-package',
+      package: 'src/app',
+      parts: [
+        { name: 'deep', files: [] },
+        { name: 'other', files: ['src/app/deep/x.ts'] },
+      ],
+    };
+    expect(staleReasons(scan, [edit])).toEqual(['src/app/deep already exists']);
+    const planned = applyPlan(scan, [edit]);
+    expect(pathsOf(planned)).toContain('src/app/deep/x.ts');
+    expect(pathsOf(planned)).not.toContain('src/app/other/deep/x.ts');
+    expect(planned).not.toHaveProperty('declared');
   });
 
   it('splits listed files into parts, leaves the rest, declares the parts and hides the emptied package', () => {
@@ -548,6 +574,17 @@ describe('package edits and file fates in the walk', () => {
       { kind: 'fate', file: 'src/infra/repo.ts', fate: 'fold', into: 'src/infra/db.ts' },
     ]);
     expect(planned.planned).toEqual([{ from: 'src/infra/db.ts', to: 'src/app' }]);
+  });
+
+  it('drops a planned edge whose ends become the same file', () => {
+    const edits: PlanEdit[] = [
+      { kind: 'add-edge', from: 'src/domain/shape.ts', to: 'src/infra/repo.ts' },
+      { kind: 'fate', file: 'src/infra/repo.ts', fate: 'fold', into: 'src/domain/shape.ts' },
+    ];
+    expect(staleReasons(LAYERED, edits)).toEqual([null, null]);
+    const planned = applyPlan(LAYERED, edits);
+    expect(planned.planned).toEqual([]);
+    expect(edgesOf(planned)).not.toContain('src/domain/shape.ts>src/domain/shape.ts');
   });
 
   it('marks a deleted file that follows a move, and folds a file into another', () => {
