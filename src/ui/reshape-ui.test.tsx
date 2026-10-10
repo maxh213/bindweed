@@ -835,6 +835,9 @@ describe('the page reshapes packages and files', () => {
     await waitFor(() => expect(sentences()).toEqual(['Fold src/infra/repo.ts into src/infra/db.ts']));
     expect(storedEdits()).toEqual([{ kind: 'fate', file: 'src/infra/repo.ts', fate: 'fold', into: 'src/infra/db.ts' }]);
     await waitFor(() => expect(boxIds()).not.toContain('src/infra/repo.ts'));
+    await click(boxOf('src/infra/db.ts'));
+    expect(storedEdits()).toEqual([{ kind: 'fate', file: 'src/infra/repo.ts', fate: 'fold', into: 'src/infra/db.ts' }]);
+    expect(sentences()).toEqual(['Fold src/infra/repo.ts into src/infra/db.ts']);
   });
 
   it('creates a package in a view the plan has emptied', async () => {

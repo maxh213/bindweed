@@ -429,8 +429,14 @@ describe('planReport', () => {
     ]);
   });
 
+  it('warns about an empty package on the edit that created it, not the first edit', () => {
+    const report = planReport(LAYERED, [MOVE_SAVE, CREATE_PORTS], noCycles);
+    expect(report.warnings).toEqual([[], [{ kind: 'empty-package', path: 'src/ports' }]]);
+  });
+
   it('warns about a deleted file that is still imported, with its distinct importers sorted', () => {
-    const report = planReport(LAYERED, [{ kind: 'fate', file: 'src/app/a.ts', fate: 'delete' }, { kind: 'fate', file: 'src/app/save.ts', fate: 'delete' }], noCycles);
+    const twice: ScanResult = { ...LAYERED, edges: [...LAYERED.edges, { from: 'src/app/b.ts', to: 'src/app/a.ts', kind: 'type' }] };
+    const report = planReport(twice, [{ kind: 'fate', file: 'src/app/a.ts', fate: 'delete' }, { kind: 'fate', file: 'src/app/save.ts', fate: 'delete' }], noCycles);
     expect(report.warnings).toEqual([[{ kind: 'deleted-imports', file: 'src/app/a.ts', importers: ['src/app/a.test.ts', 'src/app/b.ts'] }], []]);
   });
 
