@@ -1107,4 +1107,45 @@ describe('the page reshapes packages and files', () => {
     expect(warningsOf('src/infra should use src/app')).toEqual([line]);
     expect(document.querySelector('aside[aria-label="changes"]')?.textContent).not.toContain('a.ts → b.ts → a.ts');
   });
+
+  it('refuses create and rename against test files with tests off', async () => {
+    await showApp('#at=src/app&plan=reshape');
+    await waitFor(() => expect(boxIds()).toEqual(['src/app/a.ts', 'src/app/b.ts', 'src/app/save.ts']));
+    await click(button('Canvas'));
+    await click(button('New package'));
+    await named('a.test.ts', 'Create');
+    expect(dialogError()).toBe('src/app/a.test.ts already exists');
+    expect(storedEdits()).toHaveLength(0);
+    await click(button('Cancel'));
+    await menu('src/app/save.ts', 'Rename');
+    await named('a.test.ts', 'Rename');
+    expect(dialogError()).toBe('src/app/a.test.ts already exists');
+    expect(storedEdits()).toHaveLength(0);
+  });
+
+  it('refuses a merge into a test-only directory with tests off', async () => {
+    extraFiles = [{ path: 'src/probe/only.test.ts', test: true }];
+    await showApp('#at=src&plan=reshape');
+    await waitFor(() => expect(boxIds()).toEqual(['src/app', 'src/infra', 'src/domain']));
+    await click(boxOf('src/app'));
+    await click(boxOf('src/infra'), true);
+    await click(button('Menu', boxOf('src/infra')));
+    await click(button('Merge', boxOf('src/infra')));
+    await named('probe', 'Merge');
+    expect(dialogError()).toBe('src/probe already exists');
+    expect(storedEdits()).toHaveLength(0);
+  });
+
+  it('refuses a package name taken in planned while now is shown', async () => {
+    await seed('Reshape', 'reshape', [{ kind: 'create-package', path: 'src/ports' }]);
+    await showApp('#at=src&plan=reshape');
+    await waitFor(() => expect(boxIds()).toContain('src/ports'));
+    await chooseShown('Now');
+    await waitFor(() => expect(boxIds()).not.toContain('src/ports'));
+    await click(button('Canvas'));
+    await click(button('New package'));
+    await named('ports', 'Create');
+    expect(dialogError()).toBe('src/ports already exists');
+    expect(storedEdits()).toEqual([{ kind: 'create-package', path: 'src/ports' }]);
+  });
 });

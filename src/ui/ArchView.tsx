@@ -252,6 +252,11 @@ function ArchPane(props: Readonly<ArchViewProps & { slug: string | null }>) {
     queryFn: () => fetchGraph(props.token, props.at, props.fetcher, { ...settings, plan: slug }),
     enabled: plannedOn(layoutQuery.data, slug),
   });
+  const plannedTestsQuery = useQuery({
+    queryKey: ['graph', props.token, props.at, true, false, slug] as const,
+    queryFn: () => fetchGraph(props.token, props.at, props.fetcher, { tests: true, external: false, plan: slug }),
+    enabled: plannedOn(layoutQuery.data, slug),
+  });
   const [shown, setShown] = useState<Shown>('planned');
   const [picked, setPicked] = useState<string | null>(null);
   const [armed, setArmed] = useState<string | null>(null);
@@ -262,6 +267,7 @@ function ArchPane(props: Readonly<ArchViewProps & { slug: string | null }>) {
   const [focus, setFocus] = useState<FocusRequest | null>(null);
   const nowState = graphStateOf(nowQuery.data, nowQuery.isPending);
   const plannedState = graphStateOf(plannedQuery.data, plannedQuery.isPending);
+  const plannedTestsState = graphStateOf(plannedTestsQuery.data, plannedTestsQuery.isPending);
   const plannedShown = showingPlanned(shown, slug);
   const state = plannedShown ? plannedState : nowState;
   const otherState = plannedShown ? nowState : plannedState;
@@ -310,7 +316,7 @@ function ArchPane(props: Readonly<ArchViewProps & { slug: string | null }>) {
     nodes: nodesOf(state),
     edges: viewOf(state)?.edges,
     other: viewOf(otherState),
-    planned: viewOf(plannedState),
+    planned: viewOf(plannedTestsState),
     ids,
     selection,
     deletable: deletableOf(marked),
