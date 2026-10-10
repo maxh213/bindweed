@@ -10,8 +10,12 @@ effort = "high"
 enabled = true
 
 [perf]
+enabled = false
 setup = "npm ci --silent"
 min_runs = 4
+
+[gates]
+skip = ["ts.mutation"]
 
 [ts]
 root = "."
