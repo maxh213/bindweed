@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url';
 
 export const VALUES = 200;
 export const WARMUP = 40;
+export const HEAVY_WARMUP = 5;
 
 export const TREE = process.env.MARESTAIL_PERF_TREE_PATH ?? process.cwd();
 

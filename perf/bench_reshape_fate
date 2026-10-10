@@ -1,0 +1,25 @@
+#!/usr/bin/env node
+import { HEAVY_WARMUP, VALUES, absent, emit, loadExport, sample } from './harness.mjs';
+import { BIG, ROOT_NAME, buildScan, oldEdits, requireView, reshapeEdits, reshapeFresh } from './reshape_fixture.mjs';
+
+const GRAPH_FATE = 'graphView pkg8 200 files reshaped';
+
+const applyPlan = await loadExport('src/domain/planned.ts', 'applyPlan');
+const staleReasons = await loadExport('src/domain/planned.ts', 'staleReasons');
+const graphView = await loadExport('src/domain/graph.ts', 'graphView');
+
+const scan = buildScan(BIG);
+const edits = [...oldEdits(BIG, scan), ...reshapeEdits(BIG)];
+if (applyPlan === undefined || staleReasons === undefined || graphView === undefined || !reshapeFresh(staleReasons, scan, edits)) {
+  absent(GRAPH_FATE);
+} else {
+  const planned = applyPlan(scan, edits);
+  const view = requireView(graphView(planned, 'pkg8', ROOT_NAME), 150, GRAPH_FATE);
+  if (!view.nodes.some(node => node.fate === 'delete')) throw new Error(`${GRAPH_FATE} drew no deleted file`);
+  emit(
+    GRAPH_FATE,
+    await sample(() => {
+      requireView(graphView(planned, 'pkg8', ROOT_NAME), 150, GRAPH_FATE);
+    }, VALUES, HEAVY_WARMUP),
+  );
+}

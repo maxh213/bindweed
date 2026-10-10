@@ -1,0 +1,29 @@
+#!/usr/bin/env node
+import { HEAVY_WARMUP, VALUES, WARMUP, absent, emit, loadExport, sample } from './harness.mjs';
+import { SMALL, allFresh, buildScan, oldEdits } from './reshape_fixture.mjs';
+
+const REPORT_005 = 'planReport 220 files 005 plan';
+const CYCLES = 'cycleTexts 220 files';
+
+const planReport = await loadExport('src/domain/planned.ts', 'planReport');
+const cycleTexts = await loadExport('src/domain/graph.ts', 'cycleTexts');
+
+if (planReport === undefined || cycleTexts === undefined) {
+  absent(REPORT_005, CYCLES);
+} else {
+  const scan = buildScan(SMALL);
+  const edits = oldEdits(SMALL, scan);
+  allFresh(planReport(scan, edits, cycleTexts).stale, REPORT_005);
+  emit(
+    REPORT_005,
+    await sample(() => {
+      if (planReport(scan, edits, cycleTexts).stale.length !== edits.length) throw new Error(`${REPORT_005} dropped an edit`);
+    }, VALUES, HEAVY_WARMUP),
+  );
+  emit(
+    CYCLES,
+    await sample(() => {
+      if (cycleTexts(scan).length === 0) throw new Error(`${CYCLES} found no cycle`);
+    }, VALUES, WARMUP),
+  );
+}

@@ -1,98 +1,14 @@
 #!/usr/bin/env node
-import {
-  VALUES,
-  WARMUP,
-  absent,
-  emit,
-  loadExport,
-  sample,
-} from './harness.mjs';
-
-const SMALL = { packages: 10, perPackage: 20, deep: 20 };
-const SPLIT = 'pkg7';
-const ROOT_NAME = 'perf-repo';
+import { HEAVY_WARMUP, VALUES, absent, emit, loadExport, sample } from './harness.mjs';
+import { ROOT_NAME, SMALL, allFresh, buildScan, oldEdits, plannedRequest, requireView } from './reshape_fixture.mjs';
 
 const REQUEST_005 = 'planned graph request 220 files 005 plan';
-const REPORT_005 = 'planReport 220 files 005 plan';
-const CYCLES = 'cycleTexts 220 files';
 
 const applyPlan = await loadExport('src/domain/planned.ts', 'applyPlan');
 const staleReasons = await loadExport('src/domain/planned.ts', 'staleReasons');
 const planReport = await loadExport('src/domain/planned.ts', 'planReport');
 const graphView = await loadExport('src/domain/graph.ts', 'graphView');
 const cycleTexts = await loadExport('src/domain/graph.ts', 'cycleTexts');
-
-function fileName(shape, pkg, index) {
-  return `pkg${pkg}/f${pkg * shape.perPackage + index}.ts`;
-}
-
-function packageFiles(shape, files, edges) {
-  for (let i = 0; i < shape.packages; i += 1) {
-    for (let j = 0; j < shape.perPackage; j += 1) {
-      const from = fileName(shape, i, j);
-      files.push({ path: from, test: j % 50 === 0 });
-      for (let k = 1; k <= 5; k += 1) {
-        const to =
-          k <= 3
-            ? fileName(shape, i, (j + k * 7) % shape.perPackage)
-            : fileName(shape, (i + k) % shape.packages, (j + k * 3) % shape.perPackage);
-        edges.push({ from, to, kind: k === 5 ? 'type' : 'runtime' });
-      }
-    }
-  }
-}
-
-function deepFiles(shape, files, edges) {
-  for (let j = 0; j < shape.deep; j += 1) {
-    const from = `deep/d${j}.ts`;
-    files.push({ path: from, test: false });
-    for (let k = 1; k <= 5; k += 1) {
-      edges.push({ from, to: `deep/d${(j + k * 7) % shape.deep}.ts`, kind: k === 5 ? 'type' : 'runtime' });
-    }
-  }
-}
-
-function buildScan(shape) {
-  const files = [];
-  const edges = [];
-  packageFiles(shape, files, edges);
-  deepFiles(shape, files, edges);
-  const workspaces = [];
-  for (let i = 0; i < 8; i += 1) workspaces.push({ dir: `pkg${i}`, name: `@acme/pkg${i}` });
-  return { files, edges, externals: [], workspaces };
-}
-
-function oldEdits(shape, scan) {
-  const cuts = [];
-  const seen = new Set();
-  for (const edge of scan.edges) {
-    if (!edge.from.startsWith('pkg1/') || !edge.to.startsWith('pkg1/')) continue;
-    const key = `${edge.from}\n${edge.to}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    cuts.push({ kind: 'cut-edge', from: edge.from, to: edge.to, files: [[edge.from, edge.to]] });
-    if (cuts.length === 10) break;
-  }
-  const moves = [];
-  for (let i = 1; i <= Math.min(20, shape.perPackage / 2); i += 1) moves.push({ kind: 'move-file', file: fileName(shape, 0, i), to: '.' });
-  const half = shape.packages / 2;
-  const adds = [];
-  for (let i = 0; i < half; i += 1) adds.push({ kind: 'add-edge', from: `pkg${i}`, to: `pkg${(i + half + 1) % shape.packages}` });
-  const notes = [];
-  for (let i = 0; i < 5; i += 1) notes.push({ kind: 'note', target: { node: `pkg${i + half}` }, text: `note ${i}` });
-  for (let i = 0; i < 4; i += 1) notes.push({ kind: 'note', target: { edge: [`pkg${i + half}`, `pkg${(i + half + 4) % shape.packages}`] }, text: `edge ${i}` });
-  const clear = edit => !JSON.stringify(edit).includes(`"${SPLIT}"`);
-  return [...cuts, ...moves, ...adds.filter(clear), ...notes.filter(clear)];
-}
-
-function requireView(view, count, label) {
-  if (view === null || view === undefined || view.nodes.length < count) throw new Error(`${label} did not draw`);
-  return view;
-}
-
-function allFresh(reasons, label) {
-  if (reasons.some(reason => reason !== null)) throw new Error(`${label} fixture is stale: ${JSON.stringify(reasons)}`);
-}
 
 function oldRequest(scan, edits) {
   const planned = applyPlan(scan, edits);
@@ -101,50 +17,20 @@ function oldRequest(scan, edits) {
   return { ...view, stale };
 }
 
-function newRequest(scan, edits, label) {
-  const report = planReport(scan, edits, cycleTexts);
-  const view = requireView(graphView(report.scan, '', ROOT_NAME), 10, label);
-  const body = { ...view, stale: report.stale };
-  return report.warnings.every(list => list.length === 0) ? body : { ...body, warnings: report.warnings };
-}
-
-async function measureRequest005(scan, edits) {
-  if (applyPlan === undefined || staleReasons === undefined || graphView === undefined) {
-    absent(REQUEST_005);
-    return;
-  }
-  const request = planReport !== undefined && cycleTexts !== undefined ? () => newRequest(scan, edits, REQUEST_005) : () => oldRequest(scan, edits);
+if (applyPlan === undefined || staleReasons === undefined || graphView === undefined) {
+  absent(REQUEST_005);
+} else {
+  const scan = buildScan(SMALL);
+  const edits = oldEdits(SMALL, scan);
+  const request =
+    planReport !== undefined && cycleTexts !== undefined
+      ? () => plannedRequest({ planReport, cycleTexts, graphView }, scan, edits, REQUEST_005)
+      : () => oldRequest(scan, edits);
   allFresh(request().stale, REQUEST_005);
   emit(
     REQUEST_005,
     await sample(() => {
-      const body = request();
-      if (body.stale.length !== edits.length) throw new Error(`${REQUEST_005} dropped an edit`);
-    }, VALUES, WARMUP),
+      if (request().stale.length !== edits.length) throw new Error(`${REQUEST_005} dropped an edit`);
+    }, VALUES, HEAVY_WARMUP),
   );
-}
-
-async function measureReport005(scan, edits) {
-  allFresh(planReport(scan, edits, cycleTexts).stale, REPORT_005);
-  emit(
-    REPORT_005,
-    await sample(() => {
-      if (planReport(scan, edits, cycleTexts).stale.length !== edits.length) throw new Error(`${REPORT_005} dropped an edit`);
-    }, VALUES, WARMUP),
-  );
-  emit(
-    CYCLES,
-    await sample(() => {
-      if (cycleTexts(scan).length === 0) throw new Error(`${CYCLES} found no cycle`);
-    }, VALUES, WARMUP),
-  );
-}
-
-const small = buildScan(SMALL);
-const small005 = oldEdits(SMALL, small);
-await measureRequest005(small, small005);
-if (planReport === undefined || cycleTexts === undefined) {
-  absent(REPORT_005, CYCLES);
-} else {
-  await measureReport005(small, small005);
 }

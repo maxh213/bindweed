@@ -1,0 +1,23 @@
+#!/usr/bin/env node
+import { HEAVY_WARMUP, VALUES, absent, emit, loadExport, sample } from './harness.mjs';
+import { BIG, buildScan, oldEdits, reshapeEdits, reshapeFresh } from './reshape_fixture.mjs';
+
+const APPLY = 'applyPlan 4100 files reshape plan';
+
+const applyPlan = await loadExport('src/domain/planned.ts', 'applyPlan');
+const staleReasons = await loadExport('src/domain/planned.ts', 'staleReasons');
+
+const scan = buildScan(BIG);
+const edits = [...oldEdits(BIG, scan), ...reshapeEdits(BIG)];
+if (applyPlan === undefined || staleReasons === undefined || !reshapeFresh(staleReasons, scan, edits)) {
+  absent(APPLY);
+} else {
+  const planned = applyPlan(scan, edits);
+  if ((planned.hidden ?? []).length === 0 || (planned.deleted ?? []).length === 0) throw new Error(`${APPLY} did not hide or delete`);
+  emit(
+    APPLY,
+    await sample(() => {
+      if (applyPlan(scan, edits).files.length !== scan.files.length - 1) throw new Error(`${APPLY} lost the fold`);
+    }, VALUES, HEAVY_WARMUP),
+  );
+}

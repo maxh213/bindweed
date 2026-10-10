@@ -1,0 +1,26 @@
+#!/usr/bin/env node
+import { HEAVY_WARMUP, VALUES, absent, emit, loadExport, sample } from './harness.mjs';
+import { SMALL, allFresh, buildScan, oldEdits, plannedRequest, reshapeEdits } from './reshape_fixture.mjs';
+
+const REQUEST_RESHAPE = 'planned graph request 220 files reshape plan';
+
+const planReport = await loadExport('src/domain/planned.ts', 'planReport');
+const graphView = await loadExport('src/domain/graph.ts', 'graphView');
+const cycleTexts = await loadExport('src/domain/graph.ts', 'cycleTexts');
+
+if (planReport === undefined || cycleTexts === undefined || graphView === undefined) {
+  absent(REQUEST_RESHAPE);
+} else {
+  const fns = { planReport, cycleTexts, graphView };
+  const scan = buildScan(SMALL);
+  const edits = [...oldEdits(SMALL, scan), ...reshapeEdits(SMALL)];
+  const first = plannedRequest(fns, scan, edits, REQUEST_RESHAPE);
+  allFresh(first.stale, REQUEST_RESHAPE);
+  if (first.warnings === undefined) throw new Error(`${REQUEST_RESHAPE} fixture raised no warning`);
+  emit(
+    REQUEST_RESHAPE,
+    await sample(() => {
+      if (plannedRequest(fns, scan, edits, REQUEST_RESHAPE).warnings === undefined) throw new Error(`${REQUEST_RESHAPE} lost its warnings`);
+    }, VALUES, HEAVY_WARMUP),
+  );
+}
