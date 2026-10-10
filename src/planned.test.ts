@@ -566,6 +566,102 @@ describe('package edits and file fates in the walk', () => {
   });
 });
 
+const SHOWN: { tests: true; external: false } = { tests: true, external: false };
+
+describe('a scanned file includes a test file', () => {
+  it('treats a directory that holds only a test file as known', () => {
+    const scan: ScanResult = { files: [{ path: 'src/probe/only.test.ts', test: true }], edges: [], externals: [], workspaces: [] };
+    const report = planReport(scan, [{ kind: 'create-package', path: 'src/probe/child' }], noCycles);
+    expect(report.stale).toEqual([null]);
+    expect(report.scan.declared).toEqual(['src/probe/child']);
+  });
+
+  it('hides a package whose only direct file is a test file', () => {
+    const scan: ScanResult = {
+      files: [
+        { path: 'src/domain/model.ts', test: false },
+        { path: 'src/app/a.test.ts', test: true },
+        { path: 'src/app/sub/x.ts', test: false },
+      ],
+      edges: [],
+      externals: [],
+      workspaces: [],
+    };
+    const planned = applyPlan(scan, [{ kind: 'move-file', file: 'src/app/a.test.ts', to: 'src/domain' }]);
+    expect(planned.hidden).toEqual(['src/app']);
+    expect(graphView(planned, 'src', 'repo', SHOWN)?.nodes.map(node => node.id)).toEqual(['src/domain', 'src/app/sub']);
+  });
+
+  it('hides a package when only a test file remains under it', () => {
+    const scan: ScanResult = {
+      files: [
+        { path: 'src/domain/model.ts', test: false },
+        { path: 'src/app/a.ts', test: false },
+        { path: 'src/app/sub/a.test.ts', test: true },
+      ],
+      edges: [],
+      externals: [],
+      workspaces: [],
+    };
+    const planned = applyPlan(scan, [{ kind: 'move-file', file: 'src/app/a.ts', to: 'src/domain' }]);
+    expect(planned.hidden).toEqual(['src/app']);
+    expect(graphView(planned, 'src', 'repo', SHOWN)?.nodes.map(node => node.id)).toEqual(['src/domain', 'src/app/sub']);
+  });
+
+  it('refuses a merge into a directory that holds only a test file', () => {
+    const scan: ScanResult = { ...LAYERED, files: [...LAYERED.files, { path: 'src/probe/only.test.ts', test: true }] };
+    expect(staleReasons(scan, [{ kind: 'merge-packages', packages: ['src/app', 'src/domain'], into: 'src/probe' }])).toEqual(['src/probe already exists']);
+  });
+
+  it('treats a test file as a taken path for a create and a rename', () => {
+    expect(
+      staleReasons(LAYERED, [
+        { kind: 'create-package', path: 'src/app/a.test.ts' },
+        { kind: 'rename-file', from: 'src/app/b.ts', to: 'a.test.ts' },
+      ]),
+    ).toEqual(['src/app/a.test.ts already exists', 'src/app/a.test.ts already exists']);
+  });
+
+  it('refuses a move onto an existing test file of the same name', () => {
+    const scan: ScanResult = {
+      files: [
+        { path: 'src/app/a.test.ts', test: true },
+        { path: 'src/infra/a.test.ts', test: true },
+      ],
+      edges: [],
+      externals: [],
+      workspaces: [],
+    };
+    expect(staleReasons(scan, [{ kind: 'move-file', file: 'src/app/a.test.ts', to: 'src/infra' }])).toEqual(['src/infra/a.test.ts already exists']);
+  });
+
+  it('refuses a merge into a test file', () => {
+    expect(staleReasons(LAYERED, [{ kind: 'merge-packages', packages: ['src/app', 'src/infra'], into: 'src/app/a.test.ts' }])).toEqual([
+      'src/app/a.test.ts already exists',
+    ]);
+  });
+
+  it('renames a test file', () => {
+    const edit: PlanEdit = { kind: 'rename-file', from: 'src/app/a.test.ts', to: 'spec.ts' };
+    expect(staleReasons(LAYERED, [edit])).toEqual([null]);
+    const planned = applyPlan(LAYERED, [edit]);
+    expect(pathsOf(planned)).toContain('src/app/spec.ts');
+    expect(pathsOf(planned)).not.toContain('src/app/a.test.ts');
+  });
+
+  it('deletes a test file', () => {
+    const edit: PlanEdit = { kind: 'fate', file: 'src/app/a.test.ts', fate: 'delete' };
+    expect(staleReasons(LAYERED, [edit])).toEqual([null]);
+    expect(applyPlan(LAYERED, [edit]).deleted).toEqual(['src/app/a.test.ts']);
+  });
+
+  it('folds a file into a test file', () => {
+    const edit: PlanEdit = { kind: 'fate', file: 'src/app/b.ts', fate: 'fold', into: 'src/app/a.test.ts' };
+    expect(staleReasons(LAYERED, [edit])).toEqual([null]);
+    expect(pathsOf(applyPlan(LAYERED, [edit]))).not.toContain('src/app/b.ts');
+  });
+});
+
 describe('planReport', () => {
   it('returns the planned scan and the stale list of the walk', () => {
     const report = planReport(LAYERED, [MOVE_SAVE, { kind: 'move-file', file: 'src/app/gone.ts', to: 'src/infra' }], noCycles);
