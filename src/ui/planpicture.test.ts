@@ -226,6 +226,24 @@ describe('a fold leaves no ghost', () => {
     expect(picture({ packages: pack, edits: [split, foldSplit], stale: [null, null] }).ink.rows.get('src/app')).toEqual([]);
   });
 
+  it('follows a nested path and does not rename a prefix sibling', () => {
+    const empty = viewOf([]);
+    const deep = [{ id: 'src/app', now: viewOf([fileNode('src/app/deep/save.ts')]), planned: empty }];
+    const renamedPkg: PlanEdit = { kind: 'rename-package', from: 'src/app', to: 'src/adapters' };
+    const foldDeep: PlanEdit = { kind: 'fate', file: 'src/adapters/deep/save.ts', fate: 'fold', into: 'src/adapters/a.ts' };
+    expect(picture({ packages: deep, edits: [renamedPkg, foldDeep], stale: [null, null] }).ink.rows.get('src/app')).toEqual([]);
+    const splitDeep: PlanEdit = {
+      kind: 'split-package',
+      package: 'src/app',
+      parts: [{ name: 'read', files: ['src/app/deep/save.ts'] }, { name: 'write', files: [] }],
+    };
+    const foldSplitDeep: PlanEdit = { kind: 'fate', file: 'src/app/read/deep/save.ts', fate: 'fold', into: 'src/app/read/a.ts' };
+    expect(picture({ packages: deep, edits: [splitDeep, foldSplitDeep], stale: [null, null] }).ink.rows.get('src/app')).toEqual([]);
+    const apple = [{ id: 'src/apple', now: viewOf([fileNode('src/apple/save.ts')]), planned: empty }];
+    const foldApple: PlanEdit = { kind: 'fate', file: 'src/apple/save.ts', fate: 'fold', into: 'src/apple/a.ts' };
+    expect(picture({ packages: apple, edits: [renamedPkg, foldApple], stale: [null, null] }).ink.rows.get('src/apple')).toEqual([]);
+  });
+
   it('steps through the edits that leave a path alone', () => {
     const edits: PlanEdit[] = [
       CUT,
