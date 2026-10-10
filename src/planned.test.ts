@@ -480,6 +480,20 @@ describe('package edits and file fates in the walk', () => {
       'no such file src/app/gone.ts',
     ]);
     expect(staleReasons(twins, [{ kind: 'merge-packages', packages: ['x', 'y'], into: 'src/domain' }])).toEqual(['src/domain already exists']);
+    expect(
+      staleReasons(LAYERED, [
+        { kind: 'split-package', package: 'src/gone', parts: [{ name: 'read', files: ['src/infra/db.ts'] }, { name: 'write', files: [] }] },
+        { kind: 'split-package', package: 'src/app', parts: [{ name: 'read', files: ['src/missing/a.ts'] }, { name: 'write', files: ['src/other/b.ts'] }] },
+      ]),
+    ).toEqual(['no such directory src/gone', 'no such file src/missing/a.ts']);
+    const gone: ScanResult = { ...LAYERED, files: [...LAYERED.files, { path: 'src/gone/a.ts', test: false }] };
+    expect(
+      staleReasons(gone, [
+        { kind: 'create-package', path: 'src/gone/read' },
+        { kind: 'move-file', file: 'src/gone/a.ts', to: 'src/domain' },
+        { kind: 'split-package', package: 'src/gone', parts: [{ name: 'read', files: [] }, { name: 'write', files: [] }] },
+      ]),
+    ).toEqual([null, null, 'no such directory src/gone']);
   });
 
   it('marks a deleted file that follows a move, and folds a file into another', () => {

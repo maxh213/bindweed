@@ -40,7 +40,9 @@ describe('the reshape dialog rules', () => {
 
   it('keeps the old extension when the typed file name has no dot', () => {
     expect(nameEdit(renameFile('src/app/save.ts'), 'writer', scene('src/app'))).toEqual({ edit: { kind: 'rename-file', from: 'src/app/save.ts', to: 'writer.ts' } });
+    expect(nameEdit(renameFile('src/app/a.test.ts'), 'spec', scene('src/app'))).toEqual({ edit: { kind: 'rename-file', from: 'src/app/a.test.ts', to: 'spec.ts' } });
     expect(nameEdit(renameFile('src/app/save.ts'), 'writer.tsx', scene('src/app'))).toEqual({ edit: { kind: 'rename-file', from: 'src/app/save.ts', to: 'writer.tsx' } });
+    expect(nameEdit(renameFile('src/app/save.ts'), '.env', scene('src/app'))).toEqual({ edit: { kind: 'rename-file', from: 'src/app/save.ts', to: '.env' } });
     expect(nameEdit(renameFile('src/app/Makefile'), 'Build', scene('src/app'))).toEqual({ edit: { kind: 'rename-file', from: 'src/app/Makefile', to: 'Build' } });
     expect(nameEdit(renameFile('src/app/.env'), 'local', scene('src/app'))).toEqual({ edit: { kind: 'rename-file', from: 'src/app/.env', to: 'local' } });
   });
