@@ -31,7 +31,7 @@ import {
 import { FILE_DRAG_MIME, fieldTarget, keyActionOf, planDropTarget } from './plangesture.ts';
 import { arrowViewAt, entryTarget, planPicture, type Planning, type PlanInk, type ShownGraph } from './planpicture.ts';
 import { planRoster } from './planroster.ts';
-import { nameEdit, splitEdit, splitRows, type NameAsk, type Reshaped } from './reshape.ts';
+import { nameEdit, nameTaken, splitEdit, splitRows, type NameAsk, type Reshaped } from './reshape.ts';
 
 type Picture = ReturnType<typeof planPicture>;
 
@@ -493,12 +493,12 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     if (outcome.edit !== null) editPlan(outcome.edit);
     closeAsk();
   };
-  const taken = (): Set<string> => nodeIdsOf(props.planned);
+  const boxIds = (): string[] => [...nodeIdsOf(props.planned)];
   const submitName = (current: NameAsk, name: string): void => {
-    settle(nameEdit(current, name, { at: props.at, taken: taken(), selected: selectedPackages(props.nodes, props.selection) }));
+    settle(nameEdit(current, name, { at: props.at, taken: nameTaken(props.at, boxIds(), current.mode), selected: selectedPackages(props.nodes, props.selection) }));
   };
   const submitSplit = (current: SplitAsk, names: string[], assigned: Record<string, string>): void => {
-    settle(splitEdit({ pkg: current.pkg, names, files: current.files, assigned, taken: taken() }));
+    settle(splitEdit({ pkg: current.pkg, names, files: current.files, assigned, taken: new Set(boxIds()) }));
   };
   const openSplit = async (pkg: string): Promise<void> => {
     const files = await filesUnder(props.token, pkg, String(slug), props.fetcher);

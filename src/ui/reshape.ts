@@ -68,6 +68,19 @@ function merged(name: string, scene: Scene): Reshaped {
   return settled(nameProblem(name) ?? clash, { kind: 'merge-packages', packages, into });
 }
 
+function addAncestors(at: string, parent: string, taken: Set<string>): void {
+  if (!parent.startsWith(`${at}/`)) return;
+  taken.add(parent);
+  addAncestors(at, parentOf(parent), taken);
+}
+
+export function nameTaken(at: string, ids: readonly string[], mode: NameAsk['mode']): Set<string> {
+  const taken = new Set(ids);
+  if (mode === 'merge') return taken;
+  for (const id of ids) addAncestors(at, parentOf(id), taken);
+  return taken;
+}
+
 export function nameEdit(ask: NameAsk, typed: string, scene: Scene): Reshaped {
   if (ask.mode === 'create') return created(typed, scene);
   if (ask.mode === 'merge') return merged(typed, scene);

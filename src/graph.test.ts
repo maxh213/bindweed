@@ -852,6 +852,10 @@ describe('cycleTexts', () => {
     expect(cycleTexts(scanOf(['w/x/y/z/p.ts', 'w/x/y/z/q.ts'], [['w/x/y/z/p.ts', 'w/x/y/z/q.ts'], ['w/x/y/z/q.ts', 'w/x/y/z/p.ts']]))).toEqual(['p.ts → q.ts → p.ts']);
   });
 
+  it('finds a cycle drawn only at the root', () => {
+    expect(cycleTexts(scanOf(['a/p.ts', 'b/q.ts'], [['a/p.ts', 'b/q.ts'], ['b/q.ts', 'a/p.ts']]))).toEqual(['a → b → a']);
+  });
+
   it('leaves out test files', () => {
     expect(cycleTexts(scanOf(['src/a.ts', 'src/a.test.ts'], [['src/a.ts', 'src/a.test.ts'], ['src/a.test.ts', 'src/a.ts']]))).toEqual([]);
   });

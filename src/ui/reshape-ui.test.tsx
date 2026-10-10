@@ -898,6 +898,42 @@ describe('the page reshapes packages and files', () => {
     await waitFor(() => expect(storedEdits().at(-1)).toEqual({ kind: 'create-package', path: 'src/infra/x' }));
   });
 
+  it('refuses a hidden package name and still merges into it', async () => {
+    await seed('Reshape', 'reshape', [{
+      kind: 'split-package',
+      package: 'src/app',
+      parts: [
+        { name: 'read', files: ['src/app/a.ts', 'src/app/a.test.ts'] },
+        { name: 'write', files: ['src/app/b.ts', 'src/app/save.ts'] },
+      ],
+    }]);
+    await showApp('#at=src&plan=reshape');
+    await waitFor(() => expect(boxIds()).toContain('src/app/read'));
+    expect(boxIds()).not.toContain('src/app');
+    await click(button('Canvas'));
+    await click(button('New package'));
+    await named('app', 'Create');
+    expect(dialogError()).toBe('src/app already exists');
+    expect(storedEdits()).toHaveLength(1);
+    expect(sentences()).toHaveLength(1);
+    await click(button('Cancel'));
+    await menu('src/domain', 'Rename');
+    await named('app', 'Rename');
+    expect(dialogError()).toBe('src/app already exists');
+    expect(storedEdits()).toHaveLength(1);
+    expect(sentences()).toHaveLength(1);
+    await click(button('Cancel'));
+    await click(boxOf('src/app/read'));
+    await click(boxOf('src/app/write'), true);
+    await click(button('Menu', boxOf('src/app/read')));
+    await click(button('Merge', boxOf('src/app/read')));
+    await named('app', 'Merge');
+    await waitFor(() => expect(lastSentence()).toBe('Merge src/app/read and src/app/write into src/app'));
+    expect(entryRow('Merge src/app/read and src/app/write into src/app').dataset.stale).toBeUndefined();
+    await waitFor(() => expect(boxIds()).toContain('src/app'));
+    expect(boxIds()).not.toContain('src/app/read');
+  });
+
   it('The cycle badge stays at the root and inside app', async () => {
     await seed('Split app', 'split-app', [
       { kind: 'move-file', file: 'src/app/save.ts', to: 'src/infra' },

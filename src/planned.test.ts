@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { cycleTexts } from './domain/graph.ts';
 import type { PlanEdit } from './domain/plan.ts';
 import { applyPlan, planReport, staleReasons } from './domain/planned.ts';
 import type { ScanResult } from './domain/scan.ts';
@@ -294,6 +295,22 @@ describe('package edits and file fates in the walk', () => {
     expect(pathsOf(planned).filter(path => path.startsWith('src/adapters/'))).toEqual(['src/adapters/db.ts', 'src/adapters/repo.ts']);
   });
 
+  it('keeps a nested path when a package is renamed', () => {
+    const scan: ScanResult = {
+      ...LAYERED,
+      files: [...LAYERED.files, { path: 'src/infra/deep/x.ts', test: false }],
+      edges: [...LAYERED.edges, { from: 'src/app/a.ts', to: 'src/infra/deep/x.ts', kind: 'runtime' }],
+    };
+    const planned = applyPlan(scan, [
+      { kind: 'create-package', path: 'src/infra/deep/empty' },
+      { kind: 'rename-package', from: 'src/infra', to: 'src/adapters' },
+    ]);
+    expect(pathsOf(planned)).toContain('src/adapters/deep/x.ts');
+    expect(pathsOf(planned)).not.toContain('src/adapters/x.ts');
+    expect(planned.declared).toEqual(['src/adapters/deep/empty']);
+    expect(edgesOf(planned)).toContain('src/app/a.ts>src/adapters/deep/x.ts');
+  });
+
   it('renames a package with its edges, externals, planned edges, declared paths and deleted marks', () => {
     const planned = applyPlan(LAYERED, [
       ADD_INFRA_APP,
@@ -338,6 +355,21 @@ describe('package edits and file fates in the walk', () => {
     expect(pathsOf(back)).toEqual(pathsOf(LAYERED));
     expect(back).not.toHaveProperty('declared');
     expect(back).not.toHaveProperty('hidden');
+  });
+
+  it('keeps a nested path when a merge moves a file', () => {
+    const scan: ScanResult = {
+      files: [
+        { path: 'src/infra/deep/a.ts', test: false },
+        { path: 'src/net/b.ts', test: false },
+      ],
+      edges: [{ from: 'src/net/b.ts', to: 'src/infra/deep/a.ts', kind: 'runtime' }],
+      externals: [],
+      workspaces: [],
+    };
+    const planned = applyPlan(scan, [{ kind: 'merge-packages', packages: ['src/infra', 'src/net'], into: 'src/core' }]);
+    expect(pathsOf(planned)).toEqual(['src/core/deep/a.ts', 'src/core/b.ts']);
+    expect(edgesOf(planned)).toEqual(['src/core/b.ts>src/core/deep/a.ts']);
   });
 
   it('gives the pinned reasons for splits', () => {
@@ -387,6 +419,39 @@ describe('package edits and file fates in the walk', () => {
         { kind: 'fate', file: 'src/app/b.ts', fate: 'fold', into: 'src/app/gone.ts' },
       ]),
     ).toEqual(['no such file src/app/gone.ts', null, 'src/app/save.ts is already deleted', 'no such file src/app/gone.ts', 'no such file src/app/gone.ts']);
+  });
+
+  it('reports the earliest check when two checks fail', () => {
+    const twins: ScanResult = {
+      files: [
+        { path: 'x/a.ts', test: false },
+        { path: 'y/a.ts', test: false },
+        { path: 'src/domain/model.ts', test: false },
+      ],
+      edges: [],
+      externals: [],
+      workspaces: [],
+    };
+    expect(
+      staleReasons(LAYERED, [
+        { kind: 'create-package', path: 'src/ports' },
+        { kind: 'rename-package', from: 'src/ports', to: 'lib/empty' },
+        { kind: 'create-package', path: 'lib/empty' },
+        { kind: 'rename-package', from: 'src/io', to: 'src/domain' },
+        { kind: 'rename-file', from: 'src/app/gone.ts', to: 'b.ts' },
+        { kind: 'split-package', package: 'src/app', parts: [{ name: 'a.ts', files: ['src/infra/db.ts'] }, { name: 'write', files: [] }] },
+        { kind: 'fate', file: 'src/app/gone.ts', fate: 'fold', into: 'src/app/also.ts' },
+      ]),
+    ).toEqual([
+      null,
+      null,
+      'no such directory lib',
+      'no such directory src/io',
+      'no such file src/app/gone.ts',
+      'no such file src/infra/db.ts',
+      'no such file src/app/gone.ts',
+    ]);
+    expect(staleReasons(twins, [{ kind: 'merge-packages', packages: ['x', 'y'], into: 'src/domain' }])).toEqual(['src/domain already exists']);
   });
 
   it('marks a deleted file that follows a move, and folds a file into another', () => {
@@ -440,6 +505,21 @@ describe('planReport', () => {
   it('warns about an empty package on the edit that created it, not the first edit', () => {
     const report = planReport(LAYERED, [MOVE_SAVE, CREATE_PORTS], noCycles);
     expect(report.warnings).toEqual([[], [{ kind: 'empty-package', path: 'src/ports' }]]);
+  });
+
+  it('warns when the only new cycle is drawn at the root', () => {
+    const scan: ScanResult = {
+      files: [
+        { path: 'a/p.ts', test: false },
+        { path: 'b/q.ts', test: false },
+      ],
+      edges: [{ from: 'a/p.ts', to: 'b/q.ts', kind: 'runtime' }],
+      externals: [],
+      workspaces: [],
+    };
+    const report = planReport(scan, [{ kind: 'add-edge', from: 'b', to: 'a' }], cycleTexts);
+    expect(report.stale).toEqual([null]);
+    expect(report.warnings).toEqual([[{ kind: 'added-cycle', cycle: 'a → b → a' }]]);
   });
 
   it('warns about a deleted file that is still imported, with its distinct importers sorted', () => {

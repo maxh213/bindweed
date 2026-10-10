@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { nameEdit, splitEdit, splitRows, type NameAsk, type Scene, type SplitForm } from './reshape.ts';
+import { nameEdit, nameTaken, splitEdit, splitRows, type NameAsk, type Scene, type SplitForm } from './reshape.ts';
 
 const FILES = ['src/app/a.test.ts', 'src/app/a.ts', 'src/app/b.ts', 'src/app/save.ts'];
 
@@ -69,12 +69,24 @@ describe('the reshape dialog rules', () => {
     expect(nameEdit(renamePackage('src/infra'), 'app', scene('src', ['src/app']))).toEqual({ problem: 'src/app already exists' });
   });
 
+  it('counts a hidden parent as taken, except when merging', () => {
+    const ids = ['src/app/read', 'src/app/write/deep', 'src/domain'];
+    const hidden = new Set([...ids, 'src/app', 'src/app/write']);
+    expect(nameTaken('src', ids, 'create')).toEqual(hidden);
+    expect(nameTaken('src', ids, 'rename')).toEqual(hidden);
+    expect(nameTaken('src', ids, 'merge')).toEqual(new Set(ids));
+    expect(nameTaken('', ['src'], 'create')).toEqual(new Set(['src']));
+    expect(nameTaken('src', [], 'create')).toEqual(new Set());
+  });
+
   it('checks a split in the pinned order', () => {
     expect(splitEdit(form(['', ''], {}))).toEqual({ problem: 'name at least two parts' });
     expect(splitEdit(form(['read', '  '], ALL_READ_WRITE))).toEqual({ problem: 'name at least two parts' });
     expect(splitEdit(form(['has space', 'write'], ALL_READ_WRITE))).toEqual({ problem: 'bad name' });
+    expect(splitEdit(form(['has space', 'has space'], ALL_READ_WRITE))).toEqual({ problem: 'bad name' });
     expect(splitEdit(form(['read', 'read'], ALL_READ_WRITE))).toEqual({ problem: 'duplicate part' });
     expect(splitEdit(form(['read', 'write'], { ...ALL_READ_WRITE, 'src/app/a.ts': '' }))).toEqual({ problem: 'assign every file' });
+    expect(splitEdit(form(['a.ts', 'write'], { ...ALL_READ_WRITE, 'src/app/a.ts': '' }))).toEqual({ problem: 'assign every file' });
     expect(splitEdit(form(['read', 'other'], ALL_READ_WRITE))).toEqual({ problem: 'assign every file' });
     expect(splitEdit(form(['a.ts', 'write'], { ...ALL_READ_WRITE, 'src/app/a.test.ts': 'a.ts', 'src/app/a.ts': 'a.ts' }))).toEqual({ problem: 'src/app/a.ts already exists' });
     expect(splitEdit(form(['read', 'write'], ALL_READ_WRITE, ['src/app/write']))).toEqual({ problem: 'src/app/write already exists' });
