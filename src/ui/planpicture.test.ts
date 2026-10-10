@@ -265,6 +265,57 @@ describe('a fold leaves no ghost', () => {
       { path: 'src/app/save.ts', name: 'save.ts', ghost: true, deleted: false },
     ]);
   });
+
+  it('folds a same-named file in another package after a rename', () => {
+    const lib = [{ id: 'src/lib', now: viewOf([fileNode('src/lib/save.ts')]), planned: viewOf([]) }];
+    const renamed: PlanEdit = { kind: 'rename-file', from: 'src/app/save.ts', to: 'writer.ts' };
+    const foldLib: PlanEdit = { kind: 'fate', file: 'src/lib/save.ts', fate: 'fold', into: 'src/lib/a.ts' };
+    expect(picture({ packages: lib, edits: [renamed, foldLib], stale: [null, null] }).ink.rows.get('src/lib')).toEqual([]);
+  });
+
+  it('folds a same-named file in another package after a move', () => {
+    const lib = [{ id: 'src/lib', now: viewOf([fileNode('src/lib/save.ts')]), planned: viewOf([]) }];
+    const moved: PlanEdit = { kind: 'move-file', file: 'src/app/save.ts', to: 'src/infra' };
+    const foldLib: PlanEdit = { kind: 'fate', file: 'src/lib/save.ts', fate: 'fold', into: 'src/lib/a.ts' };
+    expect(picture({ packages: lib, edits: [moved, foldLib], stale: [null, null] }).ink.rows.get('src/lib')).toEqual([]);
+  });
+
+  it('keeps the ghost of a same-named file a fold did not name', () => {
+    const packages = [
+      { id: 'src/app', now: viewOf([fileNode('src/app/a.ts')]), planned: viewOf([]) },
+      { id: 'src/lib', now: viewOf([fileNode('src/lib/a.ts')]), planned: viewOf([]) },
+    ];
+    const fold: PlanEdit = { kind: 'fate', file: 'src/app/a.ts', fate: 'fold', into: 'src/app/b.ts' };
+    const rows = picture({ packages, edits: [fold], stale: [null] }).ink.rows;
+    expect(rows.get('src/app')).toEqual([]);
+    expect(rows.get('src/lib')).toEqual([{ path: 'src/lib/a.ts', name: 'a.ts', ghost: true, deleted: false }]);
+  });
+
+  it('follows a file listed in a later split part', () => {
+    const deep = [{ id: 'src/app', now: viewOf([fileNode('src/app/deep/save.ts')]), planned: viewOf([]) }];
+    const split: PlanEdit = {
+      kind: 'split-package',
+      package: 'src/app',
+      parts: [
+        { name: 'read', files: [] },
+        { name: 'write', files: ['src/app/deep/save.ts'] },
+      ],
+    };
+    const foldWrite: PlanEdit = { kind: 'fate', file: 'src/app/write/deep/save.ts', fate: 'fold', into: 'src/app/write/a.ts' };
+    expect(picture({ packages: deep, edits: [split, foldWrite], stale: [null, null] }).ink.rows.get('src/app')).toEqual([]);
+  });
+
+  it('does not apply a stale rename before a later fold', () => {
+    const pack = [{ id: 'src/app', now: viewOf([fileNode('src/app/save.ts')]), planned: viewOf([]) }];
+    const renamed: PlanEdit = { kind: 'rename-file', from: 'src/app/save.ts', to: 'writer.ts' };
+    const foldSave: PlanEdit = { kind: 'fate', file: 'src/app/save.ts', fate: 'fold', into: 'src/app/a.ts' };
+    const foldWriter: PlanEdit = { kind: 'fate', file: 'src/app/writer.ts', fate: 'fold', into: 'src/app/a.ts' };
+    const stale = ['no such file src/app/save.ts', null];
+    expect(picture({ packages: pack, edits: [renamed, foldSave], stale }).ink.rows.get('src/app')).toEqual([]);
+    expect(picture({ packages: pack, edits: [renamed, foldWriter], stale }).ink.rows.get('src/app')).toEqual([
+      { path: 'src/app/save.ts', name: 'save.ts', ghost: true, deleted: false },
+    ]);
+  });
 });
 
 describe('ghosts, notes, cuts and added arrows', () => {

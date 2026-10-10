@@ -332,6 +332,44 @@ describe('package edits and file fates in the walk', () => {
     expect(edgesOf(planned)).toContain('src/app/a.ts>src/app/c.ts');
   });
 
+  it('renames one file and leaves another file of the same name', () => {
+    const scan: ScanResult = {
+      files: [
+        { path: 'src/app/b.ts', test: false },
+        { path: 'src/lib/b.ts', test: false },
+      ],
+      edges: [{ from: 'src/lib/b.ts', to: 'src/app/a.ts', kind: 'runtime' }],
+      externals: [{ from: 'src/lib/b.ts', name: 'node:fs', kind: 'runtime' }],
+      workspaces: [],
+    };
+    const planned = applyPlan(scan, [{ kind: 'rename-file', from: 'src/app/b.ts', to: 'c.ts' }]);
+    expect(pathsOf(planned)).toEqual(['src/app/c.ts', 'src/lib/b.ts']);
+    expect(edgesOf(planned)).toEqual(['src/lib/b.ts>src/app/a.ts']);
+    expect(planned.externals).toEqual([{ from: 'src/lib/b.ts', name: 'node:fs', kind: 'runtime' }]);
+  });
+
+  it('leaves an unlisted file that shares a listed file name', () => {
+    const scan: ScanResult = {
+      files: [
+        { path: 'src/app/a.ts', test: false },
+        { path: 'src/lib/a.ts', test: false },
+      ],
+      edges: [{ from: 'src/lib/a.ts', to: 'src/app/a.ts', kind: 'runtime' }],
+      externals: [],
+      workspaces: [],
+    };
+    const planned = applyPlan(scan, [{
+      kind: 'split-package',
+      package: 'src/app',
+      parts: [
+        { name: 'read', files: ['src/app/a.ts'] },
+        { name: 'write', files: [] },
+      ],
+    }]);
+    expect(pathsOf(planned)).toEqual(['src/app/read/a.ts', 'src/lib/a.ts']);
+    expect(edgesOf(planned)).toEqual(['src/lib/a.ts>src/app/read/a.ts']);
+  });
+
   it('moves a deleted mark onto the file a later rename lands on', () => {
     const report = planReport(LAYERED, [{ kind: 'fate', file: 'src/app/b.ts', fate: 'delete' }, { kind: 'rename-file', from: 'src/app/b.ts', to: 'c.ts' }], cycleTexts);
     expect(report.scan.deleted).toEqual(['src/app/c.ts']);
