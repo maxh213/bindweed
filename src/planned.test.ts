@@ -63,6 +63,12 @@ describe('applyPlan', () => {
     expect(movedRepo.externals.map(ext => ext.from)).toEqual(['src/app/repo.ts', 'src/app/repo.ts']);
   });
 
+  it('leaves planned edges on the paths they were drawn with when a file moves', () => {
+    const planned = applyPlan(LAYERED, [{ kind: 'add-edge', from: 'src/domain/model.ts', to: 'src/infra/repo.ts' }, { kind: 'move-file', file: 'src/domain/model.ts', to: 'src/app' }]);
+    expect(pathsOf(planned)).toContain('src/app/model.ts');
+    expect(planned.planned).toEqual([{ from: 'src/domain/model.ts', to: 'src/infra/repo.ts' }]);
+  });
+
   it('moves a file to the root as the bare name', () => {
     const planned = applyPlan(LAYERED, [{ kind: 'move-file', file: 'src/app/save.ts', to: '.' }]);
     expect(pathsOf(planned)).toContain('save.ts');
@@ -353,6 +359,16 @@ describe('package edits and file fates in the walk', () => {
     expect(emptied).not.toHaveProperty('hidden');
   });
 
+  it('hides an emptied package when only a declared package is left under it', () => {
+    const planned = applyPlan(LAYERED, [
+      { kind: 'create-package', path: 'src/infra/sub' },
+      { kind: 'move-file', file: 'src/infra/db.ts', to: 'src/domain' },
+      { kind: 'move-file', file: 'src/infra/repo.ts', to: 'src/domain' },
+    ]);
+    expect(planned.declared).toEqual(['src/infra/sub']);
+    expect(planned.hidden).toEqual(['src/infra']);
+  });
+
   it('gives the pinned reasons for fates', () => {
     expect(
       staleReasons(LAYERED, [
@@ -427,6 +443,14 @@ describe('planReport', () => {
     );
     expect(report.stale).toEqual([null, 'no such file src/app/missing.ts', null]);
     expect(report.warnings).toEqual([[{ kind: 'added-cycle', cycle: 'src/infra → src/app' }], [], [{ kind: 'added-cycle', cycle: 'src/domain → src/app' }]]);
+  });
+
+  it('does not warn about a split part whose files all sit in a subdirectory', () => {
+    const nested: ScanResult = { ...LAYERED, files: [{ path: 'src/app/a.ts', test: false }, { path: 'src/app/deep/b.ts', test: false }], edges: [], externals: [] };
+    const split: PlanEdit = { kind: 'split-package', package: 'src/app', parts: [{ name: 'read', files: ['src/app/a.ts'] }, { name: 'write', files: ['src/app/deep/b.ts'] }] };
+    const report = planReport(nested, [split], noCycles);
+    expect(pathsOf(report.scan)).toEqual(['src/app/read/a.ts', 'src/app/write/deep/b.ts']);
+    expect(report.warnings).toEqual([[]]);
   });
 
   it('lists empty packages before cycles on one edit', () => {

@@ -813,6 +813,12 @@ describe('graphView over a planned scan', () => {
     expect(view(scan, 'src/app').nodes.map(node => node.id)).toEqual(['src/app/a.ts', 'src/app/b.ts']);
   });
 
+  it('keeps the file count of a box an empty declared package groups into', () => {
+    const scan: ScanResult = { ...LAYERED, declared: ['src/app/write'] };
+    expect(view(scan, 'src').nodes.find(node => node.id === 'src/app')).toMatchObject({ kind: 'package', files: 2 });
+    expect(view(scan, 'src/app').nodes.find(node => node.id === 'src/app/write')).toMatchObject({ kind: 'package', files: 0 });
+  });
+
   it('stands the children of a hidden package in its place, at every depth', () => {
     const scan: ScanResult = {
       ...scanOf(['src/app/read/a.ts', 'src/app/write/deep/b.ts', 'src/infra/db.ts'], [['src/app/read/a.ts', 'src/app/write/deep/b.ts']]),
@@ -840,6 +846,10 @@ describe('cycleTexts', () => {
     const twice: ScanResult = scanOf(['x/a/p.ts', 'x/a/q.ts', 'y/a/p.ts', 'y/a/q.ts'], [['x/a/p.ts', 'x/a/q.ts'], ['x/a/q.ts', 'x/a/p.ts'], ['y/a/p.ts', 'y/a/q.ts'], ['y/a/q.ts', 'y/a/p.ts']]);
     expect(cycleTexts(twice)).toEqual(['p.ts → q.ts → p.ts']);
     expect(cycleTexts(scanOf(['a.ts'], []))).toEqual([]);
+  });
+
+  it('finds a cycle drawn only in a deep directory', () => {
+    expect(cycleTexts(scanOf(['w/x/y/z/p.ts', 'w/x/y/z/q.ts'], [['w/x/y/z/p.ts', 'w/x/y/z/q.ts'], ['w/x/y/z/q.ts', 'w/x/y/z/p.ts']]))).toEqual(['p.ts → q.ts → p.ts']);
   });
 
   it('leaves out test files', () => {

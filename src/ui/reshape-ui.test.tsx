@@ -255,6 +255,15 @@ function installDom(url: string): JSDOM {
 
 const SPLIT_SENTENCE = 'Split src/app into src/app/read (2 files) and src/app/write (2 files)';
 const CYCLE_LINE = 'this plan adds a cycle: read → write → read';
+const SEVEN = [
+  'Create package src/ports',
+  'Move src/domain/shape.ts to src/ports',
+  'Rename src/infra to src/adapters',
+  SPLIT_SENTENCE,
+  'Merge src/app/read and src/app/write into src/app',
+  'Delete src/domain/model.ts',
+  'Fold src/adapters/repo.ts into src/ports/shape.ts',
+];
 
 describe('the page reshapes packages and files', () => {
   const token = 'tok';
@@ -408,6 +417,24 @@ describe('the page reshapes packages and files', () => {
 
   async function key(name: string, shift = false): Promise<void> {
     await act(() => window.dispatchEvent(new window.KeyboardEvent('keydown', { key: name, ctrlKey: true, shiftKey: shift, bubbles: true })));
+  }
+
+  async function pressDelete(): Promise<void> {
+    await act(() => window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Delete', bubbles: true })));
+  }
+
+  function menuLabels(id: string): (string | null)[] {
+    return Array.from(boxOf(id).querySelectorAll('[role="menu"] button')).map(item => item.textContent);
+  }
+
+  async function chooseShown(label: string): Promise<void> {
+    const radio = Array.from(document.querySelectorAll('input[name="shown-graph"]')).find(el => el.parentElement?.textContent === label);
+    if (radio === undefined) throw new Error(`missing radio ${label}`);
+    await click(radio);
+  }
+
+  function boxCentre(id: string): { x: number; y: number } {
+    return { x: Number(boxOf(id).dataset.x), y: Number(boxOf(id).dataset.y) };
   }
 
   function storedEdits(): PlanEdit[] {
@@ -633,10 +660,22 @@ describe('the page reshapes packages and files', () => {
     const sentence = 'Delete src/domain/model.ts';
     await drill('src/domain');
     await waitFor(() => expect(boxIds()).toContain('src/domain/model.ts'));
-    await menu('src/domain/model.ts', 'Delete');
+    const before = storedEdits();
+    await click(boxOf('src/domain/model.ts'));
+    await pressDelete();
+    expect(storedEdits()).toEqual(before);
+    expect(sentences()).toHaveLength(before.length);
+    await click(button('Menu', boxOf('src/domain/model.ts')));
+    expect(menuLabels('src/domain/model.ts')).toEqual(['Add note', 'Rename', 'Delete', 'Fold into…']);
+    await click(button('Delete', boxOf('src/domain/model.ts')));
     await waitFor(() => expect(lastSentence()).toBe(sentence));
     await waitFor(() => expect(boxOf('src/domain/model.ts').dataset.fate).toBe('delete'));
     expect(window.getComputedStyle(boxOf('src/domain/model.ts')).textDecorationLine).toBe('line-through');
+    await chooseShown('Now');
+    await waitFor(() => expect(boxOf('src/domain/model.ts').dataset.fate).toBeUndefined());
+    expect(window.getComputedStyle(boxOf('src/domain/model.ts')).textDecorationLine).not.toBe('line-through');
+    await chooseShown('Planned');
+    await waitFor(() => expect(boxOf('src/domain/model.ts').dataset.fate).toBe('delete'));
     await waitFor(() => expect(warningsOf(sentence)).toEqual(['2 files still import src/domain/model.ts, which this plan deletes']));
     expect(importerList(sentence)).toEqual([]);
     await click(button('Show importers'));
@@ -683,14 +722,22 @@ describe('the page reshapes packages and files', () => {
       await key('Z', true);
       await waitFor(() => expect(entries()).toHaveLength(count));
     }
+    expect(sentences()).toEqual(SEVEN);
     await waitFor(() => expect(rowOf('src/domain', 'src/domain/model.ts').dataset.fate).toBe('delete'));
     expect(window.getComputedStyle(rowOf('src/domain', 'src/domain/model.ts')).textDecorationLine).toBe('line-through');
     await waitFor(() => expect(badgeText()).toBe('1'));
     await reload();
     await waitFor(() => expect(entries()).toHaveLength(7));
+    expect(sentences()).toEqual(SEVEN);
     expect(window.location.hash).toBe('#at=src&plan=reshape');
     await waitFor(() => expect(rowOf('src/domain', 'src/domain/model.ts').dataset.fate).toBe('delete'));
     expect(badgeText()).toBe('1');
+    await chooseShown('Now');
+    await waitFor(() => expect(boxIds()).toContain('src/infra'));
+    expect(rowOf('src/domain', 'src/domain/model.ts').dataset.fate).toBeUndefined();
+    expect(window.getComputedStyle(rowOf('src/domain', 'src/domain/model.ts')).textDecorationLine).not.toBe('line-through');
+    await chooseShown('Planned');
+    await waitFor(() => expect(rowOf('src/domain', 'src/domain/model.ts').dataset.fate).toBe('delete'));
   }
 
   async function clickTargetsAndRemoveRename(): Promise<void> {
@@ -700,12 +747,13 @@ describe('the page reshapes packages and files', () => {
     await click(sentenceButton('Rename src/infra to src/adapters'));
     await waitFor(() => expect(window.location.hash).toBe('#at=src&plan=reshape'));
     await waitFor(() => expect(boxOf('src/adapters').dataset.selected).toBe('true'));
-    await waitFor(() => expect(centres().length).toBeGreaterThan(0));
+    await waitFor(() => expect(centres()).toContainEqual(boxCentre('src/adapters')));
     await drill('src/app');
     await waitFor(() => expect(boxIds()).toContain('src/app/a.ts'));
     await click(sentenceButton('Fold src/adapters/repo.ts into src/ports/shape.ts'));
     await waitFor(() => expect(window.location.hash).toBe('#at=src/ports&plan=reshape'));
     await waitFor(() => expect(boxOf('src/ports/shape.ts').dataset.selected).toBe('true'));
+    await waitFor(() => expect(centres()).toContainEqual(boxCentre('src/ports/shape.ts')));
     await click(sentenceButton(SPLIT_SENTENCE));
     await waitFor(() => expect(notice()).toBe('no such box src/app/read'));
     expect(window.location.hash).toBe('#at=src/ports&plan=reshape');
@@ -740,6 +788,9 @@ describe('the page reshapes packages and files', () => {
     await waitFor(() => expect(rowNames('src/app')).toEqual(['a.ts', 'b.ts', 'save.ts']));
     await click(rowOf('src/app', 'src/app/a.ts').querySelector('button') as Element);
     expect(boxOf('src/app').dataset.selected).toBe('true');
+    await click(button('Menu', boxOf('src/app')));
+    expect(menuLabels('src/app')).toEqual(['Add note', 'Rename', 'Split']);
+    await click(button('Menu', boxOf('src/app')));
     await click(boxOf('src/infra'), true);
     await click(boxOf('src/infra'), true);
     expect([boxOf('src/app').dataset.selected, boxOf('src/infra').dataset.selected]).toEqual(['true', 'true']);
@@ -774,6 +825,16 @@ describe('the page reshapes packages and files', () => {
       'infra/db.ts',
       'infra/repo.ts',
     ]);
+  });
+
+  it('folds a file into the file box clicked next', async () => {
+    await showApp('#at=src/infra&plan=reshape');
+    await waitFor(() => expect(boxIds()).toContain('src/infra/repo.ts'));
+    await menu('src/infra/repo.ts', 'Fold into…');
+    await click(boxOf('src/infra/db.ts'));
+    await waitFor(() => expect(sentences()).toEqual(['Fold src/infra/repo.ts into src/infra/db.ts']));
+    expect(storedEdits()).toEqual([{ kind: 'fate', file: 'src/infra/repo.ts', fate: 'fold', into: 'src/infra/db.ts' }]);
+    await waitFor(() => expect(boxIds()).not.toContain('src/infra/repo.ts'));
   });
 
   it('creates a package in a view the plan has emptied', async () => {

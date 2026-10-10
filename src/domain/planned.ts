@@ -224,23 +224,31 @@ function rekeyed(map: Map<string, number>, move: Relocate): Map<string, number> 
   return new Map([...map].map(([path, origin]) => [move(path), origin]));
 }
 
-function relocatedScan(scan: ScanResult, move: Relocate): ScanResult {
-  const moved: ScanResult = {
+function relocatedFiles(scan: ScanResult, move: Relocate): ScanResult {
+  return {
     ...scan,
     files: scan.files.map(file => ({ ...file, path: move(file.path) })),
     edges: scan.edges.map(edge => ({ ...edge, from: move(edge.from), to: move(edge.to) })),
     externals: scan.externals.map(ext => ({ ...ext, from: move(ext.from) })),
   };
-  if (scan.planned === undefined) return moved;
-  return { ...moved, planned: scan.planned.map(edge => ({ from: move(edge.from), to: move(edge.to) })) };
+}
+
+function relocatedPlanned(scan: ScanResult, move: Relocate): ScanResult {
+  if (scan.planned === undefined) return scan;
+  return { ...scan, planned: scan.planned.map(edge => ({ from: move(edge.from), to: move(edge.to) })) };
+}
+
+function withScan(state: WalkState, scan: ScanResult, move: Relocate): WalkState {
+  return { ...state, scan, marks: { declared: rekeyed(state.marks.declared, move), deleted: rekeyed(state.marks.deleted, move) } };
 }
 
 function relocated(state: WalkState, move: Relocate): WalkState {
-  return {
-    ...state,
-    scan: relocatedScan(state.scan, move),
-    marks: { declared: rekeyed(state.marks.declared, move), deleted: rekeyed(state.marks.deleted, move) },
-  };
+  return withScan(state, relocatedPlanned(relocatedFiles(state.scan, move), move), move);
+}
+
+function applyMove(state: WalkState, edit: MoveEdit): WalkState {
+  const move = exactly(edit.file, moveDest(edit.file, edit.to));
+  return withScan(state, relocatedFiles(state.scan, move), move);
 }
 
 function exactly(from: string, to: string): Relocate {
@@ -320,7 +328,7 @@ function applyAdd(state: WalkState, edit: AddEdit): WalkState {
 type ApplyRules = { [K in EditKind]: (state: WalkState, edit: EditOf[K], index: number) => WalkState };
 
 const APPLY_RULES: ApplyRules = {
-  'move-file': (state, edit) => relocated(state, exactly(edit.file, moveDest(edit.file, edit.to))),
+  'move-file': applyMove,
   'cut-edge': applyCut,
   'add-edge': applyAdd,
   note: state => state,
