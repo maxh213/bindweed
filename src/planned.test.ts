@@ -332,6 +332,13 @@ describe('package edits and file fates in the walk', () => {
     expect(edgesOf(planned)).toContain('src/app/a.ts>src/app/c.ts');
   });
 
+  it('moves a deleted mark onto the file a later rename lands on', () => {
+    const report = planReport(LAYERED, [{ kind: 'fate', file: 'src/app/b.ts', fate: 'delete' }, { kind: 'rename-file', from: 'src/app/b.ts', to: 'c.ts' }], cycleTexts);
+    expect(report.scan.deleted).toEqual(['src/app/c.ts']);
+    expect(report.warnings[0]).toEqual([{ kind: 'deleted-imports', file: 'src/app/c.ts', importers: ['src/app/a.ts'] }]);
+    expect(graphView(report.scan, 'src/app', 'repo')?.nodes.find(node => node.id === 'src/app/c.ts')).toMatchObject({ fate: 'delete' });
+  });
+
   it('gives the pinned reasons for merges', () => {
     expect(
       staleReasons(LAYERED, [

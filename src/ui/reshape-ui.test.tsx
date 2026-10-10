@@ -19,10 +19,13 @@ vi.mock('@xyflow/react', async () => {
     edgeTypes: Record<string, (props: never) => ReactElement | null>;
     onNodeClick?: (event: { shiftKey: boolean }, node: FakeNode) => void;
     onNodeDoubleClick?: (event: unknown, node: FakeNode) => void;
+    onEdgeClick?: (event: unknown, edge: FakeEdge) => void;
+    onConnect?: (connection: { source: string; target: string }) => void;
     onPaneClick?: (event: unknown) => void;
   };
 
   const centers: { x: number; y: number }[] = [];
+  let lastFlow: FakeFlowProps | null = null;
 
   function fakeNodeView(props: FakeFlowProps, node: FakeNode) {
     const Box = props.nodeTypes[node.type];
@@ -43,7 +46,7 @@ vi.mock('@xyflow/react', async () => {
     const Arrow = props.edgeTypes[edge.type];
     return ce(
       'g',
-      { key: edge.id },
+      { key: edge.id, onClick: () => props.onEdgeClick?.({}, edge) },
       ce(Arrow as (props: Record<string, unknown>) => ReactElement | null, {
         id: edge.id,
         source: edge.source,
@@ -65,6 +68,7 @@ vi.mock('@xyflow/react', async () => {
   }
 
   function ReactFlow(props: FakeFlowProps) {
+    lastFlow = props;
     return ce(
       'div',
       { className: 'fake-flow', onClick: (event: { target?: unknown; currentTarget?: unknown }) => paneClick(props, event) },
@@ -80,7 +84,12 @@ vi.mock('@xyflow/react', async () => {
     },
   };
 
-  Object.assign(globalThis, { reshapeCenters: centers });
+  Object.assign(globalThis, {
+    reshapeCenters: centers,
+    reshapeConnect: (source: string, target: string) => {
+      lastFlow?.onConnect?.({ source, target });
+    },
+  });
 
   return {
     ReactFlow,
@@ -102,6 +111,7 @@ const HEAD = 'a'.repeat(40);
 const sheet = process.getBuiltinModule('node:fs').readFileSync(new URL('./app.css', import.meta.url), 'utf8');
 
 let extraFiles: { path: string; test: boolean }[] = [];
+let extraEdges: { from: string; to: string; kind: 'runtime' }[] = [];
 
 const BASE_SCAN = {
   files: [
@@ -133,8 +143,7 @@ const BASE_SCAN = {
 };
 
 function workspaceScan() {
-  if (extraFiles.length === 0) return BASE_SCAN;
-  return { ...BASE_SCAN, files: [...BASE_SCAN.files, ...extraFiles] };
+  return { ...BASE_SCAN, files: [...BASE_SCAN.files, ...extraFiles], edges: [...BASE_SCAN.edges, ...extraEdges] };
 }
 
 type Hit = { status: number; body: unknown };
@@ -459,6 +468,7 @@ describe('the page reshapes packages and files', () => {
   beforeEach(async () => {
     plans.clear();
     extraFiles = [];
+    extraEdges = [];
     layout = emptyLayout();
     await seed('Reshape', 'reshape', []);
   });
@@ -1134,6 +1144,45 @@ describe('the page reshapes packages and files', () => {
     await named('probe', 'Merge');
     expect(dialogError()).toBe('src/probe already exists');
     expect(storedEdits()).toHaveLength(0);
+  });
+
+  function connect(source: string, target: string): void {
+    const hook = (globalThis as { reshapeConnect?: (source: string, target: string) => void }).reshapeConnect;
+    if (hook === undefined) throw new Error('missing connect');
+    hook(source, target);
+  }
+
+  function edgeOf(from: string, to: string): Element {
+    const el = document.querySelector(`[data-from="${from}"][data-to="${to}"]`);
+    if (el === null) throw new Error(`missing edge ${from} ${to}`);
+    return el;
+  }
+
+  it('refuses an external the planned graph already draws, and cuts that arrow', async () => {
+    layout = { version: 1, views: {}, settings: { tests: false, external: true } };
+    await showApp('#at=src&plan=reshape');
+    await waitFor(() => expect(boxIds()).toContain('react'));
+    await act(() => connect('src/infra', 'react'));
+    await waitFor(() => expect(notice()).toBe('src/infra already imports react'));
+    expect(storedEdits()).toEqual([]);
+    expect(sentences()).toEqual([]);
+    await click(edgeOf('src/infra', 'react'));
+    await pressDelete();
+    await waitFor(() => expect(sentences()).toEqual(['src/infra must not import react (1 import)']));
+    expect(notice()).toBe('');
+    expect(storedEdits()).toEqual([{ kind: 'cut-edge', from: 'src/infra', to: 'react', files: [['src/infra/repo.ts', 'react']] }]);
+  });
+
+  it('draws across a test-only edge while tests are off', async () => {
+    extraFiles = [{ path: 'src/domain/only.test.ts', test: true }];
+    extraEdges = [{ from: 'src/domain/only.test.ts', to: 'src/infra/db.ts', kind: 'runtime' }];
+    await showApp('#at=src&plan=reshape');
+    await waitFor(() => expect(boxIds()).toEqual(['src/app', 'src/infra', 'src/domain']));
+    expect(document.querySelector('[data-from="src/domain"][data-to="src/infra"]')).toBeNull();
+    await act(() => connect('src/domain', 'src/infra'));
+    await waitFor(() => expect(sentences()).toEqual(['src/domain should use src/infra']));
+    expect(notice()).toBe('');
+    expect(storedEdits()).toEqual([{ kind: 'add-edge', from: 'src/domain', to: 'src/infra' }]);
   });
 
   it('refuses a package name taken in planned while now is shown', async () => {

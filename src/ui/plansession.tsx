@@ -53,6 +53,7 @@ type PlanSessionProps = {
   edges: ViewEdge[] | undefined;
   other: GraphView | undefined;
   planned: GraphView | undefined;
+  named: GraphView | undefined;
   ids: Set<string>;
   selection: string[];
   deletable: ArrowEnds | null;
@@ -501,7 +502,7 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     closeAsk();
   };
   const submitName = (current: NameAsk, name: string): void => {
-    const taken = nameTaken(props.at, props.planned?.nodes ?? [], current.mode, emptyOf(props.planned));
+    const taken = nameTaken(props.at, props.named?.nodes ?? [], current.mode, emptyOf(props.named));
     settle(nameEdit(current, name, { at: props.at, taken, selected: selectedPackages(props.nodes, props.selection) }));
   };
   const submitSplit = (current: SplitAsk, names: string[], assigned: Record<string, string>): void => {
