@@ -72,14 +72,34 @@ describe('the reshape dialog rules', () => {
   });
 
   it('counts a hidden parent as taken, except when merging', () => {
+    const boxes = [
+      { id: 'src/app/read', kind: 'package', files: 1 },
+      { id: 'src/app/write/deep', kind: 'package', files: 1 },
+      { id: 'src/domain', kind: 'package', files: 2 },
+    ];
     const ids = ['src/app/read', 'src/app/write/deep', 'src/domain'];
     const hidden = new Set([...ids, 'src/app', 'src/app/write']);
-    expect(nameTaken('src', ids, 'create')).toEqual(hidden);
-    expect(nameTaken('src', ids, 'rename')).toEqual(hidden);
-    expect(nameTaken('src', ids, 'merge')).toEqual(new Set(ids));
-    expect(nameTaken('src', ['src/app/write/deep'], 'create')).toEqual(new Set(['src/app/write/deep', 'src/app/write', 'src/app']));
-    expect(nameTaken('', ['src'], 'create')).toEqual(new Set(['src']));
+    expect(nameTaken('src', boxes, 'create')).toEqual(hidden);
+    expect(nameTaken('src', boxes, 'rename')).toEqual(hidden);
+    expect(nameTaken('src', boxes, 'merge')).toEqual(new Set(ids));
+    expect(nameTaken('src', [{ id: 'src/app/write/deep', kind: 'package', files: 1 }], 'create')).toEqual(new Set(['src/app/write/deep', 'src/app/write', 'src/app']));
+    expect(nameTaken('', [{ id: 'src', kind: 'package', files: 7 }], 'create')).toEqual(new Set(['src']));
     expect(nameTaken('src', [], 'create')).toEqual(new Set());
+  });
+
+  it('refuses a merge onto a file or a package with files, but not an empty package', () => {
+    const boxes = [
+      { id: 'src/ports', kind: 'package', files: 0 },
+      { id: 'src/domain', kind: 'package', files: 2 },
+      { id: 'src/app/a.ts', kind: 'file' },
+    ];
+    const taken = [...nameTaken('src', boxes, 'merge')];
+    expect(taken).toEqual(['src/domain', 'src/app/a.ts']);
+    expect(nameEdit(MERGE, 'ports', scene('src', taken, SELECTED))).toEqual({
+      edit: { kind: 'merge-packages', packages: ['src/app/read', 'src/app/write'], into: 'src/ports' },
+    });
+    expect(nameEdit(MERGE, 'domain', scene('src', taken, SELECTED))).toEqual({ problem: 'src/domain already exists' });
+    expect(nameEdit(MERGE, 'a.ts', scene('src/app', taken, SELECTED))).toEqual({ problem: 'src/app/a.ts already exists' });
   });
 
   it('checks a split in the pinned order', () => {

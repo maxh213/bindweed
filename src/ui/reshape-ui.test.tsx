@@ -934,6 +934,45 @@ describe('the page reshapes packages and files', () => {
     expect(boxIds()).not.toContain('src/app/read');
   });
 
+  it('merges into an empty package the plan created', async () => {
+    await seed('Reshape', 'reshape', [{ kind: 'create-package', path: 'src/ports' }]);
+    await showApp('#at=src&plan=reshape');
+    await waitFor(() => expect(boxOf('src/ports').textContent).toContain('0 files'));
+    await click(boxOf('src/app'));
+    await click(boxOf('src/infra'), true);
+    await click(button('Menu', boxOf('src/app')));
+    await click(button('Merge', boxOf('src/app')));
+    await named('ports', 'Merge');
+    await waitFor(() => expect(lastSentence()).toBe('Merge src/app and src/infra into src/ports'));
+    expect(storedEdits()).toEqual([
+      { kind: 'create-package', path: 'src/ports' },
+      { kind: 'merge-packages', packages: ['src/app', 'src/infra'], into: 'src/ports' },
+    ]);
+    expect(entryRow('Merge src/app and src/infra into src/ports').dataset.stale).toBeUndefined();
+    await waitFor(() => expect(boxOf('src/ports').textContent).toContain('5 files'));
+  });
+
+  it('refuses a split part that names a declared empty package', async () => {
+    await seed('Reshape', 'reshape', [{ kind: 'create-package', path: 'src/app/spare' }]);
+    await showApp('#at=src&plan=reshape');
+    await waitFor(() => expect(rowNames('src/app')).toEqual(['a.ts', 'b.ts', 'save.ts']));
+    await menu('src/app', 'Split');
+    await waitFor(() => expect(dialogLabel()).toBe('Split package'));
+    expect(selects().map(item => item.getAttribute('aria-label'))).toEqual(['a.test.ts', 'a.ts', 'b.ts', 'save.ts']);
+    await typeInto('Part 1', 'spare');
+    await typeInto('Part 2', 'write');
+    for (const label of ['a.test.ts', 'a.ts', 'b.ts', 'save.ts']) await choose(label, 'write');
+    await click(button('Split'));
+    expect(dialogError()).toBe('src/app/spare already exists');
+    expect(sentences()).toEqual(['Create package src/app/spare']);
+    await typeInto('Part 1', 'read');
+    await choose('a.test.ts', 'read');
+    await choose('a.ts', 'read');
+    await click(button('Split'));
+    await waitFor(() => expect(lastSentence()).toBe(SPLIT_SENTENCE));
+    expect(storedEdits()).toHaveLength(2);
+  });
+
   it('The cycle badge stays at the root and inside app', async () => {
     await seed('Split app', 'split-app', [
       { kind: 'move-file', file: 'src/app/save.ts', to: 'src/infra' },

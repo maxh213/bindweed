@@ -523,6 +523,14 @@ describe('package edits and file fates in the walk', () => {
     ).toEqual([null, null, 'no such directory src/gone']);
   });
 
+  it('moves a planned edge endpoint when its file folds', () => {
+    const planned = applyPlan(LAYERED, [
+      { kind: 'add-edge', from: 'src/infra/repo.ts', to: 'src/app' },
+      { kind: 'fate', file: 'src/infra/repo.ts', fate: 'fold', into: 'src/infra/db.ts' },
+    ]);
+    expect(planned.planned).toEqual([{ from: 'src/infra/db.ts', to: 'src/app' }]);
+  });
+
   it('marks a deleted file that follows a move, and folds a file into another', () => {
     const deleted = applyPlan(LAYERED, [{ kind: 'fate', file: 'src/app/save.ts', fate: 'delete' }, MOVE_SAVE]);
     expect(deleted.deleted).toEqual(['src/infra/save.ts']);

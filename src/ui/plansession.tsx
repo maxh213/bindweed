@@ -77,7 +77,7 @@ type PlanSessionView = {
   pickFile: (id: string) => boolean;
 };
 
-type SplitAsk = { pkg: string; files: string[] };
+type SplitAsk = { pkg: string; files: string[]; packages: string[] };
 
 function editsOf(doc: PlanDoc | null): PlanEdit[] {
   if (doc === null) return [];
@@ -264,10 +264,6 @@ function ReshapeDialogs(
   );
 }
 
-function nodeIdsOf(view: GraphView | undefined): Set<string> {
-  return new Set((view?.nodes ?? []).map(node => node.id));
-}
-
 function kindOf(nodes: GraphNode[], id: string): GraphNode['kind'] | undefined {
   return nodes.find(node => node.id === id)?.kind;
 }
@@ -276,11 +272,15 @@ function selectedPackages(nodes: GraphNode[], selection: string[]): GraphNode[] 
   return nodes.filter(node => node.kind === 'package' && selection.includes(node.id)).sort((a, b) => a.id.localeCompare(b.id));
 }
 
-async function filesUnder(token: string, dir: string, slug: string, fetcher: typeof fetch): Promise<string[]> {
+type SplitBoxes = { files: string[]; packages: string[] };
+
+async function boxesUnder(token: string, dir: string, slug: string, fetcher: typeof fetch): Promise<SplitBoxes> {
   const view = await fetchGraph(token, dir, fetcher, { tests: true, external: false, plan: slug });
-  if ('error' in view) return [];
-  const nested = await Promise.all(view.nodes.filter(node => node.kind === 'package').map(node => filesUnder(token, node.id, slug, fetcher)));
-  return [...view.nodes.filter(node => node.kind === 'file').map(node => node.id), ...nested.flat()].sort(byStrings);
+  if ('error' in view) return { files: [], packages: [] };
+  const packages = view.nodes.filter(node => node.kind === 'package').map(node => node.id);
+  const nested = await Promise.all(packages.map(id => boxesUnder(token, id, slug, fetcher)));
+  const files = view.nodes.filter(node => node.kind === 'file').map(node => node.id);
+  return { files: [...files, ...nested.flatMap(box => box.files)].sort(byStrings), packages: [...packages, ...nested.flatMap(box => box.packages)] };
 }
 
 async function boxShown(token: string, id: string, query: { tests: boolean; external: boolean; plan: string | null }, fetcher: typeof fetch): Promise<boolean> {
@@ -493,17 +493,16 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     if (outcome.edit !== null) editPlan(outcome.edit);
     closeAsk();
   };
-  const boxIds = (): string[] => [...nodeIdsOf(props.planned)];
   const submitName = (current: NameAsk, name: string): void => {
-    settle(nameEdit(current, name, { at: props.at, taken: nameTaken(props.at, boxIds(), current.mode), selected: selectedPackages(props.nodes, props.selection) }));
+    settle(nameEdit(current, name, { at: props.at, taken: nameTaken(props.at, props.planned?.nodes ?? [], current.mode), selected: selectedPackages(props.nodes, props.selection) }));
   };
   const submitSplit = (current: SplitAsk, names: string[], assigned: Record<string, string>): void => {
-    settle(splitEdit({ pkg: current.pkg, names, files: current.files, assigned, taken: new Set(boxIds()) }));
+    settle(splitEdit({ pkg: current.pkg, names, files: current.files, assigned, taken: new Set(current.packages) }));
   };
   const openSplit = async (pkg: string): Promise<void> => {
-    const files = await filesUnder(props.token, pkg, String(slug), props.fetcher);
+    const boxes = await boxesUnder(props.token, pkg, String(slug), props.fetcher);
     closeAsk();
-    setSplitAsk({ pkg, files });
+    setSplitAsk({ pkg, files: boxes.files, packages: boxes.packages });
   };
   const armFold = (file: string): void => {
     setFoldFrom(file);

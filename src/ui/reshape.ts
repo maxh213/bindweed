@@ -74,10 +74,17 @@ function addAncestors(at: string, parent: string, taken: Set<string>): void {
   addAncestors(at, parentOf(parent), taken);
 }
 
-export function nameTaken(at: string, ids: readonly string[], mode: NameAsk['mode']): Set<string> {
-  const taken = new Set(ids);
-  if (mode === 'merge') return taken;
-  for (const id of ids) addAncestors(at, parentOf(id), taken);
+type TakenBox = { id: string; kind: string; files?: number };
+
+function mergeClash(box: TakenBox): boolean {
+  if (box.kind !== 'package') return true;
+  return box.files !== 0;
+}
+
+export function nameTaken(at: string, boxes: readonly TakenBox[], mode: NameAsk['mode']): Set<string> {
+  if (mode === 'merge') return new Set(boxes.filter(mergeClash).map(box => box.id));
+  const taken = new Set(boxes.map(box => box.id));
+  for (const box of boxes) addAncestors(at, parentOf(box.id), taken);
   return taken;
 }
 

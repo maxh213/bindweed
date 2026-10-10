@@ -836,6 +836,27 @@ describe('graphView over a planned scan', () => {
     expect(view(scan, 'src/domain').nodes[0]).toMatchObject({ id: 'src/domain/model.ts', fate: 'delete' });
     expect(view(LAYERED, 'src/domain').nodes[0]).not.toHaveProperty('fate');
   });
+
+  it('regroups hidden packages in detail and pairs, externals included', () => {
+    const scan: ScanResult = {
+      ...scanOf(
+        ['src/app/read/a.ts', 'src/app/write/b.ts', 'src/infra/db.ts'],
+        [
+          ['src/app/read/a.ts', 'src/app/write/b.ts'],
+          ['src/app/write/b.ts', 'src/app/read/a.ts'],
+        ],
+      ),
+      externals: [{ from: 'src/app/write/b.ts', name: 'react', kind: 'runtime' }],
+      hidden: ['src/app'],
+    };
+    const read = detailOf(scan, 'src/app/read', 'src');
+    expect(read.imports.map(entry => entry.id)).toEqual(['src/app/write']);
+    expect(read.importedBy.map(entry => entry.id)).toEqual(['src/app/write']);
+    const write = nodeDetail(scan, 'src/app/write', 'src', 'repo', { tests: false, external: true });
+    expect(write?.imports.map(entry => entry.id)).toEqual(['react', 'src/app/read']);
+    expect(edgePairs(scan, 'src', 'src/app/read', 'src/app/write')).toEqual([['src/app/read/a.ts', 'src/app/write/b.ts']]);
+    expect(edgePairs(scan, 'src', 'src/app/write', 'react', { tests: false, external: true })).toEqual([['src/app/write/b.ts', 'react']]);
+  });
 });
 
 describe('cycleTexts', () => {

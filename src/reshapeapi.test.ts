@@ -336,6 +336,13 @@ describe('package edits and file fates over the 005 tree', () => {
     const app = await graph('at=src/app&plan=reshape');
     expect(idsOf(app.nodes)).toEqual(['src/app/read', 'src/app/write']);
     expect(app.warnings).toEqual(SPLIT_CYCLE);
+    const readDetail = loose.parse(await body('/api/detail?id=src/app/read&at=src&plan=reshape'));
+    expect(readDetail.imports).toEqual([
+      { id: 'src/adapters', name: 'adapters', kind: 'package', runtime: 1, type: 1, heritage: 0 },
+      { id: 'src/app/write', name: 'write', kind: 'package', runtime: 1, type: 0, heritage: 0 },
+      { id: 'src/domain', name: 'domain', kind: 'package', runtime: 0, type: 1, heritage: 0 },
+    ]);
+    expect(readDetail.importedBy).toEqual([{ id: 'src/app/write', name: 'write', kind: 'package', runtime: 1, type: 0, heritage: 0 }]);
     const top = await graph('plan=reshape');
     expect(idsOf(top.nodes)).toEqual(['src']);
     expect(nodeOf(top.nodes, 'src').files).toBe(7);
@@ -441,6 +448,16 @@ describe('package edits and file fates over the 005 tree', () => {
     expect(src.stale).toEqual([null]);
     expect(src).not.toHaveProperty('warnings');
     expect(nodeOf(src.nodes, 'src/app').files).toBe(3);
+  });
+
+  it('A created package holding only a test file is not drawn and does not warn', async () => {
+    await reshape([CREATE_PORTS, { kind: 'move-file', file: 'src/app/a.test.ts', to: 'src/ports' }]);
+    const src = await graph('at=src&plan=reshape');
+    expect(src.stale).toEqual([null, null]);
+    expect(src).not.toHaveProperty('warnings');
+    expect(idsOf(src.nodes)).toEqual(['src/app', 'src/infra', 'src/domain']);
+    const withTests = await graph('at=src&tests=1&plan=reshape');
+    expect(nodeOf(withTests.nodes, 'src/ports').files).toBe(1);
   });
 
   it('Each new kind gives its reason when it no longer applies', async () => {
