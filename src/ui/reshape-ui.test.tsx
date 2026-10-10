@@ -324,6 +324,10 @@ describe('the page reshapes packages and files', () => {
     return Array.from(document.querySelectorAll<HTMLElement>('.fake-node .box:not(.ghost)')).map(box => box.dataset.id ?? '');
   }
 
+  function ghostBoxIds(): string[] {
+    return Array.from(document.querySelectorAll<HTMLElement>('.fake-node .box.ghost')).map(box => box.dataset.id ?? '');
+  }
+
   function boxOf(id: string): HTMLElement {
     const box = nodeById(id).querySelector<HTMLElement>('.box');
     if (box === null) throw new Error(`missing box ${id}`);
@@ -853,9 +857,17 @@ describe('the page reshapes packages and files', () => {
     await waitFor(() => expect(sentences()).toEqual(['Fold src/infra/repo.ts into src/infra/db.ts']));
     expect(storedEdits()).toEqual([{ kind: 'fate', file: 'src/infra/repo.ts', fate: 'fold', into: 'src/infra/db.ts' }]);
     await waitFor(() => expect(boxIds()).not.toContain('src/infra/repo.ts'));
+    await chooseShown('Now');
+    await waitFor(() => expect(boxIds()).toContain('src/infra/repo.ts'));
+    await chooseShown('Planned');
+    await waitFor(() => expect(boxIds()).not.toContain('src/infra/repo.ts'));
+    expect(ghostBoxIds()).toEqual([]);
     await click(boxOf('src/infra/db.ts'));
     expect(storedEdits()).toEqual([{ kind: 'fate', file: 'src/infra/repo.ts', fate: 'fold', into: 'src/infra/db.ts' }]);
     expect(sentences()).toEqual(['Fold src/infra/repo.ts into src/infra/db.ts']);
+    await crumb('src');
+    await waitFor(() => expect(rowNames('src/infra')).toEqual(['db.ts']));
+    expect(ghostNames('src/infra')).toEqual([]);
   });
 
   it('does not fold a file into a package box', async () => {

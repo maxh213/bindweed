@@ -172,6 +172,83 @@ describe('package rows', () => {
   });
 });
 
+describe('a fold leaves no ghost', () => {
+  const FOLD: PlanEdit = { kind: 'fate', file: 'src/app/a.ts', fate: 'fold', into: 'src/app/b.ts' };
+  const NOW = viewOf([fileNode('src/app/a.ts', 0, 0), fileNode('src/app/b.ts', 0, 1), fileNode('src/app/save.ts', 0, 2)]);
+  const PLANNED = viewOf([fileNode('src/app/b.ts', 0, 1)]);
+
+  it('drops the row and the box of a file a non-stale fold removed', () => {
+    const pack = [{ id: 'src/app', now: NOW, planned: PLANNED }];
+    expect(picture({ packages: pack, edits: [FOLD], stale: [null] }).ink.rows.get('src/app')).toEqual([
+      { path: 'src/app/b.ts', name: 'b.ts', ghost: false, deleted: false },
+      { path: 'src/app/save.ts', name: 'save.ts', ghost: true, deleted: false },
+    ]);
+    expect(picture({ nodes: PLANNED.nodes, other: NOW, edits: [FOLD], stale: [null] }).ink.ghosts).toEqual([
+      { id: 'src/app/save.ts', name: 'save.ts', x: 520, y: 0 },
+    ]);
+  });
+
+  it('keeps the ghost when the fold is stale', () => {
+    const pack = [{ id: 'src/app', now: NOW, planned: PLANNED }];
+    expect(picture({ packages: pack, edits: [FOLD], stale: ['no such file src/app/a.ts'] }).ink.rows.get('src/app')).toEqual([
+      { path: 'src/app/b.ts', name: 'b.ts', ghost: false, deleted: false },
+      { path: 'src/app/a.ts', name: 'a.ts', ghost: true, deleted: false },
+      { path: 'src/app/save.ts', name: 'save.ts', ghost: true, deleted: false },
+    ]);
+  });
+
+  it('keeps a ghost for a file no fold took, in Now too', () => {
+    const pack = [{ id: 'src/app', now: viewOf([fileNode('src/app/b.ts')]), planned: NOW }];
+    expect(picture({ shown: 'now', packages: pack, edits: [FOLD], stale: [null] }).ink.rows.get('src/app')).toEqual([
+      { path: 'src/app/b.ts', name: 'b.ts', ghost: false, deleted: false },
+      { path: 'src/app/a.ts', name: 'a.ts', ghost: true, deleted: false },
+      { path: 'src/app/save.ts', name: 'save.ts', ghost: true, deleted: false },
+    ]);
+  });
+
+  it('follows the file through the earlier edit that moved or renamed it', () => {
+    const empty = viewOf([]);
+    const pack = [{ id: 'src/app', now: viewOf([fileNode('src/app/save.ts')]), planned: empty }];
+    const renamed: PlanEdit = { kind: 'rename-file', from: 'src/app/save.ts', to: 'writer.ts' };
+    const foldWriter: PlanEdit = { kind: 'fate', file: 'src/app/writer.ts', fate: 'fold', into: 'src/app/a.ts' };
+    expect(picture({ packages: pack, edits: [renamed, foldWriter], stale: [null, null] }).ink.rows.get('src/app')).toEqual([]);
+    const moved: PlanEdit = { kind: 'move-file', file: 'src/app/save.ts', to: 'src/infra' };
+    const foldMoved: PlanEdit = { kind: 'fate', file: 'src/infra/save.ts', fate: 'fold', into: 'src/infra/db.ts' };
+    expect(picture({ packages: pack, edits: [moved, foldMoved], stale: [null, null] }).ink.rows.get('src/app')).toEqual([]);
+    const renamedPkg: PlanEdit = { kind: 'rename-package', from: 'src/app', to: 'src/adapters' };
+    const foldRenamed: PlanEdit = { kind: 'fate', file: 'src/adapters/save.ts', fate: 'fold', into: 'src/adapters/a.ts' };
+    expect(picture({ packages: pack, edits: [renamedPkg, foldRenamed], stale: [null, null] }).ink.rows.get('src/app')).toEqual([]);
+    const merged: PlanEdit = { kind: 'merge-packages', packages: ['src/app', 'src/infra'], into: 'src/core' };
+    const foldMerged: PlanEdit = { kind: 'fate', file: 'src/core/save.ts', fate: 'fold', into: 'src/core/db.ts' };
+    expect(picture({ packages: pack, edits: [merged, foldMerged], stale: [null, null] }).ink.rows.get('src/app')).toEqual([]);
+    const split: PlanEdit = { kind: 'split-package', package: 'src/app', parts: [{ name: 'read', files: ['src/app/save.ts'] }, { name: 'write', files: [] }] };
+    const foldSplit: PlanEdit = { kind: 'fate', file: 'src/app/read/save.ts', fate: 'fold', into: 'src/app/read/a.ts' };
+    expect(picture({ packages: pack, edits: [split, foldSplit], stale: [null, null] }).ink.rows.get('src/app')).toEqual([]);
+  });
+
+  it('steps through the edits that leave a path alone', () => {
+    const edits: PlanEdit[] = [
+      CUT,
+      ADD,
+      NOTE_NODE,
+      NOTE_EDGE,
+      { kind: 'create-package', path: 'src/ports' },
+      { kind: 'move-file', file: 'src/app/other.ts', to: 'src/infra' },
+      { kind: 'rename-file', from: 'src/app/other.ts', to: 'thing.ts' },
+      { kind: 'rename-package', from: 'src/infra', to: 'src/adapters' },
+      { kind: 'split-package', package: 'src/app', parts: [{ name: 'read', files: ['src/app/other.ts'] }, { name: 'write', files: [] }] },
+      { kind: 'fate', file: 'src/app/b.ts', fate: 'delete' },
+      FOLD,
+      NOTE_NODE,
+    ];
+    const stale = edits.map(() => null);
+    expect(picture({ packages: [{ id: 'src/app', now: NOW, planned: PLANNED }], edits, stale }).ink.rows.get('src/app')).toEqual([
+      { path: 'src/app/b.ts', name: 'b.ts', ghost: false, deleted: false },
+      { path: 'src/app/save.ts', name: 'save.ts', ghost: true, deleted: false },
+    ]);
+  });
+});
+
 describe('ghosts, notes, cuts and added arrows', () => {
   it('places a ghost where the other graph has the file, honouring pins', () => {
     const other = viewOf([fileNode('src/app/a.ts', 0, 0), fileNode('src/app/b.ts', 0, 1), fileNode('src/app/save.ts', 0, 2)]);

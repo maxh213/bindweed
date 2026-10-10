@@ -1,5 +1,6 @@
 import {
   byStrings,
+  mergeDest,
   moveDest,
   parentOf,
   renamedFile,
@@ -139,12 +140,6 @@ function renamePackageStale(look: Look, edit: RenamePackageEdit): string | null 
 function renameFileStale(look: Look, edit: RenameFileEdit): string | null {
   if (!look.files.has(edit.from)) return `no such file ${edit.from}`;
   return takenStale(look, renamedFile(edit.from, edit.to));
-}
-
-function mergeDest(edit: MergeEdit, path: string): string {
-  const home = edit.packages.find(pkg => within(pkg, path));
-  if (home === undefined || home === edit.into) return path;
-  return `${edit.into}${path.slice(home.length)}`;
 }
 
 function listedUnder(edit: MergeEdit, path: string): boolean {

@@ -117,6 +117,12 @@ export function moveDest(file: string, to: string): string {
   return to === '.' ? name : `${to}/${name}`;
 }
 
+export function mergeDest(edit: MergeEdit, path: string): string {
+  const home = edit.packages.find(pkg => within(pkg, path));
+  if (home === undefined || home === edit.into) return path;
+  return `${edit.into}${path.slice(home.length)}`;
+}
+
 function recordOf(raw: unknown): Record<string, unknown> | undefined {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
   return Object.fromEntries(Object.entries(raw));

@@ -763,6 +763,33 @@ describe('planReport', () => {
     expect(report.warnings).toEqual([[{ kind: 'deleted-imports', file: 'src/app/a.ts', importers: ['src/app/a.test.ts', 'src/app/b.ts'] }], []]);
   });
 
+  it('names the importers a fold leaves on the deleted file it landed on', () => {
+    const report = planReport(
+      LAYERED,
+      [
+        { kind: 'fate', file: 'src/domain/shape.ts', fate: 'delete' },
+        { kind: 'fate', file: 'src/infra/repo.ts', fate: 'fold', into: 'src/domain/shape.ts' },
+      ],
+      noCycles,
+    );
+    expect(report.warnings).toEqual([
+      [{ kind: 'deleted-imports', file: 'src/domain/shape.ts', importers: ['src/app/a.ts'] }],
+      [],
+    ]);
+  });
+
+  it('names the importers a later rename gives the deleted file', () => {
+    const report = planReport(
+      LAYERED,
+      [
+        { kind: 'fate', file: 'src/app/b.ts', fate: 'delete' },
+        { kind: 'rename-file', from: 'src/app/a.ts', to: 'z.ts' },
+      ],
+      noCycles,
+    );
+    expect(report.warnings).toEqual([[{ kind: 'deleted-imports', file: 'src/app/b.ts', importers: ['src/app/z.ts'] }], []]);
+  });
+
   it('puts a new cycle on the earliest edit after which it holds, and skips cycles the current scan has', () => {
     const cycles = (scan: ScanResult): string[] => (scan.planned ?? []).map(edge => `${edge.from} → ${edge.to}`).concat(['old']);
     const report = planReport(

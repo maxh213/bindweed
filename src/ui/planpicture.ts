@@ -1,6 +1,17 @@
 import type { GraphNode, GraphView, ViewEdge } from '../domain/graph.ts';
 import { arrange, type LayerNode, type Pin, type PlacedBox } from '../domain/layout.ts';
-import { moveDest, renamedFile, sentenceOf, splitPartPath, type FateEdit, type NoteTarget, type PlanEdit } from '../domain/plan.ts';
+import {
+  mergeDest,
+  moveDest,
+  renamedFile,
+  sentenceOf,
+  splitPartPath,
+  within,
+  type FateEdit,
+  type NoteTarget,
+  type PlanEdit,
+  type SplitEdit,
+} from '../domain/plan.ts';
 import { parentDir } from './draw.ts';
 
 export type ShownGraph = 'now' | 'planned';
@@ -96,6 +107,56 @@ function diskPathOf(path: string, edits: PlanEdit[], stale: (string | null)[]): 
   return current;
 }
 
+type EditOf = { [E in PlanEdit as E['kind']]: E };
+
+type EditKind = keyof EditOf;
+
+type PathSteps = { [K in EditKind]: (edit: EditOf[K], path: string) => string | null };
+
+function splitStep(edit: SplitEdit, path: string): string | null {
+  const part = edit.parts.find(item => item.files.includes(path));
+  if (part === undefined) return path;
+  return `${splitPartPath(edit.package, part.name)}${path.slice(edit.package.length)}`;
+}
+
+const PATH_STEPS: PathSteps = {
+  'move-file': (edit, path) => (path === edit.file ? moveDest(edit.file, edit.to) : path),
+  'cut-edge': (edit, path) => path,
+  'add-edge': (edit, path) => path,
+  note: (edit, path) => path,
+  'create-package': (edit, path) => path,
+  'rename-package': (edit, path) => (within(edit.from, path) ? `${edit.to}${path.slice(edit.from.length)}` : path),
+  'rename-file': (edit, path) => (path === edit.from ? renamedFile(edit.from, edit.to) : path),
+  'merge-packages': mergeDest,
+  'split-package': splitStep,
+  fate: (edit, path) => (edit.fate === 'fold' && path === edit.file ? null : path),
+};
+
+function stepOf<K extends EditKind>(kind: K, edit: EditOf[K], path: string): string | null {
+  return PATH_STEPS[kind](edit, path);
+}
+
+function steppedPath(edit: PlanEdit, reason: string | null, path: string): string | null {
+  if (reason !== null) return path;
+  return stepOf(edit.kind, edit, path);
+}
+
+function removedByFold(path: string, edits: PlanEdit[], stale: (string | null)[]): boolean {
+  let current: string | null = path;
+  for (const [index, edit] of edits.entries()) {
+    if (current === null) return true;
+    current = steppedPath(edit, stale[index] ?? null, current);
+  }
+  return current === null;
+}
+
+type FoldGone = (path: string) => boolean;
+
+function foldGone(shown: ShownGraph, edits: PlanEdit[], stale: (string | null)[]): FoldGone {
+  if (shown !== 'planned') return () => false;
+  return path => removedByFold(path, edits, stale);
+}
+
 function noteEntryTarget(target: NoteTarget): EntryTarget {
   if ('node' in target) return { kind: 'node', id: target.node };
   return { kind: 'arrow', from: target.edge[0], to: target.edge[1], cut: false };
@@ -150,31 +211,31 @@ function rowOf(file: DrilledFile, ghost: boolean): RowInk {
   return { path: file.id, name: file.name, ghost, deleted: !ghost && file.deleted };
 }
 
-function rowsFor(shown: DrilledFile[], other: DrilledFile[]): RowInk[] {
+function rowsFor(shown: DrilledFile[], other: DrilledFile[], gone: FoldGone): RowInk[] {
   const shownIds = new Set(shown.map(file => file.id));
   const reals = shown.map(file => rowOf(file, false)).sort(byRowName);
-  const ghosts = other.filter(file => !shownIds.has(file.id)).map(file => rowOf(file, true)).sort(byRowName);
+  const ghosts = other.filter(file => !shownIds.has(file.id) && !gone(file.id)).map(file => rowOf(file, true)).sort(byRowName);
   return [...reals, ...ghosts];
 }
 
-function packageRows(pack: PackageRows, shown: ShownGraph): RowInk[] {
+function packageRows(pack: PackageRows, shown: ShownGraph, gone: FoldGone): RowInk[] {
   const now = drilledFiles(pack.now);
   const planned = drilledFiles(pack.planned);
-  return shown === 'planned' ? rowsFor(planned, now) : rowsFor(now, planned);
+  return shown === 'planned' ? rowsFor(planned, now, gone) : rowsFor(now, planned, gone);
 }
 
-function rowsMap(packages: PackageRows[], shown: ShownGraph): Map<string, RowInk[]> {
+function rowsMap(packages: PackageRows[], shown: ShownGraph, gone: FoldGone): Map<string, RowInk[]> {
   const map = new Map<string, RowInk[]>();
-  for (const pack of packages) map.set(pack.id, packageRows(pack, shown));
+  for (const pack of packages) map.set(pack.id, packageRows(pack, shown, gone));
   return map;
 }
 
-function fileGhost(node: GraphNode, spot: PlacedBox, shown: boolean): GhostBoxInk | null {
-  if (shown || node.kind !== 'file') return null;
+function fileGhost(node: GraphNode, spot: PlacedBox, skip: boolean): GhostBoxInk | null {
+  if (skip || node.kind !== 'file') return null;
   return { id: node.id, name: node.name, x: spot.x, y: spot.y };
 }
 
-function ghostBoxes(shown: GraphNode[], other: PlanView, pins: Record<string, Pin>): GhostBoxInk[] {
+function ghostBoxes(shown: GraphNode[], other: PlanView, pins: Record<string, Pin>, gone: FoldGone): GhostBoxInk[] {
   if (other === undefined || 'error' in other) return [];
   const others = other.nodes;
   const shownIds = new Set(shown.map(node => node.id));
@@ -184,7 +245,7 @@ function ghostBoxes(shown: GraphNode[], other: PlanView, pins: Record<string, Pi
   others.forEach((node, index) => {
     const spot = spots[index];
     if (spot === undefined) return;
-    const ghost = fileGhost(node, spot, shownIds.has(node.id));
+    const ghost = fileGhost(node, spot, shownIds.has(node.id) || gone(node.id));
     if (ghost !== null) ghosts.push(ghost);
   });
   return ghosts;
@@ -262,10 +323,10 @@ function changeEntries(edits: PlanEdit[], stale: (string | null)[], warnings: Pl
   return edits.map((edit, index) => ({ edit, sentence: sentenceOf(edit), stale: stale[index] ?? null, warnings: warningLines(warnings, index) }));
 }
 
-function inkOf(input: PictureInput, stale: (string | null)[]): PlanInk {
+function inkOf(input: PictureInput, stale: (string | null)[], gone: FoldGone): PlanInk {
   return {
-    rows: rowsMap(input.packages, input.shown),
-    ghosts: ghostBoxes(input.nodes, input.other, input.pins),
+    rows: rowsMap(input.packages, input.shown, gone),
+    ghosts: ghostBoxes(input.nodes, input.other, input.pins, gone),
     cuts: marksInView(liveOf(input.edits, stale, 'cut-edge'), input.ids),
     added: addedOf(input.shown, input.edits, stale, input.edges, input.ids),
     notes: noteInk(input.edits, stale),
@@ -274,8 +335,9 @@ function inkOf(input: PictureInput, stale: (string | null)[]): PlanInk {
 
 export function planPicture(input: PictureInput): PlanPicture {
   const stale = staleList(input.edits, input.stale);
+  const gone = foldGone(input.shown, input.edits, stale);
   return {
-    ink: inkOf(input, stale),
+    ink: inkOf(input, stale, gone),
     entries: changeEntries(input.edits, stale, input.warnings),
     diskPath: path => diskPathOf(path, input.edits, stale),
   };
