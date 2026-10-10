@@ -425,6 +425,21 @@ describe('package edits and file fates in the walk', () => {
     expect(edgesOf(planned)).toEqual(['src/core/b.ts>src/core/deep/a.ts']);
   });
 
+  it('does not stale a merge when two files share only their last segment', () => {
+    const scan: ScanResult = {
+      files: [
+        { path: 'src/infra/deep/a.ts', test: false },
+        { path: 'src/net/a.ts', test: false },
+      ],
+      edges: [],
+      externals: [],
+      workspaces: [],
+    };
+    const edit: PlanEdit = { kind: 'merge-packages', packages: ['src/infra', 'src/net'], into: 'src/core' };
+    expect(staleReasons(scan, [edit])).toEqual([null]);
+    expect(pathsOf(applyPlan(scan, [edit]))).toEqual(['src/core/deep/a.ts', 'src/core/a.ts']);
+  });
+
   it('refuses a merge into a directory whose only outside file is nested', () => {
     const scan: ScanResult = { ...LAYERED, files: [...LAYERED.files, { path: 'src/probe/deep/x.ts', test: false }] };
     const edit: PlanEdit = { kind: 'merge-packages', packages: ['src/app', 'src/domain'], into: 'src/probe' };
