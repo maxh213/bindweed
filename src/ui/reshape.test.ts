@@ -93,6 +93,36 @@ describe('the reshape dialog rules', () => {
     expect(splitEdit(form([' read ', 'write', ''], ALL_READ_WRITE))).toHaveProperty('edit.kind', 'split-package');
   });
 
+  it('refuses a part that already holds a nested file', () => {
+    expect(
+      splitEdit({
+        pkg: 'src/app',
+        names: ['deep', 'other'],
+        files: ['src/app/deep/x.ts', 'src/app/b.ts'],
+        assigned: { 'src/app/deep/x.ts': 'other', 'src/app/b.ts': 'other' },
+        taken: new Set(),
+      }),
+    ).toEqual({ problem: 'src/app/deep already exists' });
+    expect(
+      splitEdit({
+        pkg: 'src/app',
+        names: ['deep', 'other'],
+        files: ['src/app/deep2/x.ts', 'src/app/b.ts'],
+        assigned: { 'src/app/deep2/x.ts': 'other', 'src/app/b.ts': 'other' },
+        taken: new Set(),
+      }),
+    ).toEqual({
+      edit: {
+        kind: 'split-package',
+        package: 'src/app',
+        parts: [
+          { name: 'deep', files: [] },
+          { name: 'other', files: ['src/app/deep2/x.ts', 'src/app/b.ts'] },
+        ],
+      },
+    });
+  });
+
   it('builds the parts in field order with their files in list order', () => {
     expect(splitEdit(form(['read', '', 'write', 'spare'], ALL_READ_WRITE))).toEqual({
       edit: {

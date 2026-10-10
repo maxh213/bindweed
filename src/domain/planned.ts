@@ -264,7 +264,7 @@ function withDeclared(state: WalkState, declared: Map<string, number>): WalkStat
 }
 
 function dropped(edit: MergeEdit, path: string): boolean {
-  return edit.packages.some(pkg => pkg !== edit.into && within(pkg, path));
+  return path !== edit.into && edit.packages.includes(path);
 }
 
 function applyMerge(state: WalkState, edit: MergeEdit): WalkState {

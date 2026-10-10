@@ -372,6 +372,32 @@ describe('package edits and file fates in the walk', () => {
     expect(edgesOf(planned)).toEqual(['src/core/b.ts>src/core/deep/a.ts']);
   });
 
+  it('leaves a prefix sibling unmoved and refuses a merge into that sibling', () => {
+    const beside: ScanResult = { ...LAYERED, files: [...LAYERED.files, { path: 'src/infra2/x.ts', test: false }] };
+    const merged = applyPlan(beside, [{ kind: 'merge-packages', packages: ['src/infra', 'src/app'], into: 'src/core' }]);
+    expect(pathsOf(merged)).toContain('src/infra2/x.ts');
+    expect(pathsOf(merged)).toContain('src/core/db.ts');
+    expect(pathsOf(merged)).not.toContain('src/core2/x.ts');
+    expect(pathsOf(merged)).not.toContain('src/infra/db.ts');
+    expect(staleReasons(beside, [{ kind: 'merge-packages', packages: ['src/infra', 'src/app'], into: 'src/infra2' }])).toEqual(['src/infra2 already exists']);
+    const core2: ScanResult = { ...LAYERED, files: [...LAYERED.files, { path: 'src/core2/x.ts', test: false }] };
+    const intoCore = applyPlan(core2, [{ kind: 'merge-packages', packages: ['src/infra', 'src/app'], into: 'src/core' }]);
+    expect(staleReasons(core2, [{ kind: 'merge-packages', packages: ['src/infra', 'src/app'], into: 'src/core' }])).toEqual([null]);
+    expect(pathsOf(intoCore)).toContain('src/core2/x.ts');
+    expect(pathsOf(intoCore)).not.toContain('src/core/x.ts');
+  });
+
+  it('rekeys a declared package nested under a merged package', () => {
+    const edits: PlanEdit[] = [
+      { kind: 'create-package', path: 'src/infra/sub' },
+      { kind: 'merge-packages', packages: ['src/infra', 'src/app'], into: 'src/core' },
+    ];
+    const report = planReport(LAYERED, edits, noCycles);
+    expect(report.scan.declared).toEqual(['src/core/sub']);
+    expect(report.stale).toEqual([null, null]);
+    expect(report.warnings).toEqual([[{ kind: 'empty-package', path: 'src/core/sub' }], []]);
+  });
+
   it('gives the pinned reasons for splits', () => {
     const parts = (files: string[]) => [
       { name: 'read', files },
@@ -385,6 +411,8 @@ describe('package edits and file fates in the walk', () => {
         { kind: 'split-package', package: 'src/app', parts: [{ name: 'a.ts', files: [] }, { name: 'b.ts', files: [] }] },
       ]),
     ).toEqual(['no such directory src/gone', 'no such file src/infra/db.ts', 'no such file src/app/gone.ts', 'src/app/a.ts already exists']);
+    const apple: ScanResult = { ...LAYERED, files: [...LAYERED.files, { path: 'src/apple/x.ts', test: false }] };
+    expect(staleReasons(apple, [{ kind: 'split-package', package: 'src/app', parts: parts(['src/apple/x.ts']) }])).toEqual(['no such file src/apple/x.ts']);
   });
 
   it('splits listed files into parts, leaves the rest, declares the parts and hides the emptied package', () => {
