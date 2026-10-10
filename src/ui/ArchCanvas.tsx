@@ -497,7 +497,7 @@ function isTestNode(node: GraphNode): boolean {
 }
 
 function isDeleted(node: GraphNode): boolean {
-  return (node as { fate?: 'delete' }).fate === 'delete';
+  return node.fate === 'delete';
 }
 
 function countOf(node: GraphNode): string | null {

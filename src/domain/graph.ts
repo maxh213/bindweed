@@ -15,7 +15,7 @@ export type { ViewEdge };
 
 export type Crumb = { name: string; at: string };
 
-type Extra = Partial<HealthFields & MartinFields>;
+type Extra = Partial<HealthFields & MartinFields & { fate: 'delete' }>;
 
 export type GraphView = {
   at: string;

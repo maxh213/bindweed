@@ -6,7 +6,7 @@ export type CutEdit = { kind: 'cut-edge'; from: string; to: string; files: [stri
 
 export type AddEdit = { kind: 'add-edge'; from: string; to: string };
 
-export type NoteEdit = { kind: 'note'; target: NoteTarget; text: string };
+type NoteEdit = { kind: 'note'; target: NoteTarget; text: string };
 
 export type CreatePackageEdit = { kind: 'create-package'; path: string };
 

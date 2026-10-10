@@ -11,7 +11,6 @@ import {
   type FateEdit,
   type MergeEdit,
   type MoveEdit,
-  type NoteEdit,
   type NoteTarget,
   type PlanEdit,
   type RenameFileEdit,
@@ -202,23 +201,23 @@ function fateStale(look: Look, edit: FateEdit): string | null {
   return fateTargetStale(look, edit);
 }
 
-type StaleRule = (look: Look, cuts: CutRef[], edit: PlanEdit) => string | null;
+type EditOf = { [E in PlanEdit as E['kind']]: E };
 
-function staleBy<K extends PlanEdit['kind']>(rule: (look: Look, edit: Extract<PlanEdit, { kind: K }>, cuts: CutRef[]) => string | null): StaleRule {
-  return (look, cuts, edit) => rule(look, edit as Extract<PlanEdit, { kind: K }>, cuts);
-}
+type EditKind = keyof EditOf;
 
-const STALE_RULES: Record<PlanEdit['kind'], StaleRule> = {
-  'move-file': staleBy<'move-file'>(moveStale),
-  'cut-edge': staleBy<'cut-edge'>(cutStale),
-  'add-edge': staleBy<'add-edge'>(addStale),
-  note: staleBy<'note'>((look, edit: NoteEdit, cuts) => noteStale(look, cuts, edit.target)),
-  'create-package': staleBy<'create-package'>(createStale),
-  'rename-package': staleBy<'rename-package'>(renamePackageStale),
-  'rename-file': staleBy<'rename-file'>(renameFileStale),
-  'merge-packages': staleBy<'merge-packages'>(mergeStale),
-  'split-package': staleBy<'split-package'>(splitStale),
-  fate: staleBy<'fate'>(fateStale),
+type StaleRules = { [K in EditKind]: (look: Look, edit: EditOf[K], cuts: CutRef[]) => string | null };
+
+const STALE_RULES: StaleRules = {
+  'move-file': moveStale,
+  'cut-edge': cutStale,
+  'add-edge': addStale,
+  note: (look, edit, cuts) => noteStale(look, cuts, edit.target),
+  'create-package': createStale,
+  'rename-package': renamePackageStale,
+  'rename-file': renameFileStale,
+  'merge-packages': mergeStale,
+  'split-package': splitStale,
+  fate: fateStale,
 };
 
 function rekeyed(map: Map<string, number>, move: Relocate): Map<string, number> {
@@ -318,33 +317,37 @@ function applyAdd(state: WalkState, edit: AddEdit): WalkState {
   return { ...state, scan: { ...state.scan, planned: [...(state.scan.planned ?? []), { from: edit.from, to: edit.to }] } };
 }
 
-type ApplyRule = (state: WalkState, edit: PlanEdit, index: number) => WalkState;
+type ApplyRules = { [K in EditKind]: (state: WalkState, edit: EditOf[K], index: number) => WalkState };
 
-function applyBy<K extends PlanEdit['kind']>(rule: (state: WalkState, edit: Extract<PlanEdit, { kind: K }>, index: number) => WalkState): ApplyRule {
-  return (state, edit, index) => rule(state, edit as Extract<PlanEdit, { kind: K }>, index);
+const APPLY_RULES: ApplyRules = {
+  'move-file': (state, edit) => relocated(state, exactly(edit.file, moveDest(edit.file, edit.to))),
+  'cut-edge': applyCut,
+  'add-edge': applyAdd,
+  note: state => state,
+  'create-package': applyCreate,
+  'rename-package': (state, edit) => relocated(state, underneath(edit.from, edit.to)),
+  'rename-file': (state, edit) => relocated(state, exactly(edit.from, renamedFile(edit.from, edit.to))),
+  'merge-packages': applyMerge,
+  'split-package': applySplit,
+  fate: applyFate,
+};
+
+function staleOf<K extends EditKind>(kind: K, look: Look, cuts: CutRef[], edit: EditOf[K]): string | null {
+  return STALE_RULES[kind](look, edit, cuts);
 }
 
-const APPLY_RULES: Record<PlanEdit['kind'], ApplyRule> = {
-  'move-file': applyBy<'move-file'>((state, edit) => relocated(state, exactly(edit.file, moveDest(edit.file, edit.to)))),
-  'cut-edge': applyBy<'cut-edge'>(applyCut),
-  'add-edge': applyBy<'add-edge'>(applyAdd),
-  note: state => state,
-  'create-package': applyBy<'create-package'>(applyCreate),
-  'rename-package': applyBy<'rename-package'>((state, edit) => relocated(state, underneath(edit.from, edit.to))),
-  'rename-file': applyBy<'rename-file'>((state, edit) => relocated(state, exactly(edit.from, renamedFile(edit.from, edit.to)))),
-  'merge-packages': applyBy<'merge-packages'>(applyMerge),
-  'split-package': applyBy<'split-package'>(applySplit),
-  fate: applyBy<'fate'>(applyFate),
-};
+function appliedOf<K extends EditKind>(kind: K, state: WalkState, edit: EditOf[K], index: number): WalkState {
+  return APPLY_RULES[kind](state, edit, index);
+}
 
 function lookOf(state: WalkState): Look {
   return { scan: state.scan, files: fileSet(state.scan), marks: state.marks };
 }
 
 function stepped(state: WalkState, edit: PlanEdit, index: number, stale: (string | null)[]): WalkState {
-  const reason = STALE_RULES[edit.kind](lookOf(state), state.cuts, edit);
+  const reason = staleOf(edit.kind, lookOf(state), state.cuts, edit);
   stale.push(reason);
-  return reason === null ? APPLY_RULES[edit.kind](state, edit, index) : state;
+  return reason === null ? appliedOf(edit.kind, state, edit, index) : state;
 }
 
 function walkPlan(scan: ScanResult, edits: PlanEdit[]): WalkOut {
