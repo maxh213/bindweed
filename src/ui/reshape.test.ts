@@ -77,6 +77,7 @@ describe('the reshape dialog rules', () => {
     expect(nameTaken('src', ids, 'create')).toEqual(hidden);
     expect(nameTaken('src', ids, 'rename')).toEqual(hidden);
     expect(nameTaken('src', ids, 'merge')).toEqual(new Set(ids));
+    expect(nameTaken('src', ['src/app/write/deep'], 'create')).toEqual(new Set(['src/app/write/deep', 'src/app/write', 'src/app']));
     expect(nameTaken('', ['src'], 'create')).toEqual(new Set(['src']));
     expect(nameTaken('src', [], 'create')).toEqual(new Set());
   });

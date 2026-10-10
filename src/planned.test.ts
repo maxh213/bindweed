@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cycleTexts } from './domain/graph.ts';
+import { cycleTexts, graphView } from './domain/graph.ts';
 import type { PlanEdit } from './domain/plan.ts';
 import { applyPlan, planReport, staleReasons } from './domain/planned.ts';
 import type { ScanResult } from './domain/scan.ts';
@@ -437,6 +437,33 @@ describe('package edits and file fates in the walk', () => {
     expect(planned.hidden).toEqual(['src/infra']);
   });
 
+  it('hides an emptied package when only a file is left under it', () => {
+    const scan: ScanResult = { ...LAYERED, files: [{ path: 'src/domain/model.ts', test: false }, { path: 'src/infra/db.ts', test: false }, { path: 'src/infra/sub/x.ts', test: false }], edges: [], externals: [] };
+    const planned = applyPlan(scan, [{ kind: 'move-file', file: 'src/infra/db.ts', to: 'src/domain' }]);
+    expect(planned).not.toHaveProperty('declared');
+    expect(planned.hidden).toEqual(['src/infra']);
+    expect(graphView(planned, 'src', 'repo')?.nodes.map(node => node.id)).toEqual(['src/domain', 'src/infra/sub']);
+  });
+
+  it('hides each emptied package down to the one that still holds a file', () => {
+    const files = ['src/app/a.ts', 'src/app/sub/b.ts', 'src/app/sub/deep/c.ts', 'src/domain/model.ts'];
+    const scan: ScanResult = { ...LAYERED, files: files.map(path => ({ path, test: false })), edges: [], externals: [] };
+    const planned = applyPlan(scan, [
+      { kind: 'move-file', file: 'src/app/a.ts', to: 'src/domain' },
+      { kind: 'move-file', file: 'src/app/sub/b.ts', to: 'src/domain' },
+    ]);
+    expect(planned.hidden).toEqual(['src/app', 'src/app/sub']);
+    expect(graphView(planned, 'src', 'repo')?.nodes.map(node => node.id)).toEqual(['src/app/sub/deep', 'src/domain']);
+  });
+
+  it('counts a declared package as known to a merge and as taken to a split', () => {
+    const merged = planReport(LAYERED, [CREATE_PORTS, { kind: 'merge-packages', packages: ['src/ports', 'src/app'], into: 'src/core' }], noCycles);
+    expect(merged.stale).toEqual([null, null]);
+    expect(merged.scan).not.toHaveProperty('declared');
+    expect(pathsOf(merged.scan).filter(path => path.startsWith('src/core/'))).toEqual(['src/core/a.ts', 'src/core/b.ts', 'src/core/a.test.ts', 'src/core/save.ts']);
+    expect(staleReasons(LAYERED, [{ kind: 'create-package', path: 'src/app/read' }, SPLIT_APP])).toEqual([null, 'src/app/read already exists']);
+  });
+
   it('gives the pinned reasons for fates', () => {
     expect(
       staleReasons(LAYERED, [
@@ -542,6 +569,12 @@ describe('planReport', () => {
       [],
       [],
     ]);
+  });
+
+  it('stales a second create of an empty package and keeps the warning on the first', () => {
+    const report = planReport(LAYERED, [CREATE_PORTS, CREATE_PORTS], noCycles);
+    expect(report.stale).toEqual([null, 'src/ports already exists']);
+    expect(report.warnings).toEqual([[{ kind: 'empty-package', path: 'src/ports' }], []]);
   });
 
   it('warns about an empty package on the edit that created it, not the first edit', () => {
