@@ -840,6 +840,54 @@ describe('the page reshapes packages and files', () => {
     expect(sentences()).toEqual(['Fold src/infra/repo.ts into src/infra/db.ts']);
   });
 
+  it('does not fold a file into a package box', async () => {
+    await showApp('#at=src/infra&plan=reshape');
+    await waitFor(() => expect(boxIds()).toContain('src/infra/repo.ts'));
+    await menu('src/infra/repo.ts', 'Fold into…');
+    await crumb('src');
+    await waitFor(() => expect(boxIds()).toContain('src/domain'));
+    await click(boxOf('src/domain'));
+    expect(storedEdits()).toEqual([]);
+    expect(sentences()).toEqual([]);
+    expect(notice()).toBe('click a file to fold src/infra/repo.ts into');
+  });
+
+  it('hides Merge when a package and a file are both selected', async () => {
+    await seed('Reshape', 'reshape', [{
+      kind: 'split-package',
+      package: 'src/app',
+      parts: [{ name: 'read', files: ['src/app/a.ts'] }, { name: 'write', files: [] }],
+    }]);
+    await showApp('#at=src/app&plan=reshape');
+    await waitFor(() => expect(boxIds()).toContain('src/app/b.ts'));
+    expect(boxIds()).toContain('src/app/read');
+    await click(boxOf('src/app/read'));
+    await click(boxOf('src/app/b.ts'), true);
+    await click(button('Menu', boxOf('src/app/read')));
+    expect(menuLabels('src/app/read')).toEqual(['Add note', 'Rename', 'Split']);
+  });
+
+  it('a plain click replaces the shift selection a merge uses', async () => {
+    await seed('Reshape', 'reshape', [{
+      kind: 'split-package',
+      package: 'src/app',
+      parts: [
+        { name: 'read', files: ['src/app/a.ts', 'src/app/a.test.ts'] },
+        { name: 'write', files: ['src/app/b.ts', 'src/app/save.ts'] },
+      ],
+    }]);
+    await showApp('#at=src&plan=reshape');
+    await waitFor(() => expect(boxIds()).toContain('src/app/write'));
+    await click(boxOf('src/app/read'));
+    await click(boxOf('src/app/write'), true);
+    await click(boxOf('src/domain'));
+    await click(boxOf('src/infra'), true);
+    await click(button('Menu', boxOf('src/infra')));
+    await click(button('Merge', boxOf('src/infra')));
+    await named('core', 'Merge');
+    await waitFor(() => expect(lastSentence()).toBe('Merge src/domain and src/infra into src/core'));
+  });
+
   it('creates a package in a view the plan has emptied', async () => {
     await seed('Reshape', 'reshape', [{ kind: 'rename-package', from: 'src/infra', to: 'src/adapters' }]);
     await showApp('#at=src/infra&plan=reshape');

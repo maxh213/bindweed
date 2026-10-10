@@ -218,6 +218,7 @@ describe('package edits and file fates', () => {
       { kind: 'fate', file: 'src/app/a.ts', fate: 'burn' },
       { kind: 'fate', file: 8, fate: 'delete' },
       { kind: 'fate', file: 'src/app/a.ts', fate: 'delete', extra: 1 },
+      { kind: 'fate', file: 'src/app/a.ts', fate: 'fold', into: 'src/app/b.ts', extra: 1 },
     ];
     for (const body of bad) expect(parsePlanEdit(body)).toBeUndefined();
   });

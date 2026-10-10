@@ -286,6 +286,14 @@ describe('package edits and file fates in the walk', () => {
     ]);
   });
 
+  it('renames a package without moving a sibling that shares its prefix', () => {
+    const scan: ScanResult = { ...LAYERED, files: [...LAYERED.files, { path: 'src/infra2/x.ts', test: false }] };
+    const planned = applyPlan(scan, [{ kind: 'rename-package', from: 'src/infra', to: 'src/adapters' }]);
+    expect(pathsOf(planned)).toContain('src/infra2/x.ts');
+    expect(pathsOf(planned)).not.toContain('src/adapters2/x.ts');
+    expect(pathsOf(planned).filter(path => path.startsWith('src/adapters/'))).toEqual(['src/adapters/db.ts', 'src/adapters/repo.ts']);
+  });
+
   it('renames a package with its edges, externals, planned edges, declared paths and deleted marks', () => {
     const planned = applyPlan(LAYERED, [
       ADD_INFRA_APP,
