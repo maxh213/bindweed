@@ -877,6 +877,10 @@ describe('cycleTexts', () => {
     expect(cycleTexts(scanOf(['a/p.ts', 'b/q.ts'], [['a/p.ts', 'b/q.ts'], ['b/q.ts', 'a/p.ts']]))).toEqual(['a → b → a']);
   });
 
+  it('finds a cycle drawn only at an intermediate directory', () => {
+    expect(cycleTexts(scanOf(['w/x/y/a.ts', 'w/x/z/b.ts'], [['w/x/y/a.ts', 'w/x/z/b.ts'], ['w/x/z/b.ts', 'w/x/y/a.ts']]))).toEqual(['y → z → y']);
+  });
+
   it('leaves out test files', () => {
     expect(cycleTexts(scanOf(['src/a.ts', 'src/a.test.ts'], [['src/a.ts', 'src/a.test.ts'], ['src/a.test.ts', 'src/a.ts']]))).toEqual([]);
   });

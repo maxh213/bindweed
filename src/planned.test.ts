@@ -275,6 +275,9 @@ describe('package edits and file fates in the walk', () => {
         { kind: 'rename-package', from: 'src/infra', to: 'src/domain' },
         { kind: 'rename-file', from: 'src/app/gone.ts', to: 'x.ts' },
         { kind: 'rename-file', from: 'src/app/save.ts', to: 'b.ts' },
+        { kind: 'create-package', path: 'src/app/a.ts/child' },
+        { kind: 'rename-package', from: 'src/app/a.ts', to: 'src/app/x.ts' },
+        { kind: 'rename-file', from: 'src/app', to: 'x.ts' },
       ]),
     ).toEqual([
       'no such directory lib',
@@ -284,6 +287,9 @@ describe('package edits and file fates in the walk', () => {
       'src/domain already exists',
       'no such file src/app/gone.ts',
       'src/app/b.ts already exists',
+      'no such directory src/app/a.ts',
+      'no such directory src/app/a.ts',
+      'no such file src/app',
     ]);
   });
 
@@ -384,8 +390,9 @@ describe('package edits and file fates in the walk', () => {
         { kind: 'merge-packages', packages: ['src/app', 'src/infra'], into: 'src/domain' },
         { kind: 'merge-packages', packages: ['src/app', 'src/infra'], into: 'src/domain/model.ts' },
         { kind: 'merge-packages', packages: ['src/app', 'src/infra'], into: 'src/app/a.ts' },
+        { kind: 'merge-packages', packages: ['src/app/a.ts', 'src/infra'], into: 'src/core' },
       ]),
-    ).toEqual(['no such directory src/gone', 'src/domain already exists', 'src/domain/model.ts already exists', 'src/app/a.ts already exists']);
+    ).toEqual(['no such directory src/gone', 'src/domain already exists', 'src/domain/model.ts already exists', 'src/app/a.ts already exists', 'no such directory src/app/a.ts']);
     const twins: ScanResult = { ...LAYERED, files: [{ path: 'x/a.ts', test: false }, { path: 'y/a.ts', test: false }], edges: [], externals: [] };
     expect(staleReasons(twins, [{ kind: 'merge-packages', packages: ['x', 'y'], into: 'z' }])).toEqual(['z/a.ts already exists']);
     expect(staleReasons(twins, [{ kind: 'merge-packages', packages: ['x', 'y'], into: 'x' }])).toEqual(['x/a.ts already exists']);
@@ -464,8 +471,9 @@ describe('package edits and file fates in the walk', () => {
         { kind: 'split-package', package: 'src/app', parts: parts(['src/infra/db.ts']) },
         { kind: 'split-package', package: 'src/app', parts: parts(['src/app/gone.ts']) },
         { kind: 'split-package', package: 'src/app', parts: [{ name: 'a.ts', files: [] }, { name: 'b.ts', files: [] }] },
+        { kind: 'split-package', package: 'src/app/a.ts', parts: parts([]) },
       ]),
-    ).toEqual(['no such directory src/gone', 'no such file src/infra/db.ts', 'no such file src/app/gone.ts', 'src/app/a.ts already exists']);
+    ).toEqual(['no such directory src/gone', 'no such file src/infra/db.ts', 'no such file src/app/gone.ts', 'src/app/a.ts already exists', 'no such directory src/app/a.ts']);
     const apple: ScanResult = { ...LAYERED, files: [...LAYERED.files, { path: 'src/apple/x.ts', test: false }] };
     expect(staleReasons(apple, [{ kind: 'split-package', package: 'src/app', parts: parts(['src/apple/x.ts']) }])).toEqual(['no such file src/apple/x.ts']);
   });
@@ -555,8 +563,10 @@ describe('package edits and file fates in the walk', () => {
         { kind: 'fate', file: 'src/app/save.ts', fate: 'delete' },
         { kind: 'fate', file: 'src/app/gone.ts', fate: 'fold', into: 'src/app/a.ts' },
         { kind: 'fate', file: 'src/app/b.ts', fate: 'fold', into: 'src/app/gone.ts' },
+        { kind: 'fate', file: 'src/app', fate: 'delete' },
+        { kind: 'fate', file: 'src/app/a.ts', fate: 'fold', into: 'src/infra' },
       ]),
-    ).toEqual(['no such file src/app/gone.ts', null, 'src/app/save.ts is already deleted', 'no such file src/app/gone.ts', 'no such file src/app/gone.ts']);
+    ).toEqual(['no such file src/app/gone.ts', null, 'src/app/save.ts is already deleted', 'no such file src/app/gone.ts', 'no such file src/app/gone.ts', 'no such file src/app', 'no such file src/infra']);
   });
 
   it('reports the earliest check when two checks fail', () => {
@@ -778,6 +788,21 @@ describe('planReport', () => {
   it('warns about an empty package on the edit that created it, not the first edit', () => {
     const report = planReport(LAYERED, [MOVE_SAVE, CREATE_PORTS], noCycles);
     expect(report.warnings).toEqual([[], [{ kind: 'empty-package', path: 'src/ports' }]]);
+  });
+
+  it('warns when the only new cycle is drawn at an intermediate directory', () => {
+    const scan: ScanResult = {
+      files: [
+        { path: 'w/x/y/a.ts', test: false },
+        { path: 'w/x/z/b.ts', test: false },
+      ],
+      edges: [{ from: 'w/x/y/a.ts', to: 'w/x/z/b.ts', kind: 'runtime' }],
+      externals: [],
+      workspaces: [],
+    };
+    const report = planReport(scan, [{ kind: 'add-edge', from: 'w/x/z', to: 'w/x/y' }], cycleTexts);
+    expect(report.stale).toEqual([null]);
+    expect(report.warnings).toEqual([[{ kind: 'added-cycle', cycle: 'y → z → y' }]]);
   });
 
   it('warns when the only new cycle is drawn at the root', () => {
