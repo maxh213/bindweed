@@ -76,15 +76,40 @@ function addAncestors(at: string, parent: string, taken: Set<string>): void {
 
 type TakenBox = { id: string; kind: string; files?: number };
 
+type NamedWarning = { kind: string; path?: string };
+
 function mergeClash(box: TakenBox): boolean {
   if (box.kind !== 'package') return true;
   return box.files !== 0;
 }
 
-export function nameTaken(at: string, boxes: readonly TakenBox[], mode: NameAsk['mode']): Set<string> {
+function holdsFile(box: TakenBox): boolean {
+  return box.kind !== 'package' || box.files !== 0;
+}
+
+function takeBox(at: string, box: TakenBox, empty: ReadonlySet<string>, taken: Set<string>): void {
+  if (holdsFile(box)) {
+    taken.add(box.id);
+    addAncestors(at, parentOf(box.id), taken);
+    return;
+  }
+  if (empty.has(box.id)) taken.add(box.id);
+}
+
+function declaredPath(warning: NamedWarning): string[] {
+  if (warning.kind !== 'empty-package' || warning.path === undefined) return [];
+  return [warning.path];
+}
+
+export function declaredPaths(warnings: readonly NamedWarning[][]): string[] {
+  return warnings.flat().flatMap(declaredPath);
+}
+
+export function nameTaken(at: string, boxes: readonly TakenBox[], mode: NameAsk['mode'], empty: readonly string[]): Set<string> {
   if (mode === 'merge') return new Set(boxes.filter(mergeClash).map(box => box.id));
-  const taken = new Set(boxes.map(box => box.id));
-  for (const box of boxes) addAncestors(at, parentOf(box.id), taken);
+  const taken = new Set<string>();
+  const declared = new Set(empty);
+  for (const box of boxes) takeBox(at, box, declared, taken);
   return taken;
 }
 

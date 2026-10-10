@@ -1028,6 +1028,61 @@ describe('the page reshapes packages and files', () => {
     });
   });
 
+  const SRC_FILES = ['app/a.test.ts', 'app/a.ts', 'app/b.ts', 'app/save.ts', 'domain/model.ts', 'domain/shape.ts', 'infra/db.ts', 'infra/repo.ts'];
+
+  it('refuses a split part that names a declared package above an empty one', async () => {
+    await seed('Reshape', 'reshape', [
+      { kind: 'create-package', path: 'src/ports' },
+      { kind: 'create-package', path: 'src/ports/deep' },
+    ]);
+    await showApp('#at=&plan=reshape');
+    await waitFor(() => expect(boxIds()).toEqual(['src']));
+    await menu('src', 'Split');
+    await waitFor(() => expect(dialogLabel()).toBe('Split package'));
+    expect(selects().map(item => item.getAttribute('aria-label'))).toEqual(SRC_FILES);
+    await typeInto('Part 1', 'ports');
+    await typeInto('Part 2', 'other');
+    for (const label of SRC_FILES) await choose(label, 'other');
+    await click(button('Split'));
+    expect(dialogError()).toBe('src/ports already exists');
+    expect(sentences()).toEqual(['Create package src/ports', 'Create package src/ports/deep']);
+    expect(storedEdits()).toHaveLength(2);
+  });
+
+  async function groupedAncestors(): Promise<void> {
+    extraFiles = [{ path: 'src/infra/deep/nested/x.ts', test: false }];
+    await seed('Reshape', 'reshape', [
+      { kind: 'create-package', path: 'src/infra/de' },
+      { kind: 'create-package', path: 'src/infra/deep/empty' },
+      { kind: 'move-file', file: 'src/infra/deep/nested/x.ts', to: 'src/domain' },
+    ]);
+    await showApp('#at=src/infra&plan=reshape');
+    await waitFor(() => expect(boxOf('src/infra/deep').textContent).toContain('0 files'));
+  }
+
+  it('does not treat a grouped ancestor as a taken name', async () => {
+    await groupedAncestors();
+    await click(button('Canvas'));
+    await click(button('New package'));
+    await named('de', 'Create');
+    expect(dialogError()).toBe('src/infra/de already exists');
+    expect(sentences()).toHaveLength(3);
+    await click(button('Cancel'));
+    await click(button('Canvas'));
+    await click(button('New package'));
+    await named('deep', 'Create');
+    await waitFor(() => expect(lastSentence()).toBe('Create package src/infra/deep'));
+    expect(entryRow('Create package src/infra/deep').dataset.stale).toBeUndefined();
+    expect(storedEdits().at(-1)).toEqual({ kind: 'create-package', path: 'src/infra/deep' });
+    await click(button('Undo'));
+    await waitFor(() => expect(sentences()).toHaveLength(3));
+    await menu('src/infra/de', 'Rename');
+    await named('deep', 'Rename');
+    await waitFor(() => expect(lastSentence()).toBe('Rename src/infra/de to src/infra/deep'));
+    expect(entryRow('Rename src/infra/de to src/infra/deep').dataset.stale).toBeUndefined();
+    expect(storedEdits().at(-1)).toEqual({ kind: 'rename-package', from: 'src/infra/de', to: 'src/infra/deep' });
+  });
+
   it('The cycle badge stays at the root and inside app', async () => {
     await seed('Split app', 'split-app', [
       { kind: 'move-file', file: 'src/app/save.ts', to: 'src/infra' },

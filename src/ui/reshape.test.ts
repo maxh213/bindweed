@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { nameEdit, nameTaken, splitEdit, splitRows, type NameAsk, type Scene, type SplitForm } from './reshape.ts';
+import { declaredPaths, nameEdit, nameTaken, splitEdit, splitRows, type NameAsk, type Scene, type SplitForm } from './reshape.ts';
 
 const FILES = ['src/app/a.test.ts', 'src/app/a.ts', 'src/app/b.ts', 'src/app/save.ts'];
 
@@ -79,12 +79,36 @@ describe('the reshape dialog rules', () => {
     ];
     const ids = ['src/app/read', 'src/app/write/deep', 'src/domain'];
     const hidden = new Set([...ids, 'src/app', 'src/app/write']);
-    expect(nameTaken('src', boxes, 'create')).toEqual(hidden);
-    expect(nameTaken('src', boxes, 'rename')).toEqual(hidden);
-    expect(nameTaken('src', boxes, 'merge')).toEqual(new Set(ids));
-    expect(nameTaken('src', [{ id: 'src/app/write/deep', kind: 'package', files: 1 }], 'create')).toEqual(new Set(['src/app/write/deep', 'src/app/write', 'src/app']));
-    expect(nameTaken('', [{ id: 'src', kind: 'package', files: 7 }], 'create')).toEqual(new Set(['src']));
-    expect(nameTaken('src', [], 'create')).toEqual(new Set());
+    expect(nameTaken('src', boxes, 'create', [])).toEqual(hidden);
+    expect(nameTaken('src', boxes, 'rename', [])).toEqual(hidden);
+    expect(nameTaken('src', boxes, 'merge', [])).toEqual(new Set(ids));
+    expect(nameTaken('src', [{ id: 'src/app/write/deep', kind: 'package', files: 1 }], 'create', [])).toEqual(new Set(['src/app/write/deep', 'src/app/write', 'src/app']));
+    expect(nameTaken('', [{ id: 'src', kind: 'package', files: 7 }], 'create', [])).toEqual(new Set(['src']));
+    expect(nameTaken('src', [], 'create', [])).toEqual(new Set());
+  });
+
+  it('takes an empty drawn package only when that path is declared', () => {
+    const boxes = [
+      { id: 'src/infra/de', kind: 'package', files: 0 },
+      { id: 'src/infra/deep', kind: 'package', files: 0 },
+      { id: 'src/infra/db.ts', kind: 'file' },
+    ];
+    const empty = ['src/infra/de', 'src/infra/deep/empty'];
+    const taken = nameTaken('src/infra', boxes, 'create', empty);
+    expect(taken).toEqual(new Set(['src/infra/de', 'src/infra/db.ts']));
+    expect(nameTaken('src/infra', boxes, 'rename', empty)).toEqual(taken);
+    expect(nameEdit(CREATE, 'deep', scene('src/infra', [...taken]))).toEqual({ edit: { kind: 'create-package', path: 'src/infra/deep' } });
+    expect(nameEdit(CREATE, 'de', scene('src/infra', [...taken]))).toEqual({ problem: 'src/infra/de already exists' });
+    expect(nameEdit(renamePackage('src/infra/de'), 'deep', scene('src/infra', [...taken]))).toEqual({
+      edit: { kind: 'rename-package', from: 'src/infra/de', to: 'src/infra/deep' },
+    });
+    expect(nameTaken('src', [{ id: 'src/ports/deep', kind: 'package', files: 0 }], 'create', ['src/ports/deep'])).toEqual(new Set(['src/ports/deep']));
+    expect(nameTaken('src', [{ id: 'src/ports', kind: 'package', files: 0 }], 'create', ['src/ports/deep'])).toEqual(new Set());
+  });
+
+  it('reads declared paths from empty-package warnings only', () => {
+    expect(declaredPaths([[{ kind: 'added-cycle' }], [{ kind: 'empty-package' }], [{ kind: 'empty-package', path: 'src/ports' }]])).toEqual(['src/ports']);
+    expect(declaredPaths([])).toEqual([]);
   });
 
   it('refuses a merge onto a file or a package with files, but not an empty package', () => {
@@ -93,7 +117,7 @@ describe('the reshape dialog rules', () => {
       { id: 'src/domain', kind: 'package', files: 2 },
       { id: 'src/app/a.ts', kind: 'file' },
     ];
-    const taken = [...nameTaken('src', boxes, 'merge')];
+    const taken = [...nameTaken('src', boxes, 'merge', ['src/ports'])];
     expect(taken).toEqual(['src/domain', 'src/app/a.ts']);
     expect(nameEdit(MERGE, 'ports', scene('src', taken, SELECTED))).toEqual({
       edit: { kind: 'merge-packages', packages: ['src/app/read', 'src/app/write'], into: 'src/ports' },

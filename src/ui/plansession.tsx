@@ -7,7 +7,6 @@ import {
   withEdit,
   withRedo,
   withUndo,
-  within,
   withoutEdit,
   type NoteTarget,
   type PlanDoc,
@@ -32,7 +31,7 @@ import {
 import { FILE_DRAG_MIME, fieldTarget, keyActionOf, planDropTarget } from './plangesture.ts';
 import { arrowViewAt, entryTarget, planPicture, type Planning, type PlanInk, type ShownGraph } from './planpicture.ts';
 import { planRoster } from './planroster.ts';
-import { nameEdit, nameTaken, splitEdit, splitRows, type NameAsk, type Reshaped } from './reshape.ts';
+import { declaredPaths, nameEdit, nameTaken, splitEdit, splitRows, type NameAsk, type Reshaped } from './reshape.ts';
 
 type Picture = ReturnType<typeof planPicture>;
 
@@ -279,25 +278,16 @@ function fileIds(nodes: GraphNode[]): string[] {
   return nodes.filter(node => node.kind === 'file').map(node => node.id);
 }
 
-function deeperPackage(id: string, other: string): boolean {
-  return other !== id && within(id, other);
-}
-
-function coversDeeper(id: string, packages: string[]): boolean {
-  return packages.some(other => deeperPackage(id, other));
-}
-
-function leafPackages(packages: string[]): string[] {
-  return packages.filter(id => !coversDeeper(id, packages));
+function emptyOf(planned: GraphView | undefined): string[] {
+  return declaredPaths(planned?.warnings ?? []);
 }
 
 async function boxesUnder(token: string, dir: string, slug: string, fetcher: typeof fetch): Promise<SplitBoxes> {
   const view = await fetchGraph(token, dir, fetcher, { tests: true, external: false, plan: slug });
   if ('error' in view) return { files: [], packages: [] };
-  const packages = packageIds(view.nodes);
-  const nested = await Promise.all(packages.map(id => boxesUnder(token, id, slug, fetcher)));
+  const nested = await Promise.all(packageIds(view.nodes).map(id => boxesUnder(token, id, slug, fetcher)));
   const files = [...fileIds(view.nodes), ...nested.flatMap(box => box.files)].sort(byStrings);
-  return { files, packages: leafPackages([...packages, ...nested.flatMap(box => box.packages)]) };
+  return { files, packages: [...declaredPaths(view.warnings ?? []), ...nested.flatMap(box => box.packages)] };
 }
 
 async function boxShown(token: string, id: string, query: { tests: boolean; external: boolean; plan: string | null }, fetcher: typeof fetch): Promise<boolean> {
@@ -511,7 +501,8 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     closeAsk();
   };
   const submitName = (current: NameAsk, name: string): void => {
-    settle(nameEdit(current, name, { at: props.at, taken: nameTaken(props.at, props.planned?.nodes ?? [], current.mode), selected: selectedPackages(props.nodes, props.selection) }));
+    const taken = nameTaken(props.at, props.planned?.nodes ?? [], current.mode, emptyOf(props.planned));
+    settle(nameEdit(current, name, { at: props.at, taken, selected: selectedPackages(props.nodes, props.selection) }));
   };
   const submitSplit = (current: SplitAsk, names: string[], assigned: Record<string, string>): void => {
     settle(splitEdit({ pkg: current.pkg, names, files: current.files, assigned, taken: new Set(current.packages) }));
