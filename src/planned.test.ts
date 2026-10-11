@@ -356,6 +356,75 @@ describe('package edits and file fates in the walk', () => {
     expect(pathsOf(applyPlan(LAYERED, split))).toEqual(pathsOf(LAYERED));
   });
 
+  it('refuses a merge into a package whose only file is deleted', () => {
+    const scan: ScanResult = { ...LAYERED, files: [...LAYERED.files, { path: 'src/probe/only.ts', test: false }] };
+    const edits: PlanEdit[] = [
+      { kind: 'fate', file: 'src/probe/only.ts', fate: 'delete' },
+      { kind: 'merge-packages', packages: ['src/app', 'src/infra'], into: 'src/probe' },
+    ];
+    expect(staleReasons(scan, edits)).toEqual([null, 'src/probe already exists']);
+    const planned = applyPlan(scan, edits);
+    expect(pathsOf(planned)).toEqual(pathsOf(scan));
+    expect(planned.deleted).toEqual(['src/probe/only.ts']);
+  });
+
+  it('refuses a merge when a deleted file and a live file land on one path', () => {
+    const scan: ScanResult = { ...LAYERED, files: [...LAYERED.files, { path: 'src/lib/b.ts', test: false }] };
+    const edits: PlanEdit[] = [
+      { kind: 'fate', file: 'src/app/b.ts', fate: 'delete' },
+      { kind: 'merge-packages', packages: ['src/app', 'src/lib'], into: 'src/core' },
+    ];
+    expect(staleReasons(scan, edits)).toEqual([null, 'src/core/b.ts already exists']);
+    expect(pathsOf(applyPlan(scan, edits))).toEqual(pathsOf(scan));
+  });
+
+  it('refuses a merge into a listed package when a live file would land on its deleted file', () => {
+    const scan: ScanResult = { ...LAYERED, files: [...LAYERED.files, { path: 'src/lib/a.ts', test: false }] };
+    const edits: PlanEdit[] = [
+      { kind: 'fate', file: 'src/app/a.ts', fate: 'delete' },
+      { kind: 'merge-packages', packages: ['src/app', 'src/lib'], into: 'src/app' },
+    ];
+    expect(staleReasons(scan, edits)).toEqual([null, 'src/app/a.ts already exists']);
+    expect(pathsOf(applyPlan(scan, edits))).toEqual(pathsOf(scan));
+  });
+
+  it('moves a deleted file, its mark and the edge onto it when packages merge', () => {
+    const scan: ScanResult = {
+      ...LAYERED,
+      edges: [...LAYERED.edges, { from: 'src/domain/model.ts', to: 'src/app/save.ts', kind: 'runtime' }],
+    };
+    const edits: PlanEdit[] = [
+      { kind: 'fate', file: 'src/app/save.ts', fate: 'delete' },
+      { kind: 'merge-packages', packages: ['src/app', 'src/infra'], into: 'src/core' },
+    ];
+    const planned = applyPlan(scan, edits);
+    expect(staleReasons(scan, edits)).toEqual([null, null]);
+    expect(pathsOf(planned)).toContain('src/core/save.ts');
+    expect(pathsOf(planned)).not.toContain('src/app/save.ts');
+    expect(planned.deleted).toEqual(['src/core/save.ts']);
+    expect(edgesOf(planned)).toContain('src/domain/model.ts>src/core/save.ts');
+  });
+
+  it('moves a deleted file and its mark when a split lists it', () => {
+    const edits: PlanEdit[] = [
+      { kind: 'fate', file: 'src/app/b.ts', fate: 'delete' },
+      {
+        kind: 'split-package',
+        package: 'src/app',
+        parts: [
+          { name: 'read', files: ['src/app/a.ts'] },
+          { name: 'write', files: ['src/app/b.ts'] },
+        ],
+      },
+    ];
+    const planned = applyPlan(LAYERED, edits);
+    expect(staleReasons(LAYERED, edits)).toEqual([null, null]);
+    expect(pathsOf(planned)).toContain('src/app/write/b.ts');
+    expect(pathsOf(planned)).not.toContain('src/app/b.ts');
+    expect(planned.deleted).toEqual(['src/app/write/b.ts']);
+    expect(edgesOf(planned)).toContain('src/app/read/a.ts>src/app/write/b.ts');
+  });
+
   it('keeps a directory known after every file in it is deleted', () => {
     const edits: PlanEdit[] = [
       { kind: 'fate', file: 'src/infra/db.ts', fate: 'delete' },
