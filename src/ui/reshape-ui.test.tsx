@@ -1370,4 +1370,51 @@ describe('the page reshapes packages and files', () => {
     expect(dialogError()).toBe('src/ports already exists');
     expect(storedEdits()).toEqual([{ kind: 'create-package', path: 'src/ports' }]);
   });
+
+  it('merges three shift-selected packages', async () => {
+    await showApp('#at=src&plan=reshape');
+    await waitFor(() => expect(boxIds()).toEqual(['src/app', 'src/infra', 'src/domain']));
+    await click(boxOf('src/app'));
+    await click(boxOf('src/domain'), true);
+    await click(boxOf('src/infra'), true);
+    await click(button('Menu', boxOf('src/app')));
+    await click(button('Merge', boxOf('src/app')));
+    await named('core', 'Merge');
+    await waitFor(() => expect(lastSentence()).toBe('Merge src/app, src/domain and src/infra into src/core'));
+    expect(storedEdits()).toEqual([{
+      kind: 'merge-packages',
+      packages: ['src/app', 'src/domain', 'src/infra'],
+      into: 'src/core',
+    }]);
+  });
+
+  it('refuses a rename onto a file this plan deletes', async () => {
+    await showApp('#at=src/app&plan=reshape');
+    await waitFor(() => expect(boxIds()).toContain('src/app/b.ts'));
+    await menu('src/app/b.ts', 'Delete');
+    await waitFor(() => expect(sentences()).toEqual(['Delete src/app/b.ts']));
+    await menu('src/app/a.ts', 'Rename');
+    await named('b', 'Rename');
+    expect(dialogError()).toBe('src/app/b.ts already exists');
+    expect(sentences()).toEqual(['Delete src/app/b.ts']);
+    expect(storedEdits()).toEqual([{ kind: 'fate', file: 'src/app/b.ts', fate: 'delete' }]);
+  });
+
+  it('does not treat an external name as a taken package', async () => {
+    await showApp('#at=&plan=reshape');
+    await waitFor(() => expect(boxIds()).toEqual(['src']));
+    await click(button('Canvas'));
+    await click(button('New package'));
+    await named('react', 'Create');
+    expect(dialogError()).toBeNull();
+    await waitFor(() => expect(sentences()).toEqual(['Create package react']));
+    expect(storedEdits()).toEqual([{ kind: 'create-package', path: 'react' }]);
+    await click(button('Undo'));
+    await waitFor(() => expect(sentences()).toEqual([]));
+    await waitFor(() => expect(boxIds()).toEqual(['src']));
+    await menu('src', 'Rename');
+    await named('react', 'Rename');
+    expect(dialogError()).toBeNull();
+    await waitFor(() => expect(storedEdits()).toEqual([{ kind: 'rename-package', from: 'src', to: 'react' }]));
+  });
 });
