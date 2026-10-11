@@ -43,6 +43,8 @@ describe('the reshape dialog rules', () => {
     expect(nameEdit(renameFile('src/app/a.test.ts'), 'spec', scene('src/app'))).toEqual({ edit: { kind: 'rename-file', from: 'src/app/a.test.ts', to: 'spec.ts' } });
     expect(nameEdit(renameFile('src/app/save.ts'), 'writer.tsx', scene('src/app'))).toEqual({ edit: { kind: 'rename-file', from: 'src/app/save.ts', to: 'writer.tsx' } });
     expect(nameEdit(renameFile('src/app/save.ts'), '.env', scene('src/app'))).toEqual({ edit: { kind: 'rename-file', from: 'src/app/save.ts', to: '.env' } });
+    expect(nameEdit(renameFile('src/app/save.ts'), 'spec.', scene('src/app'))).toEqual({ edit: { kind: 'rename-file', from: 'src/app/save.ts', to: 'spec.' } });
+    expect(nameEdit(renameFile('src/app/save.ts'), '.', scene('src/app'))).toEqual({ problem: 'bad name' });
     expect(nameEdit(renameFile('src/app/Makefile'), 'Build', scene('src/app'))).toEqual({ edit: { kind: 'rename-file', from: 'src/app/Makefile', to: 'Build' } });
     expect(nameEdit(renameFile('src/app/.env'), 'local', scene('src/app'))).toEqual({ edit: { kind: 'rename-file', from: 'src/app/.env', to: 'local' } });
   });
@@ -129,6 +131,8 @@ describe('the reshape dialog rules', () => {
   it('checks a split in the pinned order', () => {
     expect(splitEdit(form(['', ''], {}))).toEqual({ problem: 'name at least two parts' });
     expect(splitEdit(form(['read', '  '], ALL_READ_WRITE))).toEqual({ problem: 'name at least two parts' });
+    expect(splitEdit(form(['has space', ''], ALL_READ_WRITE))).toEqual({ problem: 'name at least two parts' });
+    expect(splitEdit(form(['has space', '  '], {}))).toEqual({ problem: 'name at least two parts' });
     expect(splitEdit(form(['has space', 'write'], ALL_READ_WRITE))).toEqual({ problem: 'bad name' });
     expect(splitEdit(form(['has space', 'has space'], ALL_READ_WRITE))).toEqual({ problem: 'bad name' });
     expect(splitEdit(form(['read', 'read'], ALL_READ_WRITE))).toEqual({ problem: 'duplicate part' });
