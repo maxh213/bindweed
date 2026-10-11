@@ -849,6 +849,20 @@ describe('the page reshapes packages and files', () => {
     ]);
   });
 
+  it('folds a file into a deleted file box', async () => {
+    await showApp('#at=src/domain&plan=reshape');
+    await waitFor(() => expect(boxIds()).toContain('src/domain/shape.ts'));
+    await menu('src/domain/model.ts', 'Delete');
+    await waitFor(() => expect(boxOf('src/domain/model.ts').dataset.fate).toBe('delete'));
+    await menu('src/domain/shape.ts', 'Fold into…');
+    await click(boxOf('src/domain/model.ts'));
+    await waitFor(() => expect(sentences()).toEqual(['Delete src/domain/model.ts', 'Fold src/domain/shape.ts into src/domain/model.ts']));
+    expect(storedEdits()).toEqual([
+      { kind: 'fate', file: 'src/domain/model.ts', fate: 'delete' },
+      { kind: 'fate', file: 'src/domain/shape.ts', fate: 'fold', into: 'src/domain/model.ts' },
+    ]);
+  });
+
   it('folds a file into the file box clicked next', async () => {
     await showApp('#at=src/infra&plan=reshape');
     await waitFor(() => expect(boxIds()).toContain('src/infra/repo.ts'));

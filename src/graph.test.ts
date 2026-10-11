@@ -805,6 +805,20 @@ describe('edgePairs', () => {
 });
 
 describe('graphView over a planned scan', () => {
+  it('draws an empty declared package at the root, where a file in it would be grouped', () => {
+    const scan: ScanResult = { ...scanOf(['src/a.ts'], []), declared: ['top'] };
+    const drawn = view(scan, '');
+    expect(drawn.nodes.map(node => node.id).sort()).toEqual(['src', 'top']);
+    expect(drawn.nodes.find(node => node.id === 'top')).toMatchObject({ kind: 'package', files: 0 });
+  });
+
+  it('draws an empty declared package nested under a declared package that holds a file', () => {
+    const scan: ScanResult = { ...scanOf(['src/ports/shape.ts'], []), declared: ['src/ports', 'src/ports/deep'] };
+    const drawn = view(scan, 'src/ports');
+    expect(drawn.nodes.find(node => node.id === 'src/ports/deep')).toMatchObject({ kind: 'package', files: 0 });
+    expect(drawn.nodes.map(node => node.id)).toContain('src/ports/shape.ts');
+  });
+
   it('draws an empty declared package where a file in it would be grouped, and not in its own view', () => {
     const scan: ScanResult = { ...LAYERED, declared: ['src/ports', 'src/app'] };
     expect(view(scan, 'src').nodes.find(node => node.id === 'src/ports')).toMatchObject({ kind: 'package', files: 0, row: 2, order: 1, cycle: false });

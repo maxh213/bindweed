@@ -868,6 +868,20 @@ describe('planReport', () => {
     expect(report.warnings).toEqual([[], [{ kind: 'empty-package', path: 'src/ports' }]]);
   });
 
+  it('warns about an empty package nested under one a move has filled', () => {
+    const report = planReport(
+      LAYERED,
+      [CREATE_PORTS, { kind: 'create-package', path: 'src/ports/deep' }, { kind: 'move-file', file: 'src/domain/shape.ts', to: 'src/ports' }],
+      noCycles,
+    );
+    expect(report.warnings).toEqual([[], [{ kind: 'empty-package', path: 'src/ports/deep' }], []]);
+  });
+
+  it('warns about an empty package created at the root', () => {
+    const report = planReport(LAYERED, [{ kind: 'create-package', path: 'top' }], noCycles);
+    expect(report.warnings).toEqual([[{ kind: 'empty-package', path: 'top' }]]);
+  });
+
   it('warns when the only new cycle is drawn at an intermediate directory', () => {
     const scan: ScanResult = {
       files: [
@@ -926,6 +940,21 @@ describe('planReport', () => {
     expect(report.warnings).toEqual([[{ kind: 'deleted-imports', file: 'src/app/a.ts', importers: ['src/app/a.test.ts', 'src/app/b.ts'] }], []]);
   });
 
+  it('names a deleted file that still imports another deleted file', () => {
+    const report = planReport(
+      LAYERED,
+      [
+        { kind: 'fate', file: 'src/app/a.ts', fate: 'delete' },
+        { kind: 'fate', file: 'src/app/b.ts', fate: 'delete' },
+      ],
+      noCycles,
+    );
+    expect(report.warnings).toEqual([
+      [{ kind: 'deleted-imports', file: 'src/app/a.ts', importers: ['src/app/a.test.ts', 'src/app/b.ts'] }],
+      [{ kind: 'deleted-imports', file: 'src/app/b.ts', importers: ['src/app/a.ts'] }],
+    ]);
+  });
+
   it('names the importers a fold leaves on the deleted file it landed on', () => {
     const report = planReport(
       LAYERED,
@@ -962,6 +991,12 @@ describe('planReport', () => {
     );
     expect(report.stale).toEqual([null, 'no such file src/app/missing.ts', null]);
     expect(report.warnings).toEqual([[{ kind: 'added-cycle', cycle: 'src/infra → src/app' }], [], [{ kind: 'added-cycle', cycle: 'src/domain → src/app' }]]);
+  });
+
+  it('keeps a declared package under a package that is split, and warns on the create', () => {
+    const report = planReport(LAYERED, [{ kind: 'create-package', path: 'src/app/spare' }, SPLIT_APP], noCycles);
+    expect(report.scan.declared).toEqual(['src/app/read', 'src/app/spare', 'src/app/write']);
+    expect(report.warnings).toEqual([[{ kind: 'empty-package', path: 'src/app/spare' }], []]);
   });
 
   it('does not warn about a split part whose files all sit in a subdirectory', () => {
