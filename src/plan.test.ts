@@ -470,4 +470,67 @@ describe('plan document edits', () => {
     const ids = new Set(['src/app/sub/deep', 'src/domain']);
     expect(addEdgeIndex([add, moveA, moveB], [null, null, null], 'src/app/sub/deep', 'src/domain', 'src', ids)).toBe(0);
   });
+
+  it('names one file when a fold retargets an added edge', () => {
+    const add: PlanEdit = { kind: 'add-edge', from: 'src/app/a.ts.bak', to: 'src/domain/model.ts' };
+    const fold: PlanEdit = { kind: 'fate', file: 'src/app/a.ts', fate: 'fold', into: 'src/domain/shape.ts' };
+    const ids = new Set(['src/app/a.ts.bak', 'src/domain/model.ts', 'src/domain/shape.ts']);
+    const edits = [add, fold];
+    const stale = [null, null];
+    expect(addEdgeIndex(edits, stale, 'src/app/a.ts.bak', 'src/domain/model.ts', 'src/app', ids)).toBe(0);
+    expect(addEdgeIndex(edits, stale, 'src/domain/shape.ts', 'src/domain/model.ts', 'src/app', ids)).toBe(-1);
+  });
+
+  it('names one file when a rename retargets an added edge', () => {
+    const add: PlanEdit = { kind: 'add-edge', from: 'src/app/a.ts.bak', to: 'src/domain/model.ts' };
+    const rename: PlanEdit = { kind: 'rename-file', from: 'src/app/a.ts', to: 'b.ts' };
+    const ids = new Set(['src/app/a.ts.bak', 'src/app/b.ts.bak', 'src/domain/model.ts']);
+    const edits = [add, rename];
+    const stale = [null, null];
+    expect(addEdgeIndex(edits, stale, 'src/app/a.ts.bak', 'src/domain/model.ts', 'src/app', ids)).toBe(0);
+    expect(addEdgeIndex(edits, stale, 'src/app/b.ts.bak', 'src/domain/model.ts', 'src/app', ids)).toBe(-1);
+  });
+
+  it('leaves an unlisted file where a split found it', () => {
+    const add: PlanEdit = { kind: 'add-edge', from: 'src/app/a.ts.bak', to: 'src/domain/model.ts' };
+    const split: PlanEdit = {
+      kind: 'split-package',
+      package: 'src/app',
+      parts: [
+        { name: 'read', files: ['src/app/a.ts'] },
+        { name: 'write', files: ['src/app/b.ts'] },
+      ],
+    };
+    const ids = new Set(['src/app/a.ts.bak', 'src/domain', 'src/app/read']);
+    const edits = [add, split];
+    const stale = [null, null];
+    expect(addEdgeIndex(edits, stale, 'src/app/a.ts.bak', 'src/domain', 'src', ids)).toBe(0);
+    expect(addEdgeIndex(edits, stale, 'src/app/read', 'src/domain', 'src', ids)).toBe(-1);
+  });
+
+  it('keeps a nested path when a merge moves an added edge', () => {
+    const add: PlanEdit = { kind: 'add-edge', from: 'src/infra/deep/x.ts', to: 'src/infra/nest/y.ts' };
+    const merge: PlanEdit = { kind: 'merge-packages', packages: ['src/infra', 'src/app'], into: 'src/core' };
+    const ids = new Set(['src/core/deep', 'src/core/nest', 'src/core/x.ts', 'src/core/y.ts']);
+    const edits = [add, merge];
+    const stale = [null, null];
+    expect(addEdgeIndex(edits, stale, 'src/core/deep', 'src/core/nest', 'src/core', ids)).toBe(0);
+    expect(addEdgeIndex(edits, stale, 'src/core/x.ts', 'src/core/y.ts', 'src/core', ids)).toBe(-1);
+  });
+
+  it('keeps an added edge whose end a delete names', () => {
+    const add: PlanEdit = { kind: 'add-edge', from: 'src/app/b.ts', to: 'src/lib/z.ts' };
+    const drop: PlanEdit = { kind: 'fate', file: 'src/app/b.ts', fate: 'delete' };
+    const ids = new Set(['src/app/b.ts', 'src/lib/z.ts']);
+    expect(addEdgeIndex([add, drop], [null, null], 'src/app/b.ts', 'src/lib/z.ts', 'src', ids)).toBe(0);
+  });
+
+  it('skips a stale fold when it looks up an added edge', () => {
+    const add: PlanEdit = { kind: 'add-edge', from: 'src/infra/db.ts', to: 'src/domain/model.ts' };
+    const fold: PlanEdit = { kind: 'fate', file: 'src/infra/db.ts', fate: 'fold', into: 'src/app/a.ts' };
+    const ids = new Set(['src/infra', 'src/domain', 'src/app']);
+    const stale = [null, 'no such file src/app/a.ts'];
+    expect(addEdgeIndex([add, fold], stale, 'src/infra', 'src/domain', 'src', ids)).toBe(0);
+    expect(addEdgeIndex([add, fold], stale, 'src/app', 'src/domain', 'src', ids)).toBe(-1);
+  });
 });
