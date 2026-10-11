@@ -237,6 +237,13 @@ describe('a fold leaves no ghost', () => {
     expect(picture({ packages: pack, edits: [split, foldSplit], stale: [null, null] }).ink.rows.get('src/app')).toEqual([]);
   });
 
+  it('follows a nested path through a merge', () => {
+    const deep = [{ id: 'src/app', now: viewOf([fileNode('src/app/deep/save.ts')]), planned: viewOf([]) }];
+    const merged: PlanEdit = { kind: 'merge-packages', packages: ['src/app', 'src/infra'], into: 'src/core' };
+    const foldMerged: PlanEdit = { kind: 'fate', file: 'src/core/deep/save.ts', fate: 'fold', into: 'src/core/db.ts' };
+    expect(picture({ packages: deep, edits: [merged, foldMerged], stale: [null, null] }).ink.rows.get('src/app')).toEqual([]);
+  });
+
   it('follows a nested path and does not rename a prefix sibling', () => {
     const empty = viewOf([]);
     const deep = [{ id: 'src/app', now: viewOf([fileNode('src/app/deep/save.ts')]), planned: empty }];

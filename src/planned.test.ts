@@ -898,6 +898,28 @@ describe('planReport', () => {
     expect(report.warnings).toEqual([[{ kind: 'added-cycle', cycle: 'a → b → a' }]]);
   });
 
+  it('does not warn about a cycle a later cut removes', () => {
+    const scan: ScanResult = {
+      files: [
+        { path: 'a/p.ts', test: false },
+        { path: 'b/q.ts', test: false },
+      ],
+      edges: [{ from: 'a/p.ts', to: 'b/q.ts', kind: 'runtime' }],
+      externals: [],
+      workspaces: [],
+    };
+    const report = planReport(
+      scan,
+      [
+        { kind: 'add-edge', from: 'b', to: 'a' },
+        { kind: 'cut-edge', from: 'a', to: 'b', files: [['a/p.ts', 'b/q.ts']] },
+      ],
+      cycleTexts,
+    );
+    expect(report.stale).toEqual([null, null]);
+    expect(report.warnings).toEqual([[], []]);
+  });
+
   it('warns about a deleted file that is still imported, with its distinct importers sorted', () => {
     const twice: ScanResult = { ...LAYERED, edges: [...LAYERED.edges, { from: 'src/app/b.ts', to: 'src/app/a.ts', kind: 'type' }] };
     const report = planReport(twice, [{ kind: 'fate', file: 'src/app/a.ts', fate: 'delete' }, { kind: 'fate', file: 'src/app/save.ts', fate: 'delete' }], noCycles);

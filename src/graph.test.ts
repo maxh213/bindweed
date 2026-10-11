@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { cycleTexts, edgePairs, graphView, nodeDetail, type GraphFlags, type GraphView, type NodeDetail } from './domain/graph.ts';
 import { emptyHealth, type Health } from './domain/health.ts';
+import { applyPlan } from './domain/planned.ts';
 import { isTestPath, type ScanResult, type WorkspacePackage } from './domain/scan.ts';
 
 type RawSpec = [from: string, to: string, kind?: 'runtime' | 'type'];
@@ -835,6 +836,41 @@ describe('graphView over a planned scan', () => {
     const scan: ScanResult = { ...LAYERED, deleted: ['src/domain/model.ts'] };
     expect(view(scan, 'src/domain').nodes[0]).toMatchObject({ id: 'src/domain/model.ts', fate: 'delete' });
     expect(view(LAYERED, 'src/domain').nodes[0]).not.toHaveProperty('fate');
+  });
+
+  it('draws a deleted file and the edges that leave it', () => {
+    const scan = applyPlan(
+      scanOf(
+        ['src/app/a.ts', 'src/app/b.ts', 'src/infra/db.ts'],
+        [
+          ['src/app/b.ts', 'src/app/a.ts'],
+          ['src/app/b.ts', 'src/infra/db.ts'],
+        ],
+      ),
+      [{ kind: 'fate', file: 'src/app/b.ts', fate: 'delete' }],
+    );
+    expect(view(scan, 'src/app').edges.map(edge => `${edge.from}>${edge.to}`)).toEqual(['src/app/b.ts>src/app/a.ts']);
+    expect(edgePairs(scan, 'src', 'src/app', 'src/infra')).toEqual([['src/app/b.ts', 'src/infra/db.ts']]);
+  });
+
+  it('regroups a planned edge after a split hides its package', () => {
+    const split = applyPlan(
+      {
+        ...scanOf(['src/app/a.ts', 'src/app/b.ts'], []),
+        planned: [{ from: 'src/app/a.ts', to: 'src/app/b.ts' }],
+      },
+      [{
+        kind: 'split-package',
+        package: 'src/app',
+        parts: [
+          { name: 'read', files: ['src/app/a.ts'] },
+          { name: 'write', files: ['src/app/b.ts'] },
+        ],
+      }],
+    );
+    const drawn = view(split, 'src');
+    expect(drawn.edges.map(edge => `${edge.from}>${edge.to}`)).toEqual(['src/app/read>src/app/write']);
+    expect(drawn.edges[0]).toMatchObject({ planned: true });
   });
 
   it('regroups hidden packages in detail and pairs, externals included', () => {
