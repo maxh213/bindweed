@@ -446,6 +446,12 @@ describe('plan document edits', () => {
     expect(addEdgeIndex([add('src/domain', 'src/infra')], [null], 'src/domain', 'src/infra', 'src/app', boxes('src/app/a.ts'))).toBe(-1);
   });
 
+  it('does not find an add whose file only shares the view prefix', () => {
+    const add: PlanEdit = { kind: 'add-edge', from: 'src/apple/x.ts', to: 'src/app/other/y.ts' };
+    expect(addEdgeIndex([add], [null], 'src/app/le', 'src/app/other', 'src/app', new Set(['src/app/le', 'src/app/other']))).toBe(-1);
+    expect(addEdgeIndex([add], [null], 'src/app/e', 'src/app/other', 'src/app', new Set(['src/app/e', 'src/app/other']))).toBe(-1);
+  });
+
   it('follows a rename and a later merge when both move the arrow', () => {
     const add: PlanEdit = { kind: 'add-edge', from: 'src/infra/db.ts', to: 'src/domain/model.ts' };
     const rename: PlanEdit = { kind: 'rename-package', from: 'src/infra', to: 'src/adapters' };

@@ -191,6 +191,36 @@ describe('staleReasons', () => {
     expect(staleReasons(joinFrom, [{ kind: 'add-edge', from: 'src/domain', to: 'src/app' }])).toEqual([null]);
     const empty: ScanResult = { ...LAYERED, planned: [] };
     expect(staleReasons(empty, [{ kind: 'add-edge', from: 'src/domain', to: 'src/app' }])).toEqual([null]);
+    const prefixPackage: ScanResult = { ...LAYERED, planned: [{ from: 'src/infra2', to: 'src/app' }] };
+    expect(staleReasons(prefixPackage, [{ kind: 'add-edge', from: 'src/infra', to: 'src/app' }])).toEqual([null]);
+    const prefixFile: ScanResult = { ...LAYERED, planned: [{ from: 'src/infra/db.ts', to: 'src/app/a.ts' }] };
+    expect(staleReasons(prefixFile, [{ kind: 'add-edge', from: 'src/infra', to: 'src/app' }])).toEqual([null]);
+  });
+
+  it('does not join a file edge that only shares the box text', () => {
+    const beside: ScanResult = {
+      files: [
+        { path: 'src/app/b.ts', test: false },
+        { path: 'src/infra/db.ts', test: false },
+      ],
+      edges: [{ from: 'src/app/b.ts', to: 'src/infra/db.ts', kind: 'runtime' }],
+      externals: [],
+      workspaces: [],
+    };
+    const create: PlanEdit = { kind: 'create-package', path: 'src/app/b' };
+    const add: PlanEdit = { kind: 'add-edge', from: 'src/app/b', to: 'src/infra' };
+    expect(staleReasons(beside, [create, add])).toEqual([null, null]);
+    const prefix: ScanResult = {
+      files: [
+        { path: 'src/app/a.ts', test: false },
+        { path: 'src/apple/x.ts', test: false },
+        { path: 'src/zone/z.ts', test: false },
+      ],
+      edges: [{ from: 'src/apple/x.ts', to: 'src/zone/z.ts', kind: 'runtime' }],
+      externals: [],
+      workspaces: [],
+    };
+    expect(staleReasons(prefix, [{ kind: 'add-edge', from: 'src/app', to: 'src/zone' }])).toEqual([null]);
   });
 
   it('counts a cut as covering a note only when both ends match', () => {
