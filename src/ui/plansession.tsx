@@ -397,9 +397,24 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     editPlan({ kind: 'move-file', file, to: movedTo(dir) });
     return true;
   };
-  const cutRealArrow = async (from: string, to: string): Promise<void> => {
+  const missedArrow = (from: string, to: string): void => {
+    setNotice(`no such arrow ${from} → ${to}`);
+  };
+  const cutPairs = (from: string, to: string, files: [string, string][]): void => {
+    if (files.length > 0) {
+      editPlan({ kind: 'cut-edge', from, to, files });
+      return;
+    }
+    const added = addEdgeIndex(edits, stale, from, to, props.at, props.ids);
+    if (added === -1) {
+      missedArrow(from, to);
+      return;
+    }
+    removeEdit(added);
+  };
+  const cutArrow = async (from: string, to: string): Promise<void> => {
     if (!plannedHas(props.planned, from, to)) {
-      setNotice(`no such arrow ${from} → ${to}`);
+      missedArrow(from, to);
       return;
     }
     const pairs = await fetchPairs(props.token, from, to, props.at, { tests: props.tests, external: props.external, plan: slug }, props.fetcher);
@@ -407,19 +422,7 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
       setNotice(pairs.error);
       return;
     }
-    if (pairs.pairs.length === 0) {
-      setNotice(`no such arrow ${from} → ${to}`);
-      return;
-    }
-    editPlan({ kind: 'cut-edge', from, to, files: pairs.pairs });
-  };
-  const cutArrow = async (from: string, to: string): Promise<void> => {
-    const added = addEdgeIndex(edits, stale, from, to, props.at, props.ids);
-    if (added !== -1) {
-      removeEdit(added);
-      return;
-    }
-    await cutRealArrow(from, to);
+    cutPairs(from, to, pairs.pairs);
   };
   const drawEdge = (from: string, to: string): void => {
     if (from === to) {

@@ -423,4 +423,30 @@ describe('plan document edits', () => {
     expect(addEdgeIndex([add('a/p.ts', 'b/q.ts')], [null], 'a', 'b', '', boxes('a', 'b'))).toBe(0);
     expect(addEdgeIndex([add('src/domain', 'src/infra')], [null], 'src/domain', 'src/infra', 'src/app', boxes('src/app/a.ts'))).toBe(-1);
   });
+
+  it('follows a rename and a later merge when both move the arrow', () => {
+    const add: PlanEdit = { kind: 'add-edge', from: 'src/infra/db.ts', to: 'src/domain/model.ts' };
+    const rename: PlanEdit = { kind: 'rename-package', from: 'src/infra', to: 'src/adapters' };
+    const merge: PlanEdit = { kind: 'merge-packages', packages: ['src/adapters', 'src/app'], into: 'src/core' };
+    const ids = new Set(['src/core', 'src/domain']);
+    expect(addEdgeIndex([add, rename, merge], [null, null, null], 'src/core', 'src/domain', 'src', ids)).toBe(0);
+  });
+
+  it('lets a live rename after a stale edit move the arrow', () => {
+    const add: PlanEdit = { kind: 'add-edge', from: 'src/infra', to: 'src/app' };
+    const gone: PlanEdit = { kind: 'rename-package', from: 'src/gone', to: 'src/elsewhere' };
+    const rename: PlanEdit = { kind: 'rename-package', from: 'src/infra', to: 'src/adapters' };
+    const ids = new Set(['src/infra', 'src/adapters', 'src/app']);
+    const stale = [null, 'no such directory src/gone', null];
+    expect(addEdgeIndex([add, gone, rename], stale, 'src/adapters', 'src/app', 'src', ids)).toBe(0);
+    expect(addEdgeIndex([add, gone, rename], stale, 'src/infra', 'src/app', 'src', ids)).toBe(-1);
+  });
+
+  it('matches the box drawn after two hidden packages', () => {
+    const add: PlanEdit = { kind: 'add-edge', from: 'src/app/sub/deep/c.ts', to: 'src/domain/model.ts' };
+    const moveA: PlanEdit = { kind: 'move-file', file: 'src/app/a.ts', to: 'src/domain' };
+    const moveB: PlanEdit = { kind: 'move-file', file: 'src/app/sub/b.ts', to: 'src/domain' };
+    const ids = new Set(['src/app/sub/deep', 'src/domain']);
+    expect(addEdgeIndex([add, moveA, moveB], [null, null, null], 'src/app/sub/deep', 'src/domain', 'src', ids)).toBe(0);
+  });
 });

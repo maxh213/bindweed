@@ -536,13 +536,23 @@ function sameArrow(drawn: [string, string] | null, from: string, to: string): bo
   return drawn !== null && drawn[0] === from && drawn[1] === to;
 }
 
-function drawsArrow(edit: PlanEdit, edits: PlanEdit[], stale: (string | null)[], index: number, from: string, to: string, at: string, ids: ReadonlySet<string>): boolean {
-  if (!liveAdd(edit, stale, index)) return false;
-  return sameArrow(drawnPair(edit, edits, stale, index, at, ids), from, to);
+type DrawnAsk = {
+  edits: PlanEdit[];
+  stale: (string | null)[];
+  from: string;
+  to: string;
+  at: string;
+  ids: ReadonlySet<string>;
+};
+
+function drawsArrow(edit: PlanEdit, index: number, ask: DrawnAsk): boolean {
+  if (!liveAdd(edit, ask.stale, index)) return false;
+  return sameArrow(drawnPair(edit, ask.edits, ask.stale, index, ask.at, ask.ids), ask.from, ask.to);
 }
 
 export function addEdgeIndex(edits: PlanEdit[], stale: (string | null)[], from: string, to: string, at: string, ids: ReadonlySet<string>): number {
-  return edits.findIndex((edit, index) => drawsArrow(edit, edits, stale, index, from, to, at, ids));
+  const ask: DrawnAsk = { edits, stale, from, to, at, ids };
+  return edits.findIndex((edit, index) => drawsArrow(edit, index, ask));
 }
 
 function cutSentence(from: string, to: string, count: number): string {

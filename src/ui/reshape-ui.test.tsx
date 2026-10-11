@@ -1224,6 +1224,39 @@ describe('the page reshapes packages and files', () => {
     expect(document.querySelector('[data-from="src/domain"][data-to="src/core"]')).toBeNull();
   });
 
+  it('cuts the real pairs when a planned edge groups onto the same arrow', async () => {
+    const add: PlanEdit = { kind: 'add-edge', from: 'src/app/save.ts', to: 'src/app/b.ts' };
+    const split: PlanEdit = {
+      kind: 'split-package',
+      package: 'src/app',
+      parts: [
+        { name: 'read', files: ['src/app/save.ts', 'src/app/a.ts'] },
+        { name: 'write', files: ['src/app/b.ts'] },
+      ],
+    };
+    await seed('Reshape', 'reshape', [add, split]);
+    await showApp('#at=src/app&plan=reshape');
+    await waitFor(() => expect(boxIds()).toEqual(['src/app/read', 'src/app/write']));
+    const twins = Array.from(document.querySelectorAll<HTMLElement>('[data-from="src/app/read"][data-to="src/app/write"]'));
+    expect(twins.filter(edge => edge.dataset.planned === 'true')).toHaveLength(1);
+    expect(twins.filter(edge => edge.dataset.planned !== 'true')).toHaveLength(1);
+    await cutDrawn('src/app/read', 'src/app/write');
+    const cut: PlanEdit = {
+      kind: 'cut-edge',
+      from: 'src/app/read',
+      to: 'src/app/write',
+      files: [['src/app/read/a.ts', 'src/app/write/b.ts']],
+    };
+    await waitFor(() => expect(storedEdits()).toEqual([add, split, cut]));
+    expect(notice()).toBe('');
+    expect(sentences()).toEqual([
+      'src/app/save.ts should use src/app/b.ts',
+      'Split src/app into src/app/read (2 files) and src/app/write (1 file)',
+      'src/app/read must not import src/app/write (1 import)',
+    ]);
+    expect(document.querySelector('[data-from="src/app/read"][data-to="src/app/write"][data-planned="true"]')).not.toBeNull();
+  });
+
   it('cuts a planned arrow after a split groups it, storing no cut', async () => {
     const split: PlanEdit = {
       kind: 'split-package',
