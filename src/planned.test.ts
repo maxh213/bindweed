@@ -712,6 +712,23 @@ describe('package edits and file fates in the walk', () => {
     expect(report.warnings).toEqual([[], [], [], [], [{ kind: 'empty-package', path: 'src/app' }]]);
   });
 
+  it('does not hide a recreated package because a prefix sibling still has a file', () => {
+    const scan: ScanResult = { ...LAYERED, files: [...LAYERED.files, { path: 'src/apple/x.ts', test: false }] };
+    const edits: PlanEdit[] = [
+      { kind: 'move-file', file: 'src/app/a.ts', to: 'src/domain' },
+      { kind: 'move-file', file: 'src/app/b.ts', to: 'src/domain' },
+      { kind: 'move-file', file: 'src/app/a.test.ts', to: 'src/domain' },
+      { kind: 'move-file', file: 'src/app/save.ts', to: 'src/domain' },
+      { kind: 'create-package', path: 'src/app' },
+    ];
+    const report = planReport(scan, edits, noCycles);
+    expect(report.stale).toEqual([null, null, null, null, null]);
+    expect(report.scan).not.toHaveProperty('hidden');
+    const drawn = graphView(report.scan, 'src', 'repo');
+    expect(drawn?.nodes.map(node => node.id).sort()).toEqual(['src/app', 'src/apple', 'src/domain', 'src/infra']);
+    expect(drawn?.nodes.find(node => node.id === 'src/app')).toMatchObject({ kind: 'package', files: 0 });
+  });
+
   it('draws a created empty package that only holds another empty package', () => {
     const planned = applyPlan(LAYERED, [CREATE_PORTS, { kind: 'create-package', path: 'src/ports/deep' }]);
     expect(planned).not.toHaveProperty('hidden');
@@ -1083,6 +1100,27 @@ describe('planReport', () => {
     const twice: ScanResult = { ...LAYERED, edges: [...LAYERED.edges, { from: 'src/app/b.ts', to: 'src/app/a.ts', kind: 'type' }] };
     const report = planReport(twice, [{ kind: 'fate', file: 'src/app/a.ts', fate: 'delete' }, { kind: 'fate', file: 'src/app/save.ts', fate: 'delete' }], noCycles);
     expect(report.warnings).toEqual([[{ kind: 'deleted-imports', file: 'src/app/a.ts', importers: ['src/app/a.test.ts', 'src/app/b.ts'] }], []]);
+  });
+
+  it('does not count an import of a longer path as an import of the deleted file', () => {
+    const scan: ScanResult = {
+      ...LAYERED,
+      files: [...LAYERED.files, { path: 'src/app/a.ts.bak', test: false }],
+      edges: [...LAYERED.edges, { from: 'src/infra/db.ts', to: 'src/app/a.ts.bak', kind: 'runtime' }],
+    };
+    const report = planReport(scan, [{ kind: 'fate', file: 'src/app/a.ts', fate: 'delete' }], noCycles);
+    expect(report.warnings).toEqual([[{ kind: 'deleted-imports', file: 'src/app/a.ts', importers: ['src/app/a.test.ts', 'src/app/b.ts'] }]]);
+  });
+
+  it('deletes a file whose path extends an already deleted file', () => {
+    const scan: ScanResult = { ...LAYERED, files: [...LAYERED.files, { path: 'src/app/a.ts.bak', test: false }] };
+    const edits: PlanEdit[] = [
+      { kind: 'fate', file: 'src/app/a.ts', fate: 'delete' },
+      { kind: 'fate', file: 'src/app/a.ts.bak', fate: 'delete' },
+    ];
+    const report = planReport(scan, edits, noCycles);
+    expect(report.stale).toEqual([null, null]);
+    expect(report.scan.deleted).toEqual(['src/app/a.ts', 'src/app/a.ts.bak']);
   });
 
   it('names a deleted file that still imports another deleted file', () => {

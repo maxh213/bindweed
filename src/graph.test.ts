@@ -852,6 +852,13 @@ describe('graphView over a planned scan', () => {
     expect(view(LAYERED, 'src/domain').nodes[0]).not.toHaveProperty('fate');
   });
 
+  it('does not mark a parent package or the root when a file inside is deleted', () => {
+    const scan: ScanResult = { ...scanOf(['src/domain/model.ts', 'src/domain/shape.ts'], []), deleted: ['src/domain/model.ts'] };
+    expect(view(scan, 'src/domain').nodes.find(node => node.id === 'src/domain/model.ts')).toMatchObject({ fate: 'delete' });
+    expect(view(scan, 'src').nodes.find(node => node.id === 'src/domain')).not.toHaveProperty('fate');
+    expect(view(scan, '').nodes.find(node => node.id === 'src')).not.toHaveProperty('fate');
+  });
+
   it('draws a deleted file and the edges that leave it', () => {
     const scan = applyPlan(
       scanOf(
