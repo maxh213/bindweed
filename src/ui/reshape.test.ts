@@ -132,6 +132,7 @@ describe('the reshape dialog rules', () => {
     expect(splitEdit(form(['has space', 'write'], ALL_READ_WRITE))).toEqual({ problem: 'bad name' });
     expect(splitEdit(form(['has space', 'has space'], ALL_READ_WRITE))).toEqual({ problem: 'bad name' });
     expect(splitEdit(form(['read', 'read'], ALL_READ_WRITE))).toEqual({ problem: 'duplicate part' });
+    expect(splitEdit(form(['read', 'write', 'read'], ALL_READ_WRITE))).toEqual({ problem: 'duplicate part' });
     expect(splitEdit(form(['read', 'write'], { ...ALL_READ_WRITE, 'src/app/a.ts': '' }))).toEqual({ problem: 'assign every file' });
     expect(splitEdit(form(['a.ts', 'write'], { ...ALL_READ_WRITE, 'src/app/a.ts': '' }))).toEqual({ problem: 'assign every file' });
     expect(splitEdit(form(['read', 'other'], ALL_READ_WRITE))).toEqual({ problem: 'assign every file' });
