@@ -803,6 +803,16 @@ describe('the page reshapes packages and files', () => {
     await clickTargetsAndRemoveRename();
   }, 20000);
 
+  it('shows no such box for a deleted test file while tests are off', async () => {
+    await seed('Reshape', 'reshape', [{ kind: 'fate', file: 'src/app/a.test.ts', fate: 'delete' }]);
+    await showApp('#at=src/app&plan=reshape');
+    await waitFor(() => expect(boxIds()).toEqual(['src/app/a.ts', 'src/app/b.ts', 'src/app/save.ts']));
+    expect(sentences()).toEqual(['Delete src/app/a.test.ts']);
+    await click(sentenceButton('Delete src/app/a.test.ts'));
+    await waitFor(() => expect(notice()).toBe('no such box src/app/a.test.ts'));
+    expect(window.location.hash).toBe('#at=src/app&plan=reshape');
+  });
+
   it('lists a deleted file and its test neighbour when their package is split', async () => {
     await showApp('#at=src/app&plan=reshape');
     await waitFor(() => expect(boxIds()).toContain('src/app/b.ts'));
@@ -982,6 +992,7 @@ describe('the page reshapes packages and files', () => {
     await click(boxOf('src/app/read'));
     await click(boxOf('src/app/write'), true);
     await click(button('Menu', boxOf('src/app/read')));
+    expect(menuLabels('src/app/read')).toEqual(['Add note', 'Rename', 'Split', 'Merge']);
     await click(button('Merge', boxOf('src/app/read')));
     await named('app', 'Merge');
     await waitFor(() => expect(lastSentence()).toBe('Merge src/app/read and src/app/write into src/app'));

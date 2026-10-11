@@ -892,7 +892,13 @@ describe('graphView over a planned scan', () => {
 
   it('draws an external through every hidden package above its file', () => {
     const base: ScanResult = {
-      ...scanOf(['src/app/a.ts', 'src/app/sub/b.ts', 'src/app/sub/deep/c.ts', 'src/domain/model.ts'], []),
+      ...scanOf(
+        ['src/app/a.ts', 'src/app/sub/b.ts', 'src/app/sub/deep/c.ts', 'src/domain/model.ts'],
+        [
+          ['src/app/sub/deep/c.ts', 'src/domain/model.ts'],
+          ['src/domain/model.ts', 'src/app/sub/deep/c.ts'],
+        ],
+      ),
       externals: [{ from: 'src/app/sub/deep/c.ts', name: 'react', kind: 'runtime' }],
     };
     const scan = applyPlan(base, [
@@ -902,6 +908,10 @@ describe('graphView over a planned scan', () => {
     expect(scan.hidden).toEqual(['src/app', 'src/app/sub']);
     const drawn = viewWith(scan, 'src', { tests: false, external: true });
     expect(drawn.edges.find(edge => edge.to === 'react')).toMatchObject({ from: 'src/app/sub/deep', to: 'react', runtime: 1 });
+    const deep = nodeDetail(scan, 'src/app/sub/deep', 'src', 'repo', { tests: false, external: true });
+    expect(deep?.imports.map(entry => entry.id)).toEqual(['react', 'src/domain']);
+    expect(deep?.importedBy.map(entry => entry.id)).toEqual(['src/domain']);
+    expect(edgePairs(scan, 'src', 'src/app/sub/deep', 'react', { tests: false, external: true })).toEqual([['src/app/sub/deep/c.ts', 'react']]);
   });
 
   it('regroups a planned edge through every hidden package above its file', () => {
