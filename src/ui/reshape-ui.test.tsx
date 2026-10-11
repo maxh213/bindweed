@@ -1009,12 +1009,44 @@ describe('the page reshapes packages and files', () => {
   });
 
   it('lists a nested test file when splitting a package', async () => {
-    extraFiles = [{ path: 'src/app/sub/a.test.ts', test: true }];
+    extraFiles = [
+      { path: 'src/app/sub/a.test.ts', test: true },
+      { path: 'src/app/sub/deep/x.ts', test: false },
+      { path: 'src/app/sub/deep/y.test.ts', test: true },
+    ];
     await showApp('#at=src&plan=reshape');
     await waitFor(() => expect(boxIds()).toContain('src/app'));
     await menu('src/app', 'Split');
     await waitFor(() => expect(dialogLabel()).toBe('Split package'));
-    expect(selects().map(item => item.getAttribute('aria-label'))).toEqual(['a.test.ts', 'a.ts', 'b.ts', 'save.ts', 'sub/a.test.ts']);
+    expect(selects().map(item => item.getAttribute('aria-label'))).toEqual([
+      'a.test.ts',
+      'a.ts',
+      'b.ts',
+      'save.ts',
+      'sub/a.test.ts',
+      'sub/deep/x.ts',
+      'sub/deep/y.test.ts',
+    ]);
+  });
+
+  it('stores a fold when the next click is a shift-click on a file box', async () => {
+    await showApp('#at=src/infra&plan=reshape');
+    await waitFor(() => expect(boxIds()).toContain('src/infra/repo.ts'));
+    await menu('src/infra/repo.ts', 'Fold into…');
+    await click(boxOf('src/infra/db.ts'), true);
+    await waitFor(() => expect(sentences()).toEqual(['Fold src/infra/repo.ts into src/infra/db.ts']));
+    expect(storedEdits()).toEqual([{ kind: 'fate', file: 'src/infra/repo.ts', fate: 'fold', into: 'src/infra/db.ts' }]);
+  });
+
+  it('stores a fold when the next click is a shift-click on a file row', async () => {
+    await showApp('#at=src/infra&plan=reshape');
+    await waitFor(() => expect(boxIds()).toContain('src/infra/repo.ts'));
+    await menu('src/infra/repo.ts', 'Fold into…');
+    await crumb('src');
+    await waitFor(() => expect(rowNames('src/infra')).toEqual(['db.ts', 'repo.ts']));
+    await click(button('db.ts', rowOf('src/infra', 'src/infra/db.ts')), true);
+    await waitFor(() => expect(sentences()).toEqual(['Fold src/infra/repo.ts into src/infra/db.ts']));
+    expect(storedEdits()).toEqual([{ kind: 'fate', file: 'src/infra/repo.ts', fate: 'fold', into: 'src/infra/db.ts' }]);
   });
 
   it('stores nothing when a file is renamed to the same name', async () => {
