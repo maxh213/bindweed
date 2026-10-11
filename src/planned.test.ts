@@ -401,6 +401,30 @@ describe('package edits and file fates in the walk', () => {
     expect(edgesOf(planned)).toContain('src/app/a.ts>src/app/c.ts');
   });
 
+  it('moves, renames and folds one file and leaves a longer path beside it', () => {
+    const scan: ScanResult = {
+      files: [
+        { path: 'src/app/a.ts', test: false },
+        { path: 'src/app/a.ts.bak', test: false },
+        { path: 'src/domain/model.ts', test: false },
+        { path: 'src/infra/db.ts', test: false },
+      ],
+      edges: [{ from: 'src/app/a.ts.bak', to: 'src/domain/model.ts', kind: 'runtime' }],
+      externals: [],
+      workspaces: [],
+    };
+    const edge = scan.edges;
+    const moved = applyPlan(scan, [{ kind: 'move-file', file: 'src/app/a.ts', to: 'src/infra' }]);
+    expect(pathsOf(moved)).toEqual(['src/infra/a.ts', 'src/app/a.ts.bak', 'src/domain/model.ts', 'src/infra/db.ts']);
+    expect(moved.edges).toEqual(edge);
+    const renamed = applyPlan(scan, [{ kind: 'rename-file', from: 'src/app/a.ts', to: 'b.ts' }]);
+    expect(pathsOf(renamed)).toEqual(['src/app/b.ts', 'src/app/a.ts.bak', 'src/domain/model.ts', 'src/infra/db.ts']);
+    expect(renamed.edges).toEqual(edge);
+    const folded = applyPlan(scan, [{ kind: 'fate', file: 'src/app/a.ts', fate: 'fold', into: 'src/domain/model.ts' }]);
+    expect(pathsOf(folded)).toEqual(['src/app/a.ts.bak', 'src/domain/model.ts', 'src/infra/db.ts']);
+    expect(folded.edges).toEqual(edge);
+  });
+
   it('renames one file and leaves another file of the same name', () => {
     const scan: ScanResult = {
       files: [
@@ -571,6 +595,28 @@ describe('package edits and file fates in the walk', () => {
     expect(pathsOf(planned)).toContain('src/app/deep/x.ts');
     expect(pathsOf(planned)).not.toContain('src/app/other/deep/x.ts');
     expect(planned).not.toHaveProperty('declared');
+  });
+
+  it('splits a package whose only files sit under a subdirectory', () => {
+    const scan: ScanResult = {
+      files: [
+        { path: 'src/app/deep/a.ts', test: false },
+        { path: 'src/app/deep/b.ts', test: false },
+      ],
+      edges: [],
+      externals: [],
+      workspaces: [],
+    };
+    const split: PlanEdit = {
+      kind: 'split-package',
+      package: 'src/app',
+      parts: [
+        { name: 'read', files: ['src/app/deep/a.ts', 'src/app/deep/b.ts'] },
+        { name: 'write', files: [] },
+      ],
+    };
+    expect(staleReasons(scan, [split])).toEqual([null]);
+    expect(pathsOf(applyPlan(scan, [split]))).toEqual(['src/app/read/deep/a.ts', 'src/app/read/deep/b.ts']);
   });
 
   it('splits listed files into parts, leaves the rest, declares the parts and hides the emptied package', () => {
@@ -997,6 +1043,19 @@ describe('planReport', () => {
     const report = planReport(LAYERED, [{ kind: 'create-package', path: 'src/app/spare' }, SPLIT_APP], noCycles);
     expect(report.scan.declared).toEqual(['src/app/read', 'src/app/spare', 'src/app/write']);
     expect(report.warnings).toEqual([[{ kind: 'empty-package', path: 'src/app/spare' }], []]);
+  });
+
+  it('splits an empty created package into empty parts and keeps the package declared', () => {
+    const report = planReport(LAYERED, [
+      { kind: 'create-package', path: 'src/ports' },
+      { kind: 'split-package', package: 'src/ports', parts: [{ name: 'a', files: [] }, { name: 'b', files: [] }] },
+    ], noCycles);
+    expect(report.stale).toEqual([null, null]);
+    expect(report.scan.declared).toEqual(['src/ports', 'src/ports/a', 'src/ports/b']);
+    expect(report.warnings).toEqual([
+      [{ kind: 'empty-package', path: 'src/ports' }],
+      [{ kind: 'empty-package', path: 'src/ports/a' }, { kind: 'empty-package', path: 'src/ports/b' }],
+    ]);
   });
 
   it('does not warn about a split part whose files all sit in a subdirectory', () => {

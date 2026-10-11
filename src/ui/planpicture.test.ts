@@ -298,6 +298,25 @@ describe('a fold leaves no ghost', () => {
     expect(picture({ packages: lib, edits: [moved, foldLib], stale: [null, null] }).ink.rows.get('src/lib')).toEqual([]);
   });
 
+  it('leaves the ghost of a longer path a move, rename or fold did not name', () => {
+    const now = viewOf([fileNode('src/app/a.ts', 0, 0), fileNode('src/app/a.ts.bak', 0, 1)]);
+    const pack = [{ id: 'src/app', now, planned: viewOf([]) }];
+    const bak = { path: 'src/app/a.ts.bak', name: 'a.ts.bak', ghost: true, deleted: false };
+    const fold: PlanEdit = { kind: 'fate', file: 'src/app/a.ts', fate: 'fold', into: 'src/app/b.ts' };
+    const renamed: PlanEdit = { kind: 'rename-file', from: 'src/app/a.ts', to: 'b.ts' };
+    const foldRenamed: PlanEdit = { kind: 'fate', file: 'src/app/b.ts', fate: 'fold', into: 'src/app/c.ts' };
+    const moved: PlanEdit = { kind: 'move-file', file: 'src/app/a.ts', to: 'src/infra' };
+    const foldMoved: PlanEdit = { kind: 'fate', file: 'src/infra/a.ts', fate: 'fold', into: 'src/infra/db.ts' };
+    const left = (edits: PlanEdit[]) => picture({ packages: pack, edits, stale: edits.map(() => null) }).ink.rows.get('src/app');
+    expect(left([fold])).toEqual([bak]);
+    expect(left([renamed, foldRenamed])).toEqual([bak]);
+    expect(left([moved, foldMoved])).toEqual([bak]);
+    const boxes = (edits: PlanEdit[]) => picture({ nodes: [], other: now, edits, stale: edits.map(() => null) }).ink.ghosts.map(box => box.id);
+    expect(boxes([fold])).toEqual(['src/app/a.ts.bak']);
+    expect(boxes([renamed, foldRenamed])).toEqual(['src/app/a.ts.bak']);
+    expect(boxes([moved, foldMoved])).toEqual(['src/app/a.ts.bak']);
+  });
+
   it('keeps the ghost of a same-named file a fold did not name', () => {
     const packages = [
       { id: 'src/app', now: viewOf([fileNode('src/app/a.ts')]), planned: viewOf([]) },
