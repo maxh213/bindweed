@@ -410,8 +410,26 @@ describe('plan document edits', () => {
     expect(addEdgeIndex([add('src/app/save.ts', 'src/app/b.ts'), split], [null, null], 'src/app/read', 'src/app/write', 'src', splitView)).toBe(0);
     expect(addEdgeIndex([add('src/app/save.ts', 'src/domain/model.ts'), split], [null, null], 'src/app/read', 'src/domain', 'src', splitView)).toBe(0);
     expect(addEdgeIndex([add('src/app/save.ts', 'src/app/a.ts'), { kind: 'rename-file', from: 'src/app/save.ts', to: 'writer.ts' }], [null, null], 'src/app/writer.ts', 'src/app/a.ts', 'src/app', boxes('src/app/writer.ts', 'src/app/a.ts'))).toBe(0);
+    const libSave = boxes('src/lib/save.ts', 'src/domain/model.ts');
+    const renameSave: PlanEdit = { kind: 'rename-file', from: 'src/app/save.ts', to: 'writer.ts' };
+    expect(addEdgeIndex([add('src/lib/save.ts', 'src/domain/model.ts'), renameSave], [null, null], 'src/lib/save.ts', 'src/domain/model.ts', 'src/lib', libSave)).toBe(0);
+    expect(addEdgeIndex([add('src/lib/save.ts', 'src/domain/model.ts'), renameSave], [null, null], 'src/lib/writer.ts', 'src/domain/model.ts', 'src/lib', libSave)).toBe(-1);
     expect(addEdgeIndex([add('src/infra/db.ts', 'src/infra2/x.ts'), { kind: 'rename-package', from: 'src/infra', to: 'src/adapters' }], [null, null], 'src/adapters', 'src/infra2', 'src', src)).toBe(0);
     expect(addEdgeIndex([add('src/infra/deep/x.ts', 'src/infra/nest/y.ts'), { kind: 'rename-package', from: 'src/infra', to: 'src/adapters' }], [null, null], 'src/adapters/deep', 'src/adapters/nest', 'src/adapters', boxes('src/adapters/deep', 'src/adapters/nest'))).toBe(0);
+    const partial: PlanEdit = {
+      kind: 'split-package',
+      package: 'src/app',
+      parts: [
+        { name: 'read', files: ['src/app/a.ts'] },
+        { name: 'write', files: ['src/app/b.ts'] },
+      ],
+    };
+    const partialIds = boxes('src/app/sub', 'src/app/read', 'src/app/write', 'src/domain');
+    expect(addEdgeIndex([add('src/app/sub/c.ts', 'src/domain/model.ts'), partial], [null, null], 'src/app/sub', 'src/domain', 'src', partialIds)).toBe(0);
+    expect(addEdgeIndex([add('src/app/sub/c.ts', 'src/domain/model.ts'), partial], [null, null], 'src/app/read', 'src/domain', 'src', partialIds)).toBe(-1);
+    const outside = boxes('src/lib', 'src/domain', 'src/app/read');
+    expect(addEdgeIndex([add('src/lib/a.ts', 'src/domain/model.ts'), partial], [null, null], 'src/lib', 'src/domain', 'src', outside)).toBe(0);
+    expect(addEdgeIndex([add('src/lib/a.ts', 'src/domain/model.ts'), partial], [null, null], 'src/app/read', 'src/domain', 'src', outside)).toBe(-1);
     const nested: PlanEdit = { kind: 'split-package', package: 'src/app', parts: [{ name: 'read', files: ['src/app/deep/a.ts', 'src/app/other/b.ts'] }, { name: 'write', files: [] }] };
     expect(addEdgeIndex([add('src/app/deep/a.ts', 'src/app/other/b.ts'), nested], [null, null], 'src/app/read/deep', 'src/app/read/other', 'src/app/read', boxes('src/app/read/deep', 'src/app/read/other'))).toBe(0);
     expect(addEdgeIndex([add('src/domain/model.ts', 'src/infra/repo.ts'), { kind: 'move-file', file: 'src/domain/model.ts', to: 'src/app' }], [null, null], 'src/domain', 'src/infra', 'src', src)).toBe(0);
@@ -419,6 +437,9 @@ describe('plan document edits', () => {
     expect(addEdgeIndex([add('src/infra', 'src/app'), { kind: 'rename-package', from: 'src/infra', to: 'src/adapters' }], [null, 'no such directory src/infra'], 'src/infra', 'src/app', 'src', src)).toBe(0);
     expect(addEdgeIndex([add('src/infra', 'src/app'), { kind: 'rename-package', from: 'src/infra', to: 'src/adapters' }], [null, 'no such directory src/infra'], 'src/adapters', 'src/app', 'src', src)).toBe(-1);
     expect(addEdgeIndex([add('src/app/save.ts', 'src/domain/model.ts'), { kind: 'fate', file: 'src/app/save.ts', fate: 'fold', into: 'src/app/a.ts' }], [null, null], 'src/app', 'src/domain', 'src', src)).toBe(0);
+    expect(addEdgeIndex([add('src/infra/db.ts', 'src/domain/model.ts'), { kind: 'fate', file: 'src/infra/db.ts', fate: 'fold', into: 'src/app/a.ts' }], [null, null], 'src/app', 'src/domain', 'src', src)).toBe(0);
+    expect(addEdgeIndex([add('src/infra/db.ts', 'src/domain/model.ts'), { kind: 'fate', file: 'src/infra/db.ts', fate: 'fold', into: 'src/app/a.ts' }], [null, null], 'src/infra', 'src/domain', 'src', src)).toBe(-1);
+    expect(addEdgeIndex([add('src/lib/a.ts', 'src/domain/model.ts'), { kind: 'fate', file: 'src/app/a.ts', fate: 'fold', into: 'src/domain/shape.ts' }], [null, null], 'src/lib', 'src/domain', 'src', boxes('src/lib', 'src/domain'))).toBe(0);
     expect(addEdgeIndex([add('src/app/save.ts', 'src/domain/model.ts'), { kind: 'fate', file: 'src/app/b.ts', fate: 'delete' }], [null, null], 'src/app', 'src/domain', 'src', src)).toBe(0);
     expect(addEdgeIndex([add('a/p.ts', 'b/q.ts')], [null], 'a', 'b', '', boxes('a', 'b'))).toBe(0);
     expect(addEdgeIndex([add('src/domain', 'src/infra')], [null], 'src/domain', 'src/infra', 'src/app', boxes('src/app/a.ts'))).toBe(-1);
