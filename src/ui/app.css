@@ -511,3 +511,15 @@ aside[aria-label='changes'] ol {
   align-items: center;
   gap: 0.25rem;
 }
+
+.contract-rules {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+
+.contract-text pre {
+  max-height: 40vh;
+  overflow: auto;
+  font-size: 12px;
+}

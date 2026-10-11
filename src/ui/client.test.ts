@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { LayoutDoc } from '../domain/layout.ts';
 import type { PlanDoc } from '../domain/plan.ts';
-import { deletePlan, fetchDetail, fetchFile, fetchGraph, fetchLayout, fetchPairs, fetchPlan, fetchPlans, fetchTree, postPlan, postRescan, putLayout, putPlan, takeToken } from './client.ts';
+import { deletePlan, fetchContract, fetchDetail, fetchFile, fetchGraph, fetchLayout, fetchPairs, fetchPlan, fetchPlans, fetchTree, postContract, postPlan, postRescan, putLayout, putPlan, takeToken } from './client.ts';
 
 describe('fetchTree', () => {
   it('returns the tree with a bearer header and no token in the address', async () => {
@@ -582,5 +582,48 @@ describe('fetchPairs', () => {
     expect(await fetchPairs('tok', 'a', 'b', 'src', {}, noPlan)).toEqual({ error: 'no such plan' });
     const bad = (async () => jsonResponse(true, { pairs: [['only']] })) as typeof fetch;
     expect(await fetchPairs('tok', 'a', 'b', 'src', {}, bad)).toEqual({ error: 'cannot reach bindweed' });
+  });
+});
+
+describe('fetchContract and postContract', () => {
+  const RULE = { name: 'bindweed:no-circular', severity: 'error', comment: 'No circular dependencies', from: {}, to: { circular: true } };
+
+  it('reads the generated rules and posts the ticked names', async () => {
+    const calls: { url: string; init: RequestInit | undefined }[] = [];
+    const fetcher = (async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (init?.method === 'POST') return jsonResponse(true, { text: 'module.exports = {};\n', diff: '--- a\n' });
+      return jsonResponse(true, { rules: [RULE] });
+    }) as typeof fetch;
+    expect(await fetchContract('tok', 'gate', fetcher)).toEqual({ rules: [RULE] });
+    expect(await postContract('tok', 'gate', ['bindweed:no-circular'], fetcher)).toEqual({ text: 'module.exports = {};\n', diff: '--- a\n' });
+    expect(calls).toEqual([
+      { url: '/api/plans/gate/contract', init: { headers: { Authorization: 'Bearer tok' } } },
+      {
+        url: '/api/plans/gate/contract',
+        init: { method: 'POST', headers: { Authorization: 'Bearer tok', 'Content-Type': 'application/json' }, body: '{"names":["bindweed:no-circular"]}' },
+      },
+    ]);
+  });
+
+  it('keeps a refusal and its snippet apart from a failure', async () => {
+    const refused = (async () => jsonResponse(true, { error: 'no merge', snippet: '    {\n' })) as typeof fetch;
+    expect(await postContract('tok', 'gate', [], refused)).toEqual({ error: 'no merge', snippet: '    {\n' });
+  });
+
+  it('maps failures and bad bodies to error text', async () => {
+    const down = (async () => {
+      throw new Error('down');
+    }) as typeof fetch;
+    expect(await fetchContract('tok', 'gate', down)).toEqual({ error: 'cannot reach bindweed' });
+    expect(await postContract('tok', 'gate', [], down)).toEqual({ error: 'cannot reach bindweed' });
+    expect(await fetchContract('tok', 'gate')).toEqual({ error: 'cannot reach bindweed' });
+    expect(await postContract('tok', 'gate', [])).toEqual({ error: 'cannot reach bindweed' });
+    const noPlan = (async () => jsonResponse(false, { error: 'no such plan' })) as typeof fetch;
+    expect(await fetchContract('tok', 'nope', noPlan)).toEqual({ error: 'no such plan' });
+    expect(await postContract('tok', 'nope', [], noPlan)).toEqual({ error: 'no such plan' });
+    const bad = (async () => jsonResponse(true, { rules: [{ ...RULE, severity: 'warn' }] })) as typeof fetch;
+    expect(await fetchContract('tok', 'gate', bad)).toEqual({ error: 'cannot reach bindweed' });
+    expect(await postContract('tok', 'gate', [], bad)).toEqual({ error: 'cannot reach bindweed' });
   });
 });

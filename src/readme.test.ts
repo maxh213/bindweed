@@ -9,6 +9,13 @@ function routesTable(text: string): string {
 }
 
 describe('README routes', () => {
+  it('The README lists the contract route beside the old ones', () => {
+    const table = routesTable(readFileSync(join(process.cwd(), 'README.md'), 'utf8'));
+    for (const route of ['/api/tree', '/api/file', '/api/graph', '/api/rescan', '/api/layout', '/api/detail', '/api/plans', '/api/pairs', '/api/plans/<slug>/contract']) {
+      expect(table).toContain(`| \`${route}\` | live |`);
+    }
+  });
+
   it('The README lists the new routes beside the old ones', () => {
     const table = routesTable(readFileSync(join(process.cwd(), 'README.md'), 'utf8'));
     expect(table).toContain('| `/` | live |');

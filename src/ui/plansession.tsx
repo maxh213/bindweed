@@ -8,10 +8,12 @@ import {
   withRedo,
   withUndo,
   withoutEdit,
+  type ContractRule,
   type NoteTarget,
   type PlanDoc,
   type PlanEdit,
 } from '../domain/plan.ts';
+import { ContractPanel } from './ContractPanel.tsx';
 import { deletePlan, fetchGraph, fetchPairs, fetchPlan, fetchPlans, postPlan, putPlan } from './client.ts';
 import { parentDir } from './draw.ts';
 import {
@@ -153,6 +155,7 @@ function PlanToolbar(
     onDeletePlan: () => void;
     onShown: (shown: ShownGraph) => void;
     onNewPackage: () => void;
+    onContract: () => void;
   }>,
 ) {
   return (
@@ -166,6 +169,11 @@ function PlanToolbar(
       </button>
       {props.slug === null ? null : <ShownSwitch shown={props.shown} onChoose={props.onShown} />}
       {props.slug === null ? null : <CanvasMenu onNewPackage={props.onNewPackage} />}
+      {props.slug === null ? null : (
+        <button type="button" onClick={props.onContract}>
+          Contract
+        </button>
+      )}
     </>
   );
 }
@@ -265,6 +273,25 @@ function ReshapeDialogs(
   );
 }
 
+type ContractOpening = { open: boolean; count: number };
+
+function ContractSlot(
+  props: Readonly<{ opening: ContractOpening; token: string; fetcher: typeof fetch; doc: PlanDoc | null; onSave: (rules: ContractRule[]) => void; onClose: () => void }>,
+) {
+  if (!props.opening.open || props.doc === null) return null;
+  return (
+    <ContractPanel
+      key={`${props.doc.slug} ${props.opening.count}`}
+      token={props.token}
+      fetcher={props.fetcher}
+      opening={props.opening.count}
+      doc={props.doc}
+      onSave={props.onSave}
+      onClose={props.onClose}
+    />
+  );
+}
+
 function kindOf(nodes: GraphNode[], id: string): GraphNode['kind'] | undefined {
   return nodes.find(node => node.id === id)?.kind;
 }
@@ -330,6 +357,8 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
   const [splitAsk, setSplitAsk] = useState<SplitAsk | null>(null);
   const [askError, setAskError] = useState<string | null>(null);
   const [foldFrom, setFoldFrom] = useState<string | null>(null);
+  const [contractOpening, setContractOpening] = useState<ContractOpening>({ open: false, count: 0 });
+  const closeContract = (): void => setContractOpening(current => ({ ...current, open: false }));
   const roster = planRoster(plansQuery.data, planQuery.data, slug, deleteTarget);
   const doc = roster.doc;
   const edits = editsOf(doc);
@@ -391,6 +420,18 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
       savePlan(withoutEdit(current, index));
       setNotice(null);
     });
+  };
+  const saveContract = (rules: ContractRule[]): void => {
+    withDoc(current => {
+      const key = ['plan', props.token, slug];
+      queryClient.setQueryData(key, { ...current, contract: { rules } });
+      void putPlan(props.token, { ...current, contract: { rules } }, props.fetcher).then(saved => {
+        if (!('error' in saved)) return;
+        queryClient.setQueryData(key, current);
+        setNotice(saved.error);
+      });
+    });
+    closeContract();
   };
   const moveFile = (file: string, dir: string): boolean => {
     if (sameDir(file, dir)) return false;
@@ -585,6 +626,7 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
         onDeletePlan={() => setDeleteTarget(slug)}
         onShown={props.onShown}
         onNewPackage={() => ask({ mode: 'create' })}
+        onContract={() => setContractOpening(current => ({ open: true, count: current.count + 1 }))}
       />
     ),
     notice: <PlanNotice slug={slug} text={notice} />,
@@ -615,6 +657,7 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
           onAddNote={addNote}
           onCancelNote={() => setNoteTarget(null)}
         />
+        <ContractSlot opening={contractOpening} token={props.token} fetcher={props.fetcher} doc={doc} onSave={saveContract} onClose={closeContract} />
       </>
     ),
     planning,

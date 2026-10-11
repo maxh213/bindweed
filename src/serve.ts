@@ -6,8 +6,8 @@ import { basename, dirname, extname, join } from 'node:path';
 import { z } from 'zod';
 import { cycleTexts, edgePairs, graphView, nodeDetail, type GraphFlags, type GraphView } from './domain/graph.ts';
 import { emptyLayout, parseLayout, type LayoutDoc } from './domain/layout.ts';
-import { PLAN_SLUG_PATTERN, parsePlan, planNameFrom, slugOf, type PlanDoc } from './domain/plan.ts';
-import { applyPlan, planReport, type PlanReport } from './domain/planned.ts';
+import { contractNamesFrom, PLAN_SLUG_PATTERN, parsePlan, planNameFrom, slugOf, type ContractRule, type PlanDoc } from './domain/plan.ts';
+import { applyPlan, contractRules, planReport, type PlanReport } from './domain/planned.ts';
 import type { ScanResult } from './domain/scan.ts';
 import { buildTree, filePathSet, type TreeRoot } from './domain/tree.ts';
 import { freePlanSlug, listPlans, readPlan, removePlan, writePlan } from './plans.ts';
@@ -431,6 +431,55 @@ type PlanVerb = (app: App, req: IncomingMessage, res: ServerResponse, slug: stri
 const PLAN_DOC_VERBS: Record<string, PlanVerb> = { GET: getPlan, PUT: putPlan, DELETE: deletePlan };
 
 const PLANS_PREFIX = '/api/plans/';
+const CONTRACT_SUFFIX = '/contract';
+const CONTRACT_PATH = /^\/api\/plans\/[^/]*\/contract$/;
+
+type ContractVerb = (app: App, graphs: GraphHolder, req: IncomingMessage, res: ServerResponse, doc: PlanDoc) => Promise<void>;
+
+async function cruiserSource(root: string): Promise<string | null> {
+  return readFile(join(root, '.dependency-cruiser.cjs'), 'utf8').catch(() => null);
+}
+
+async function hasTsconfig(root: string): Promise<boolean> {
+  return stat(join(root, 'tsconfig.json')).then(
+    () => true,
+    () => false,
+  );
+}
+
+async function rulesFor(app: App, graphs: GraphHolder, doc: PlanDoc, source: string | null): Promise<ContractRule[]> {
+  const { keepsCycleRule } = await import('./cruiser.ts');
+  return contractRules(await readyScan(app, graphs), doc.edits, !keepsCycleRule(source));
+}
+
+async function getContract(app: App, graphs: GraphHolder, _req: IncomingMessage, res: ServerResponse, doc: PlanDoc): Promise<void> {
+  sendJson(res, 200, { rules: await rulesFor(app, graphs, doc, await cruiserSource(app.repoRoot)) });
+}
+
+async function postContract(app: App, graphs: GraphHolder, req: IncomingMessage, res: ServerResponse, doc: PlanDoc): Promise<void> {
+  const names = contractNamesFrom(await readJsonBody(req));
+  if (names === undefined) {
+    sendJson(res, 400, { error: 'bad contract' });
+    return;
+  }
+  const source = await cruiserSource(app.repoRoot);
+  const chosen = (await rulesFor(app, graphs, doc, source)).filter(rule => names.includes(rule.name));
+  const { previewCruiser } = await import('./cruiser.ts');
+  sendJson(res, 200, previewCruiser(source, chosen, await hasTsconfig(app.repoRoot)));
+}
+
+async function namedPlan(app: App, slug: string): Promise<PlanDoc | undefined> {
+  return PLAN_SLUG_PATTERN.test(slug) ? readPlan(app.repoRoot, slug) : undefined;
+}
+
+async function servePlanContract(app: App, graphs: GraphHolder, req: IncomingMessage, res: ServerResponse, url: URL, verb: ContractVerb): Promise<void> {
+  const doc = await namedPlan(app, url.pathname.slice(PLANS_PREFIX.length, -CONTRACT_SUFFIX.length));
+  if (doc === undefined) {
+    sendJson(res, 404, NO_SUCH_PLAN);
+    return;
+  }
+  await verb(app, graphs, req, res, doc);
+}
 
 async function servePlanDoc(app: App, req: IncomingMessage, res: ServerResponse, slug: string): Promise<void> {
   if (!PLAN_SLUG_PATTERN.test(slug)) {
@@ -484,12 +533,18 @@ function routesFor(app: App, graphs: GraphHolder): Routes {
   router.get('/api/plans', (_req, res) => servePlanList(app, res));
   router.post('/api/plans', (req, res) => postPlan(app, req, res));
   router.get('/api/pairs', (_req, res, url) => servePairs(app, graphs, res, url));
+  router.get('/api/plans/<slug>/contract', (req, res, url) => servePlanContract(app, graphs, req, res, url, getContract));
+  router.post('/api/plans/<slug>/contract', (req, res, url) => servePlanContract(app, graphs, req, res, url, postContract));
   return table;
 }
 
+function routeKey(pathname: string): string {
+  if (pathname.startsWith(ASSETS_PREFIX)) return ASSETS_PREFIX;
+  return CONTRACT_PATH.test(pathname) ? '/api/plans/<slug>/contract' : pathname;
+}
+
 function routeFor(routes: Routes, method: string, pathname: string): Handler | undefined {
-  const route = pathname.startsWith(ASSETS_PREFIX) ? ASSETS_PREFIX : pathname;
-  return routes.get(`${method} ${route}`);
+  return routes.get(`${method} ${routeKey(pathname)}`);
 }
 
 async function dispatch(app: App, routes: Routes, req: IncomingMessage, res: ServerResponse): Promise<void> {

@@ -3,6 +3,8 @@ import {
   addEdgeIndex,
   byStrings,
   childPath,
+  contractNamesFrom,
+  cutEndLater,
   freeSlug,
   lastSegment,
   legalName,
@@ -11,6 +13,7 @@ import {
   renamedFile,
   splitPartPath,
   within,
+  parseContract,
   parsePlan,
   parsePlanEdit,
   PLAN_SLUG_PATTERN,
@@ -569,5 +572,107 @@ describe('plan document edits', () => {
     const stale = [null, 'no such file src/app/a.ts'];
     expect(addEdgeIndex([add, fold], stale, 'src/infra', 'src/domain', 'src', ids)).toBe(0);
     expect(addEdgeIndex([add, fold], stale, 'src/app', 'src/domain', 'src', ids)).toBe(-1);
+  });
+});
+
+const CIRCULAR = { name: 'bindweed:no-circular', severity: 'error', comment: 'No circular dependencies', from: {}, to: { circular: true } };
+const CUT_RULE = { name: 'bindweed:no-src-app-to-src-domain', severity: 'error', comment: 'src/app must not import src/domain', from: { path: '^src/app/' }, to: { path: '^src/domain/' } };
+
+describe('parseContract', () => {
+  it('reads rules of both end shapes and an empty list', () => {
+    expect(parseContract({ rules: [CUT_RULE, CIRCULAR] })).toEqual({ rules: [CUT_RULE, CIRCULAR] });
+    expect(parseContract({ rules: [] })).toEqual({ rules: [] });
+  });
+
+  it('refuses anything but exactly the pinned rule shape', () => {
+    const bad: unknown[] = [
+      null,
+      [],
+      {},
+      { rules: [], extra: 1 },
+      { rules: 'x' },
+      { rules: [null] },
+      { rules: [{ ...CIRCULAR, extra: 1 }] },
+      { rules: [{ ...CIRCULAR, name: 'no-circular' }] },
+      { rules: [{ ...CIRCULAR, name: 3 }] },
+      { rules: [{ ...CIRCULAR, severity: 'warn' }] },
+      { rules: [{ ...CIRCULAR, comment: '' }] },
+      { rules: [{ ...CIRCULAR, comment: 3 }] },
+      { rules: [{ ...CIRCULAR, from: null }] },
+      { rules: [{ ...CIRCULAR, from: { path: 3 } }] },
+      { rules: [{ ...CIRCULAR, from: { path: '^a', extra: 1 } }] },
+      { rules: [{ ...CIRCULAR, from: { circular: true } }] },
+      { rules: [{ ...CIRCULAR, to: {} }] },
+      { rules: [{ ...CIRCULAR, to: null }] },
+      { rules: [{ ...CIRCULAR, to: { circular: false } }] },
+      { rules: [{ ...CIRCULAR, to: { circular: true, path: '^a' } }] },
+      { rules: [{ name: CIRCULAR.name, severity: 'error', comment: 'x', from: {} }] },
+    ];
+    for (const body of bad) expect(parseContract(body)).toBeUndefined();
+  });
+});
+
+describe('contractNamesFrom', () => {
+  it('reads exactly a list of names', () => {
+    expect(contractNamesFrom({ names: ['bindweed:no-circular', 'other'] })).toEqual(['bindweed:no-circular', 'other']);
+    expect(contractNamesFrom({ names: [] })).toEqual([]);
+  });
+
+  it('refuses the pinned bad bodies', () => {
+    for (const body of [undefined, null, [], { names: 'no' }, { names: [], extra: 1 }, { names: [1] }, {}]) expect(contractNamesFrom(body)).toBeUndefined();
+  });
+});
+
+describe('a plan document with a contract', () => {
+  it('A 005 or 006 plan file loads with no contract, and a bad contract is refused', () => {
+    const doc = parsePlan(goodDoc());
+    expect(doc).toBeDefined();
+    expect(Object.keys(doc ?? {})).not.toContain('contract');
+    expect(parsePlan({ ...goodDoc(), contract: { rules: [{ ...CIRCULAR, name: 'no-circular' }] } })).toBeUndefined();
+    expect(parsePlan({ ...goodDoc(), contract: null })).toBeUndefined();
+    expect(parsePlan({ ...goodDoc(), extra: 1 })).toBeUndefined();
+  });
+
+  it('Save stores the chosen rules and an empty list is not absence', () => {
+    expect(parsePlan({ ...goodDoc(), contract: { rules: [CUT_RULE, CIRCULAR] } })).toEqual({ ...docOf([]), contract: { rules: [CUT_RULE, CIRCULAR] } });
+    expect(parsePlan({ ...goodDoc(), contract: { rules: [] } })).toEqual({ ...docOf([]), contract: { rules: [] } });
+  });
+
+  it('keeps the contract through later edits, undo, redo and remove', () => {
+    const edit: PlanEdit = { kind: 'add-edge', from: 'src/infra', to: 'src/app' };
+    const contract = { rules: [] };
+    const doc: PlanDoc = { ...docOf([edit]), contract };
+    expect(withEdit(doc, edit).contract).toBe(contract);
+    expect(withUndo(doc).contract).toBe(contract);
+    expect(withRedo(withUndo(doc)).contract).toBe(contract);
+    expect(withoutEdit(doc, 0).contract).toBe(contract);
+  });
+});
+
+describe('cutEndLater', () => {
+  const stale = [null, null, null, null, null, null, null];
+
+  it('carries a cut end through a move, both renames, a merge, a split and a fold', () => {
+    const edits: PlanEdit[] = [
+      { kind: 'cut-edge', from: 'src/app/a.ts', to: 'src/app/b.ts', files: [['src/app/a.ts', 'src/app/b.ts']] },
+      { kind: 'move-file', file: 'src/app/b.ts', to: 'src/infra' },
+      { kind: 'rename-file', from: 'src/infra/b.ts', to: 'c.ts' },
+      { kind: 'rename-package', from: 'src/infra', to: 'src/data' },
+      { kind: 'merge-packages', packages: ['src/data', 'src/domain'], into: 'src/core' },
+      { kind: 'split-package', package: 'src/core', parts: [{ name: 'x', files: ['src/core/c.ts'] }, { name: 'y', files: ['src/core/db.ts'] }] },
+      { kind: 'fate', file: 'src/core/x/c.ts', fate: 'fold', into: 'src/core/y/db.ts' },
+    ];
+    expect(cutEndLater('src/app/b.ts', edits, stale, 0)).toBe('src/core/y/db.ts');
+    expect(cutEndLater('src/app/a.ts', edits, stale, 0)).toBe('src/app/a.ts');
+  });
+
+  it('skips stale edits and moves of other files', () => {
+    const edits: PlanEdit[] = [
+      { kind: 'cut-edge', from: 'src/app', to: 'src/domain', files: [['src/app/a.ts', 'src/domain/model.ts']] },
+      { kind: 'rename-package', from: 'src/app', to: 'src/web' },
+      { kind: 'move-file', file: 'src/app/b.ts', to: 'src/infra' },
+    ];
+    expect(cutEndLater('src/app', edits, [null, 'no such directory src/app', null], 0)).toBe('src/app');
+    expect(cutEndLater('src/app/a.ts', edits, [null, null, null], 0)).toBe('src/web/a.ts');
   });
 });

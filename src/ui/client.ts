@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { GraphView, NodeDetail } from '../domain/graph.ts';
 import { emptyLayout, parseLayout, type LayoutDoc } from '../domain/layout.ts';
-import { parsePlan, type PlanDoc, type PlanSummary } from '../domain/plan.ts';
+import { parseContract, parsePlan, type Contract, type PlanDoc, type PlanSummary } from '../domain/plan.ts';
 import type { TreeEntry } from '../domain/tree.ts';
 
 const treeEntrySchema: z.ZodType<TreeEntry> = z.lazy(() =>
@@ -331,6 +331,42 @@ export async function deletePlan(token: string, slug: string, fetcher: typeof fe
     const raw: unknown = await res.json();
     if (!res.ok) return errorFrom(raw);
     return { ok: true };
+  } catch {
+    return { error: 'cannot reach bindweed' };
+  }
+}
+
+function contractBody(raw: unknown, ok: boolean): Contract | { error: string } {
+  if (!ok) return errorFrom(raw);
+  return parseContract(raw) ?? { error: 'cannot reach bindweed' };
+}
+
+export async function fetchContract(token: string, slug: string, fetcher: typeof fetch = fetch): Promise<Contract | { error: string }> {
+  try {
+    const res = await fetcher(`/api/plans/${slug}/contract`, { headers: { Authorization: `Bearer ${token}` } });
+    return contractBody(await res.json(), res.ok);
+  } catch {
+    return { error: 'cannot reach bindweed' };
+  }
+}
+
+const previewSchema = z.union([z.object({ text: z.string(), diff: z.string() }), z.object({ error: z.string(), snippet: z.string() })]);
+
+export type ContractPreview = z.infer<typeof previewSchema>;
+
+export async function postContract(
+  token: string,
+  slug: string,
+  names: string[],
+  fetcher: typeof fetch = fetch,
+): Promise<ContractPreview | { error: string }> {
+  try {
+    const res = await fetcher(`/api/plans/${slug}/contract`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ names }),
+    });
+    return parseBody(previewSchema, await res.json(), res.ok);
   } catch {
     return { error: 'cannot reach bindweed' };
   }

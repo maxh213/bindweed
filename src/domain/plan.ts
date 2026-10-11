@@ -24,6 +24,16 @@ export type FateEdit = { kind: 'fate'; file: string; fate: 'delete' } | { kind: 
 
 export type PlanEdit = MoveEdit | CutEdit | AddEdit | NoteEdit | CreatePackageEdit | RenamePackageEdit | RenameFileEdit | MergeEdit | SplitEdit | FateEdit;
 
+export type ContractRule = {
+  name: string;
+  severity: 'error';
+  comment: string;
+  from: Record<string, never> | { path: string };
+  to: { path: string } | { circular: true };
+};
+
+export type Contract = { rules: ContractRule[] };
+
 export type PlanDoc = {
   version: 1;
   name: string;
@@ -32,6 +42,7 @@ export type PlanDoc = {
   baseCommit: string;
   edits: PlanEdit[];
   redo: PlanEdit[];
+  contract?: Contract;
 };
 
 export type PlanSummary = { name: string; slug: string; editCount: number; createdAt: string };
@@ -40,7 +51,9 @@ const SLUG_MAX = 40;
 export const PLAN_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const CREATED_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const COMMIT = /^[0-9a-f]{40}$/;
-const PLAN_KEYS = ['version', 'name', 'slug', 'createdAt', 'baseCommit', 'edits', 'redo'];
+const PLAN_KEYS = ['version', 'name', 'slug', 'createdAt', 'baseCommit', 'edits', 'redo', 'contract'];
+const RULE_KEYS = ['name', 'severity', 'comment', 'from', 'to'];
+const RULE_PREFIX = 'bindweed:';
 const NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 
 function isDash(value: string, index: number): boolean {
@@ -415,12 +428,74 @@ function docFrom(rec: Record<string, unknown>, edits: PlanEdit[], redo: PlanEdit
   };
 }
 
+function pathEnd(rec: Record<string, unknown>): { path: string } | undefined {
+  if (typeof rec.path !== 'string' || !noExtraKeys(rec, ['path'])) return undefined;
+  return { path: rec.path };
+}
+
+function fromEnd(raw: unknown): ContractRule['from'] | undefined {
+  const rec = recordOf(raw);
+  if (rec === undefined) return undefined;
+  return Object.keys(rec).length === 0 ? {} : pathEnd(rec);
+}
+
+function toEnd(raw: unknown): ContractRule['to'] | undefined {
+  const rec = recordOf(raw);
+  if (rec === undefined) return undefined;
+  return rec.circular === true && noExtraKeys(rec, ['circular']) ? { circular: true } : pathEnd(rec);
+}
+
+function ruleWords(rec: Record<string, unknown>): { name: string; comment: string } | undefined {
+  const name = stringOf(rec.name);
+  const comment = stringOf(rec.comment);
+  if (!name?.startsWith(RULE_PREFIX) || !comment) return undefined;
+  return { name, comment };
+}
+
+function ruleShapeOk(rec: Record<string, unknown>): boolean {
+  return noExtraKeys(rec, RULE_KEYS) && rec.severity === 'error';
+}
+
+function ruleFields(rec: Record<string, unknown>): ContractRule | undefined {
+  const words = ruleWords(rec);
+  const from = fromEnd(rec.from);
+  const to = toEnd(rec.to);
+  if (words === undefined || from === undefined || to === undefined) return undefined;
+  return { name: words.name, severity: 'error', comment: words.comment, from, to };
+}
+
+function ruleFrom(raw: unknown): ContractRule | undefined {
+  const rec = recordOf(raw);
+  if (rec === undefined || !ruleShapeOk(rec)) return undefined;
+  return ruleFields(rec);
+}
+
+export function parseContract(raw: unknown): Contract | undefined {
+  const rec = recordOf(raw);
+  if (rec === undefined || !noExtraKeys(rec, ['rules'])) return undefined;
+  const rules = everyRead(listOfAtLeast(rec.rules, 0), ruleFrom);
+  return rules === undefined ? undefined : { rules };
+}
+
+export function contractNamesFrom(raw: unknown): string[] | undefined {
+  const rec = recordOf(raw);
+  if (rec === undefined || !noExtraKeys(rec, ['names'])) return undefined;
+  return stringsFrom(rec.names);
+}
+
+function docContract(rec: Record<string, unknown>): { contract?: Contract } | undefined {
+  if (rec.contract === undefined) return {};
+  const contract = parseContract(rec.contract);
+  return contract === undefined ? undefined : { contract };
+}
+
 export function parsePlan(raw: unknown): PlanDoc | undefined {
   const rec = docCore(raw);
   if (rec === undefined) return undefined;
   const lists = docLists(rec);
-  if (lists === undefined) return undefined;
-  return docFrom(rec, lists.edits, lists.redo);
+  const extra = docContract(rec);
+  if (lists === undefined || extra === undefined) return undefined;
+  return { ...docFrom(rec, lists.edits, lists.redo), ...extra };
 }
 
 export function summarisePlan(doc: PlanDoc): PlanSummary {
@@ -484,13 +559,24 @@ function movedBy(path: string, edit: PlanEdit): string {
   return repackedTo(path, edit) ?? folded(path, edit);
 }
 
-function stepLater(path: string, edit: PlanEdit, reason: string | null | undefined): string {
-  if (reason !== null) return path;
-  return movedBy(path, edit);
+type Mover = (path: string, edit: PlanEdit) => string;
+
+function carriedBy(path: string, edit: PlanEdit): string {
+  if (edit.kind !== 'move-file' || path !== edit.file) return movedBy(path, edit);
+  return moveDest(edit.file, edit.to);
 }
 
-function applyLater(path: string, edits: PlanEdit[], stale: (string | null)[], from: number): string {
-  return edits.slice(from + 1).reduce((current, edit, offset) => stepLater(current, edit, stale[from + 1 + offset]), path);
+function stepLater(path: string, edit: PlanEdit, reason: string | null | undefined, move: Mover): string {
+  if (reason !== null) return path;
+  return move(path, edit);
+}
+
+function applyLater(path: string, edits: PlanEdit[], stale: (string | null)[], from: number, move: Mover): string {
+  return edits.slice(from + 1).reduce((current, edit, offset) => stepLater(current, edit, stale[from + 1 + offset], move), path);
+}
+
+export function cutEndLater(path: string, edits: PlanEdit[], stale: (string | null)[], from: number): string {
+  return applyLater(path, edits, stale, from, carriedBy);
 }
 
 function firstSegment(path: string): string {
@@ -522,8 +608,8 @@ function boxInView(path: string, at: string, ids: ReadonlySet<string>): string |
 }
 
 function drawnPair(edit: AddEdit, edits: PlanEdit[], stale: (string | null)[], index: number, at: string, ids: ReadonlySet<string>): [string, string] | null {
-  const from = boxInView(applyLater(edit.from, edits, stale, index), at, ids);
-  const to = boxInView(applyLater(edit.to, edits, stale, index), at, ids);
+  const from = boxInView(applyLater(edit.from, edits, stale, index, movedBy), at, ids);
+  const to = boxInView(applyLater(edit.to, edits, stale, index, movedBy), at, ids);
   if (from === null || to === null) return null;
   return [from, to];
 }
