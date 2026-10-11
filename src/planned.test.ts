@@ -1300,6 +1300,28 @@ describe('planReport', () => {
     expect(report.warnings).toEqual([[{ kind: 'added-cycle', cycle: 'y → z → y' }]]);
   });
 
+  it('keeps a cycle in a directory whose files are all deleted', () => {
+    const scan: ScanResult = {
+      files: [
+        { path: 'a/p.ts', test: false },
+        { path: 'a/q.ts', test: false },
+      ],
+      edges: [],
+      externals: [],
+      workspaces: [],
+    };
+    const edits: PlanEdit[] = [
+      { kind: 'add-edge', from: 'a/p.ts', to: 'a/q.ts' },
+      { kind: 'add-edge', from: 'a/q.ts', to: 'a/p.ts' },
+      { kind: 'fate', file: 'a/p.ts', fate: 'delete' },
+      { kind: 'fate', file: 'a/q.ts', fate: 'delete' },
+    ];
+    const report = planReport(scan, edits, cycleTexts);
+    expect(report.stale).toEqual([null, null, null, null]);
+    expect(cycleTexts(report.scan)).toEqual(['p.ts → q.ts → p.ts']);
+    expect(report.warnings).toEqual([[], [{ kind: 'added-cycle', cycle: 'p.ts → q.ts → p.ts' }], [], []]);
+  });
+
   it('warns when the only new cycle is drawn at the root', () => {
     const scan: ScanResult = {
       files: [

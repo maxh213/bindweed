@@ -803,6 +803,18 @@ describe('the page reshapes packages and files', () => {
     await clickTargetsAndRemoveRename();
   }, 20000);
 
+  it('lists a deleted file and its test neighbour when their package is split', async () => {
+    await showApp('#at=src/app&plan=reshape');
+    await waitFor(() => expect(boxIds()).toContain('src/app/b.ts'));
+    await menu('src/app/b.ts', 'Delete');
+    await waitFor(() => expect(boxOf('src/app/b.ts').dataset.fate).toBe('delete'));
+    await crumb('src');
+    await waitFor(() => expect(boxIds()).toContain('src/app'));
+    await menu('src/app', 'Split');
+    await waitFor(() => expect(dialogLabel()).toBe('Split package'));
+    expect(selects().map(item => item.getAttribute('aria-label'))).toEqual(['a.test.ts', 'a.ts', 'b.ts', 'save.ts']);
+  });
+
   it('keeps the edge gestures quiet', async () => {
     layout = { version: 1, views: {}, settings: { tests: false, external: true } };
     await seed('Reshape', 'reshape', [{ kind: 'create-package', path: 'src/ports' }]);
