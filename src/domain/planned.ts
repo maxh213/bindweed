@@ -8,7 +8,6 @@ import {
   splitPartPath,
   within,
   type AddEdit,
-  type ContractRule,
   type CreatePackageEdit,
   type CutEdit,
   type FateEdit,
@@ -472,111 +471,19 @@ export function planReport(scan: ScanResult, edits: PlanEdit[], cycles: CycleTex
   return { scan: finished(scan, last), stale: walk.stale, warnings: grouped(edits.length, placed) };
 }
 
-type CutAsk = { edits: PlanEdit[]; stale: (string | null)[]; files: Set<string> };
-
-const REGEX_SPECIAL = /[\\^$.*+?()[\]{}|]/g;
-
-function escaped(path: string): string {
-  return path.replace(REGEX_SPECIAL, String.raw`\$&`);
-}
-
-function spelled(path: string): string {
-  return path.replace(/[/.]/g, '-');
-}
-
-function endPattern(end: string, files: Set<string>): string {
-  return files.has(end) ? `^${escaped(end)}$` : `^${escaped(end)}/`;
-}
-
-function cutRule(from: string, to: string, files: Set<string>): ContractRule {
-  return {
-    name: `bindweed:no-${spelled(from)}-to-${spelled(to)}`,
-    severity: 'error',
-    comment: `${from} must not import ${to}`,
-    from: { path: endPattern(from, files) },
-    to: { path: endPattern(to, files) },
-  };
-}
+export type PlannedShape = { scan: ScanResult; cuts: CutRef[] };
 
 function liveCut(edit: PlanEdit, reason: string | null | undefined): edit is CutEdit {
   return reason === null && edit.kind === 'cut-edge';
 }
 
-function nested(a: string, b: string): boolean {
-  return within(a, b) || within(b, a);
+function cutAt(edit: PlanEdit, index: number, edits: PlanEdit[], stale: (string | null)[]): CutRef[] {
+  if (!liveCut(edit, stale[index])) return [];
+  return [{ from: cutEndLater(edit.from, edits, stale, index), to: cutEndLater(edit.to, edits, stale, index) }];
 }
 
-function cutRulesAt(edit: PlanEdit, index: number, ask: CutAsk): ContractRule[] {
-  if (!liveCut(edit, ask.stale[index])) return [];
-  const from = cutEndLater(edit.from, ask.edits, ask.stale, index);
-  const to = cutEndLater(edit.to, ask.edits, ask.stale, index);
-  return nested(from, to) ? [] : [cutRule(from, to, ask.files)];
-}
-
-function distinctRules(rules: ContractRule[]): ContractRule[] {
-  return [...new Map(rules.map(rule => [JSON.stringify(rule), rule])).values()];
-}
-
-function ancestorsOf(path: string): string[] {
-  const parts = path.split('/');
-  return parts.slice(1).map((_, index) => parts.slice(0, index + 1).join('/'));
-}
-
-function packagesOf(scan: ScanResult): Set<string> {
-  const code = scan.files.filter(file => !file.test).flatMap(file => ancestorsOf(file.path));
-  return new Set([...(scan.declared ?? []), ...code]);
-}
-
-function siblingPair(from: string, to: string): [string, string] | null {
-  const left = from.split('/');
-  const right = to.split('/');
-  const split = left.findIndex((part, index) => part !== right[index]);
-  if (split === -1 || split >= right.length) return null;
-  return [left.slice(0, split + 1).join('/'), right.slice(0, split + 1).join('/')];
-}
-
-function pairKey(first: string, second: string): string {
-  return JSON.stringify([first, second]);
-}
-
-function packagePair(pair: [string, string] | null, packages: Set<string>): pair is [string, string] {
-  return pair !== null && packages.has(pair[0]) && packages.has(pair[1]);
-}
-
-function usesOf(scan: ScanResult, packages: Set<string>): [string, string][] {
-  const pairs = [...scan.edges, ...(scan.planned ?? [])].map(edge => siblingPair(edge.from, edge.to));
-  const found = new Map(pairs.filter(pair => packagePair(pair, packages)).map(pair => [pairKey(pair[0], pair[1]), pair]));
-  return [...found.values()].filter(([user, used]) => !found.has(pairKey(used, user)));
-}
-
-function directionRule(user: string, used: string): ContractRule {
-  return {
-    name: `bindweed:${spelled(used)}-does-not-use-${spelled(user)}`,
-    severity: 'error',
-    comment: `${used} does not use ${user}`,
-    from: { path: `^${escaped(used)}/` },
-    to: { path: `^${escaped(user)}/` },
-  };
-}
-
-function byRuleName(a: ContractRule, b: ContractRule): number {
-  return byStrings(a.name, b.name);
-}
-
-function directionRules(scan: ScanResult): ContractRule[] {
-  return usesOf(scan, packagesOf(scan))
-    .map(([user, used]) => directionRule(user, used))
-    .sort(byRuleName);
-}
-
-function noCircular(): ContractRule {
-  return { name: 'bindweed:no-circular', severity: 'error', comment: 'No circular dependencies', from: {}, to: { circular: true } };
-}
-
-export function contractRules(scan: ScanResult, edits: PlanEdit[], cycles: boolean): ContractRule[] {
+export function plannedShape(scan: ScanResult, edits: PlanEdit[]): PlannedShape {
   const walk = walkPlan(scan, edits);
-  const planned = finished(scan, lastOf(walk.states));
-  const ask: CutAsk = { edits, stale: walk.stale, files: fileSet(planned) };
-  const rules = [...distinctRules(edits.flatMap((edit, index) => cutRulesAt(edit, index, ask))), ...directionRules(planned)];
-  return cycles ? [...rules, noCircular()] : rules;
+  const cuts = edits.flatMap((edit, index) => cutAt(edit, index, edits, walk.stale));
+  return { scan: finished(scan, lastOf(walk.states)), cuts };
 }

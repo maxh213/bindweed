@@ -2,7 +2,9 @@ import * as ts from 'typescript';
 import { CONTRACT_RULE_PREFIX, type ContractRule } from './domain/plan.ts';
 import { unifiedDiff } from './linediff.ts';
 
-export type CruiserPreview = { text: string; diff: string } | { error: string; snippet: string };
+type CruiserPreview = { text: string; diff: string } | { error: string; snippet: string };
+
+export type CruiserFile = { keepsCycleRule: boolean; preview: (rules: ContractRule[], tsconfig: boolean) => CruiserPreview };
 
 type Forbidden = { source: string; array: ts.ArrayLiteralExpression; elements: ts.ObjectLiteralExpression[] };
 
@@ -114,12 +116,6 @@ function forbidsCycles(element: ts.ObjectLiteralExpression): boolean {
   return propertyNamed(to, 'circular')?.kind === ts.SyntaxKind.TrueKeyword;
 }
 
-export function keepsCycleRule(source: string | null): boolean {
-  const forbidden = source === null ? undefined : readForbidden(source);
-  if (forbidden === undefined) return false;
-  return forbidden.elements.filter(element => !isBindweed(element)).some(forbidsCycles);
-}
-
 function commaEnd(source: string, from: number): number {
   const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, source, undefined, from);
   scanner.scan();
@@ -169,9 +165,18 @@ function previewOf(before: string, text: string): CruiserPreview {
   return { text, diff: unifiedDiff(before, text, CRUISER_NAME) };
 }
 
-export function previewCruiser(source: string | null, rules: ContractRule[], tsconfig: boolean): CruiserPreview {
-  if (source === null) return previewOf('', canonicalFile(rules, tsconfig));
-  const forbidden = readForbidden(source);
+function keepsCycles(forbidden: Forbidden | undefined): boolean {
+  if (forbidden === undefined) return false;
+  return forbidden.elements.filter(element => !isBindweed(element)).some(forbidsCycles);
+}
+
+function previewFor(source: string, forbidden: Forbidden | undefined, rules: ContractRule[]): CruiserPreview {
   if (forbidden === undefined) return { error: REFUSAL, snippet: snippetOf(rules) };
   return previewOf(source, mergedInto(forbidden, rules));
+}
+
+export function readCruiser(source: string | null): CruiserFile {
+  if (source === null) return { keepsCycleRule: false, preview: (rules, tsconfig) => previewOf('', canonicalFile(rules, tsconfig)) };
+  const forbidden = readForbidden(source);
+  return { keepsCycleRule: keepsCycles(forbidden), preview: rules => previewFor(source, forbidden, rules) };
 }

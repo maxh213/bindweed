@@ -174,7 +174,7 @@ module.exports = {
       severity: 'error',
       comment: 'The canvas is handed a view and draws it; it does not fetch, own page state, edit a plan or open panels',
       from: { path: '^src/ui/ArchCanvas\\.tsx$' },
-      to: { path: ['^src/ui/(client|view|App|DetailPanel|HealthControls|plansession|PlanBar|planroster)\\.tsx?$', '^src/domain/(tree|scan|plan|planned)\\.ts$', '^src/plans\\.ts$', 'node_modules/@tanstack'] }
+      to: { path: ['^src/ui/(client|view|App|DetailPanel|HealthControls|plansession|PlanBar|planroster|ContractPanel)\\.tsx?$', '^src/domain/(tree|scan|plan|planned)\\.ts$', '^src/plans\\.ts$', 'node_modules/@tanstack'] }
     },
     {
       name: 'arch-view-does-not-import-xyflow',
@@ -296,6 +296,62 @@ module.exports = {
       to: { path: '^src/domain/planned\\.ts$' }
     },
     {
+      name: 'contract-rules-read-the-planned-scan-only',
+      severity: 'error',
+      comment: 'Writing dependency-cruiser rules for a planned shape is pure. It reads the rule type and the scan record; it does not walk the plan itself',
+      from: { path: '^src/domain/contract\\.ts$' },
+      to: { path: '^src/', pathNot: '^src/domain/(plan|scan)\\.ts$' }
+    },
+    {
+      name: 'only-serve-writes-contract-rules',
+      severity: 'error',
+      comment: 'The server hands the planned shape to the rule writer. The planned graph, the view and the page do not',
+      from: { pathNot: '^src/(serve\\.ts|domain/contract\\.ts|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/domain/contract\\.ts$' }
+    },
+    {
+      name: 'only-serve-imports-the-cruiser',
+      severity: 'error',
+      comment: 'Reading and merging a .dependency-cruiser.cjs needs the compiler API; only serve composes it among production files',
+      from: { pathNot: '^src/(serve\\.ts|cruiser\\.ts|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/cruiser\\.ts$' }
+    },
+    {
+      name: 'the-cruiser-reads-the-rule-type-and-diffs',
+      severity: 'error',
+      comment: 'The cruiser merges rules it is handed into file text; it does not apply a plan, write rules, read files or know the view',
+      from: { path: '^src/cruiser\\.ts$' },
+      to: { path: ['^src/', '^(node:)?(fs|fs/promises|path|http|child_process)$'], pathNot: '^src/(domain/plan|linediff)\\.ts$' }
+    },
+    {
+      name: 'only-the-cruiser-diffs-lines',
+      severity: 'error',
+      comment: 'The line diff is how the cruiser shows its change; nothing else reaches into it',
+      from: { pathNot: '^src/(cruiser\\.ts|linediff\\.ts|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/linediff\\.ts$' }
+    },
+    {
+      name: 'line-diff-imports-nothing',
+      severity: 'error',
+      comment: 'A unified diff of two texts is pure string work; it imports nothing',
+      from: { path: '^src/linediff\\.ts$' },
+      to: { path: '.' }
+    },
+    {
+      name: 'only-the-session-opens-the-contract-panel',
+      severity: 'error',
+      comment: 'The session opens the Contract panel and stores what it saves. Nothing else mounts it',
+      from: { pathNot: '^src/ui/(plansession\\.tsx|ContractPanel\\.tsx|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/ui/ContractPanel\\.tsx$' }
+    },
+    {
+      name: 'the-contract-panel-asks-the-server',
+      severity: 'error',
+      comment: 'The panel fetches rules and previews through the client and hands the ticked rules back. It does not write rules, edit the plan, draw the canvas or parse JSON',
+      from: { path: '^src/ui/ContractPanel\\.tsx$' },
+      to: { path: ['^src/', 'node_modules/(@xyflow|zod)'], pathNot: '^src/(domain/plan|ui/client)\\.ts$' }
+    },
+    {
       name: 'only-serve-imports-the-plan-store',
       severity: 'error',
       comment: 'Plan files are server IO; only serve reads them among production files',
@@ -314,14 +370,14 @@ module.exports = {
       severity: 'error',
       comment: 'A view is built from a scan the server has already planned',
       from: { path: '^src/domain/graph\\.ts$' },
-      to: { path: '^src/domain/(plan|planned)\\.ts$' }
+      to: { path: '^src/domain/(plan|planned|contract)\\.ts$' }
     },
     {
       name: 'the-scanner-does-not-know-plans',
       severity: 'error',
       comment: 'Scanning a repository does not read or apply a plan',
       from: { path: '^src/(scan\\.ts|scanning/)' },
-      to: { path: '^src/(domain/(plan|planned)|plans)\\.ts$' }
+      to: { path: '^src/(domain/(plan|planned|contract)|plans|cruiser|linediff)\\.ts$' }
     },
     {
       name: 'plan-picture-imports-the-view-and-the-document',
@@ -405,14 +461,14 @@ module.exports = {
       severity: 'error',
       comment: 'The architecture page mounts the session. It does not reach into edits, the picture, the gestures, the roster or the chrome',
       from: { path: '^src/ui/ArchView\\.tsx$' },
-      to: { path: ['^src/domain/plan\\.ts$', '^src/ui/(PlanBar|planpicture|plangesture|planroster)\\.tsx?$'] }
+      to: { path: ['^src/domain/(plan|contract)\\.ts$', '^src/ui/(PlanBar|planpicture|plangesture|planroster|ContractPanel)\\.tsx?$'] }
     },
     {
       name: 'the-session-does-not-draw-or-apply',
       severity: 'error',
       comment: 'The session edits a plan and builds its picture. The canvas draws. The server applies the scan and reads plan files',
       from: { path: '^src/ui/plansession\\.tsx$' },
-      to: { path: ['^src/ui/(ArchCanvas|ArchView|view)\\.tsx?$', '^src/domain/(planned|layout|scan)\\.ts$', '^src/plans\\.ts$', '^src/serve\\.ts$', 'node_modules/@xyflow'] }
+      to: { path: ['^src/ui/(ArchCanvas|ArchView|view)\\.tsx?$', '^src/domain/(planned|contract|layout|scan)\\.ts$', '^src/plans\\.ts$', '^src/serve\\.ts$', 'node_modules/@xyflow'] }
     }
   ],
   options: {

@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { graphView, type GraphView } from '../domain/graph.ts';
 import { parsePlan, type ContractRule, type PlanDoc, type PlanEdit } from '../domain/plan.ts';
-import { applyPlan, contractRules } from '../domain/planned.ts';
+import { contractRules } from '../domain/contract.ts';
+import { applyPlan, plannedShape } from '../domain/planned.ts';
 import { usePlanSession } from './plansession.tsx';
 
 const REFUSAL = "bindweed can't merge into this .dependency-cruiser.cjs: forbidden is not a plain array";
@@ -68,7 +69,7 @@ function storedDoc(): PlanDoc {
 }
 
 function generated(): ContractRule[] {
-  return contractRules(LAYERED, storedDoc().edits, true);
+  return contractRules(plannedShape(LAYERED, storedDoc().edits), true);
 }
 
 const NO_PLAN: Hit = { status: 404, body: { error: 'no such plan' } };
@@ -362,7 +363,7 @@ describe('the contract panel', () => {
   });
 
   it('A saved rule that still matches stays ticked, and a new one does not', async () => {
-    const empty = contractRules(LAYERED, [], true);
+    const empty = contractRules(plannedShape(LAYERED, []), true);
     const contract = { rules: [{ ...empty[0], comment: 'old' }, ...empty.slice(1)] };
     world.doc = freshDoc([], contract);
     await mount();

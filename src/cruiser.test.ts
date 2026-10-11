@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { keepsCycleRule, previewCruiser } from './cruiser.ts';
+import { readCruiser } from './cruiser.ts';
 import type { ContractRule } from './domain/plan.ts';
 
 const REFUSAL = "bindweed can't merge into this .dependency-cruiser.cjs: forbidden is not a plain array";
@@ -120,18 +120,18 @@ const CYCLES_KEPT = `module.exports = {
 `;
 
 function textOf(source: string | null, rules: ContractRule[], tsconfig = true): string {
-  const preview = previewCruiser(source, rules, tsconfig);
+  const preview = readCruiser(source).preview(rules, tsconfig);
   if (!('text' in preview)) throw new Error(preview.error);
   return preview.text;
 }
 
 function diffOf(source: string | null, rules: ContractRule[]): string {
-  const preview = previewCruiser(source, rules, true);
+  const preview = readCruiser(source).preview(rules, true);
   if (!('diff' in preview)) throw new Error(preview.error);
   return preview.diff;
 }
 
-describe('previewCruiser with no file', () => {
+describe('readCruiser().preview with no file', () => {
   it('Two cuts preview the canonical file', () => {
     expect(textOf(null, FIVE)).toBe(CANONICAL);
     expect(diffOf(null, FIVE).startsWith(`${HEADER}@@ -0,0 +1,44 @@\n+module.exports = {\n`)).toBe(true);
@@ -149,7 +149,7 @@ describe('previewCruiser with no file', () => {
   });
 });
 
-describe('previewCruiser over an existing file', () => {
+describe('readCruiser().preview over an existing file', () => {
   it('A kept rule and its options stay byte for byte', () => {
     const merged = textOf(KEEP_ME, [CIRCULAR]);
     expect(merged).toBe(KEEP_ME.replace("      to: { path: '^keep' }\n    }\n", `      to: { path: '^keep' }\n    },\n${CIRCULAR_TEXT}\n`));
@@ -164,7 +164,7 @@ describe('previewCruiser over an existing file', () => {
   });
 
   it('An existing circular rule leaves bindweed:no-circular out', () => {
-    expect(keepsCycleRule(CYCLES_KEPT)).toBe(true);
+    expect(readCruiser(CYCLES_KEPT).keepsCycleRule).toBe(true);
     const three = FIVE.slice(2, 4);
     const merged = textOf(CYCLES_KEPT, three);
     expect(merged.startsWith(CYCLES_KEPT.slice(0, CYCLES_KEPT.indexOf('    }\n  ]') + 5))).toBe(true);
@@ -173,7 +173,7 @@ describe('previewCruiser over an existing file', () => {
   });
 
   it('Old bindweed rules are removed with what sits in front of them, and do not leave cycles out', () => {
-    expect(keepsCycleRule(OLD_RULES)).toBe(false);
+    expect(readCruiser(OLD_RULES).keepsCycleRule).toBe(false);
     const merged = textOf(OLD_RULES, [CIRCULAR]);
     expect(merged).toBe(`const note = 'leave me';
 module.exports = {
@@ -228,22 +228,22 @@ ${CIRCULAR_TEXT}
     'module.exports += { forbidden: [] };\n',
     'const nothing = 1;\n',
   ])('A forbidden list we cannot read is refused: %j', source => {
-    expect(previewCruiser(source, [CIRCULAR], true)).toEqual({ error: REFUSAL, snippet: `${CIRCULAR_TEXT}\n` });
-    expect(previewCruiser(source, [], true)).toEqual({ error: REFUSAL, snippet: '' });
-    expect(keepsCycleRule(source)).toBe(false);
+    expect(readCruiser(source).preview([CIRCULAR], true)).toEqual({ error: REFUSAL, snippet: `${CIRCULAR_TEXT}\n` });
+    expect(readCruiser(source).preview([], true)).toEqual({ error: REFUSAL, snippet: '' });
+    expect(readCruiser(source).keepsCycleRule).toBe(false);
   });
 
   it('joins snippet rules with a comma', () => {
-    const preview = previewCruiser('module.exports = 1;\n', FIVE.slice(0, 2), true);
+    const preview = readCruiser('module.exports = 1;\n').preview(FIVE.slice(0, 2), true);
     expect(preview).toEqual({ error: REFUSAL, snippet: expect.stringContaining("    },\n    {\n      name: 'bindweed:no-src-app-a-ts-to-src-app-b-ts',") });
   });
 });
 
-describe('keepsCycleRule', () => {
+describe('readCruiser().keepsCycleRule', () => {
   it('is false with no file, for a bindweed cycle rule, and for a to without circular', () => {
-    expect(keepsCycleRule(null)).toBe(false);
-    expect(keepsCycleRule("module.exports = { forbidden: [{ name: 'x', to: { path: '^a' } }, { name: 'y', to: 'z' }, { name: 'w' }] };\n")).toBe(false);
-    expect(keepsCycleRule("module.exports = { forbidden: [{ name: 'x', to: { circular: false } }] };\n")).toBe(false);
-    expect(keepsCycleRule("module.exports = { forbidden: [{ name: 'bindweed:x', to: { circular: true } }] };\n")).toBe(false);
+    expect(readCruiser(null).keepsCycleRule).toBe(false);
+    expect(readCruiser("module.exports = { forbidden: [{ name: 'x', to: { path: '^a' } }, { name: 'y', to: 'z' }, { name: 'w' }] };\n").keepsCycleRule).toBe(false);
+    expect(readCruiser("module.exports = { forbidden: [{ name: 'x', to: { circular: false } }] };\n").keepsCycleRule).toBe(false);
+    expect(readCruiser("module.exports = { forbidden: [{ name: 'bindweed:x', to: { circular: true } }] };\n").keepsCycleRule).toBe(false);
   });
 });

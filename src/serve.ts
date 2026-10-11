@@ -4,10 +4,12 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { basename, dirname, extname, join } from 'node:path';
 import { z } from 'zod';
+import type { CruiserFile } from './cruiser.ts';
+import { contractRules } from './domain/contract.ts';
 import { cycleTexts, edgePairs, graphView, nodeDetail, type GraphFlags, type GraphView } from './domain/graph.ts';
 import { emptyLayout, parseLayout, type LayoutDoc } from './domain/layout.ts';
 import { contractNamesFrom, PLAN_SLUG_PATTERN, parsePlan, planNameFrom, slugOf, type ContractRule, type PlanDoc } from './domain/plan.ts';
-import { applyPlan, contractRules, planReport, type PlanReport } from './domain/planned.ts';
+import { applyPlan, plannedShape, planReport, type PlanReport } from './domain/planned.ts';
 import type { ScanResult } from './domain/scan.ts';
 import { buildTree, filePathSet, type TreeRoot } from './domain/tree.ts';
 import { freePlanSlug, listPlans, readPlan, removePlan, writePlan } from './plans.ts';
@@ -447,13 +449,17 @@ async function hasTsconfig(root: string): Promise<boolean> {
   );
 }
 
-async function rulesFor(app: App, graphs: GraphHolder, doc: PlanDoc, source: string | null): Promise<ContractRule[]> {
-  const { keepsCycleRule } = await import('./cruiser.ts');
-  return contractRules(await readyScan(app, graphs), doc.edits, !keepsCycleRule(source));
+type ContractAnswer = { rules: ContractRule[]; cruiser: CruiserFile };
+
+async function contractFor(app: App, graphs: GraphHolder, doc: PlanDoc): Promise<ContractAnswer> {
+  const { readCruiser } = await import('./cruiser.ts');
+  const cruiser = readCruiser(await cruiserSource(app.repoRoot));
+  const shape = plannedShape(await readyScan(app, graphs), doc.edits);
+  return { rules: contractRules(shape, !cruiser.keepsCycleRule), cruiser };
 }
 
 async function getContract(app: App, graphs: GraphHolder, _req: IncomingMessage, res: ServerResponse, doc: PlanDoc): Promise<void> {
-  sendJson(res, 200, { rules: await rulesFor(app, graphs, doc, await cruiserSource(app.repoRoot)) });
+  sendJson(res, 200, { rules: (await contractFor(app, graphs, doc)).rules });
 }
 
 async function postContract(app: App, graphs: GraphHolder, req: IncomingMessage, res: ServerResponse, doc: PlanDoc): Promise<void> {
@@ -462,10 +468,9 @@ async function postContract(app: App, graphs: GraphHolder, req: IncomingMessage,
     sendJson(res, 400, { error: 'bad contract' });
     return;
   }
-  const source = await cruiserSource(app.repoRoot);
-  const chosen = (await rulesFor(app, graphs, doc, source)).filter(rule => names.includes(rule.name));
-  const { previewCruiser } = await import('./cruiser.ts');
-  sendJson(res, 200, previewCruiser(source, chosen, await hasTsconfig(app.repoRoot)));
+  const { rules, cruiser } = await contractFor(app, graphs, doc);
+  const chosen = rules.filter(rule => names.includes(rule.name));
+  sendJson(res, 200, cruiser.preview(chosen, await hasTsconfig(app.repoRoot)));
 }
 
 async function namedPlan(app: App, slug: string): Promise<PlanDoc | undefined> {
