@@ -67,6 +67,19 @@ describe('the reshape dialog rules', () => {
     expect(nameEdit(MERGE, 'adapters', scene('src', ['src/adapters'], SELECTED))).toEqual({ problem: 'src/adapters already exists' });
   });
 
+  it('merges into a selected box by the name drawn on it', () => {
+    const named = [
+      { id: 'pkg/b', name: 'alpha' },
+      { id: 'pkg/a', name: 'zeta' },
+    ];
+    expect(nameEdit(MERGE, 'alpha', scene('src', [], named))).toEqual({
+      edit: { kind: 'merge-packages', packages: ['pkg/b', 'pkg/a'], into: 'pkg/b' },
+    });
+    expect(nameEdit(MERGE, 'b', scene('src', [], named))).toEqual({
+      edit: { kind: 'merge-packages', packages: ['pkg/b', 'pkg/a'], into: 'src/b' },
+    });
+  });
+
   it('names a taken path', () => {
     expect(nameEdit(CREATE, 'infra', scene('src', ['src/infra']))).toEqual({ problem: 'src/infra already exists' });
     expect(nameEdit(CREATE, 'ports', scene('src', ['src/infra']))).toEqual({ edit: { kind: 'create-package', path: 'src/ports' } });

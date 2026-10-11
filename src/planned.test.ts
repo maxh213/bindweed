@@ -559,6 +559,27 @@ describe('package edits and file fates in the walk', () => {
     expect(renamed.externals.map(ext => ext.from)).toEqual(['src/infra/store.ts', 'src/infra/store.ts']);
   });
 
+  it('keeps a type-only external and its heritage when the file is renamed, merged, split or folded', () => {
+    const scan: ScanResult = { ...LAYERED, externals: [{ from: 'src/infra/repo.ts', name: 'react', kind: 'type', heritage: 1 }] };
+    const kept = { name: 'react', kind: 'type', heritage: 1 };
+    const renamed = applyPlan(scan, [{ kind: 'rename-file', from: 'src/infra/repo.ts', to: 'store.ts' }]);
+    expect(renamed.externals).toEqual([{ from: 'src/infra/store.ts', ...kept }]);
+    const renamedPkg = applyPlan(scan, [{ kind: 'rename-package', from: 'src/infra', to: 'src/adapters' }]);
+    expect(renamedPkg.externals).toEqual([{ from: 'src/adapters/repo.ts', ...kept }]);
+    const merged = applyPlan(scan, [{ kind: 'merge-packages', packages: ['src/infra', 'src/app'], into: 'src/core' }]);
+    expect(merged.externals).toEqual([{ from: 'src/core/repo.ts', ...kept }]);
+    const split = applyPlan(scan, [{
+      kind: 'split-package',
+      package: 'src/infra',
+      parts: [{ name: 'read', files: ['src/infra/repo.ts'] }, { name: 'write', files: ['src/infra/db.ts'] }],
+    }]);
+    expect(split.externals).toEqual([{ from: 'src/infra/read/repo.ts', ...kept }]);
+    const folded = applyPlan(scan, [{ kind: 'fate', file: 'src/infra/repo.ts', fate: 'fold', into: 'src/domain/shape.ts' }]);
+    expect(folded.externals).toEqual([{ from: 'src/domain/shape.ts', ...kept }]);
+    const moved = applyPlan(scan, [{ kind: 'move-file', file: 'src/infra/repo.ts', to: 'src/app' }]);
+    expect(moved.externals).toEqual([{ from: 'src/app/repo.ts', ...kept }]);
+  });
+
   it('renames a file in its directory and keeps its edges', () => {
     const planned = applyPlan(LAYERED, [{ kind: 'rename-file', from: 'src/app/b.ts', to: 'c.ts' }]);
     expect(pathsOf(planned)).toContain('src/app/c.ts');
