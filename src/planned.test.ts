@@ -356,6 +356,16 @@ describe('package edits and file fates in the walk', () => {
     expect(pathsOf(applyPlan(LAYERED, split))).toEqual(pathsOf(LAYERED));
   });
 
+  it('keeps a directory known after every file in it is deleted', () => {
+    const edits: PlanEdit[] = [
+      { kind: 'fate', file: 'src/infra/db.ts', fate: 'delete' },
+      { kind: 'fate', file: 'src/infra/repo.ts', fate: 'delete' },
+      { kind: 'create-package', path: 'src/infra/sub' },
+    ];
+    expect(staleReasons(LAYERED, edits)).toEqual([null, null, null]);
+    expect(applyPlan(LAYERED, edits).declared).toEqual(['src/infra/sub']);
+  });
+
   it('renames a package without moving a sibling that shares its prefix', () => {
     const scan: ScanResult = { ...LAYERED, files: [...LAYERED.files, { path: 'src/infra2/x.ts', test: false }] };
     const planned = applyPlan(scan, [{ kind: 'rename-package', from: 'src/infra', to: 'src/adapters' }]);
@@ -666,6 +676,23 @@ describe('package edits and file fates in the walk', () => {
     expect(planned).not.toHaveProperty('declared');
     expect(planned.hidden).toEqual(['src/infra']);
     expect(graphView(planned, 'src', 'repo')?.nodes.map(node => node.id)).toEqual(['src/domain', 'src/infra/sub']);
+  });
+
+  it('does not hide a package whose only direct file is deleted', () => {
+    const scan: ScanResult = { ...LAYERED, files: [{ path: 'src/domain/model.ts', test: false }, { path: 'src/app/a.ts', test: false }, { path: 'src/app/sub/x.ts', test: false }], edges: [], externals: [] };
+    const planned = applyPlan(scan, [{ kind: 'fate', file: 'src/app/a.ts', fate: 'delete' }]);
+    expect(planned).not.toHaveProperty('hidden');
+    expect(graphView(planned, 'src', 'repo')?.nodes.map(node => node.id)).toEqual(['src/app', 'src/domain']);
+  });
+
+  it('hides an emptied package when only a deleted file is left under it', () => {
+    const scan: ScanResult = { ...LAYERED, files: [{ path: 'src/domain/model.ts', test: false }, { path: 'src/app/a.ts', test: false }, { path: 'src/app/sub/x.ts', test: false }], edges: [], externals: [] };
+    const planned = applyPlan(scan, [
+      { kind: 'move-file', file: 'src/app/a.ts', to: 'src/domain' },
+      { kind: 'fate', file: 'src/app/sub/x.ts', fate: 'delete' },
+    ]);
+    expect(planned.hidden).toEqual(['src/app']);
+    expect(graphView(planned, 'src', 'repo')?.nodes.map(node => node.id)).toEqual(['src/domain', 'src/app/sub']);
   });
 
   it('hides each emptied package down to the one that still holds a file', () => {
@@ -1028,6 +1055,13 @@ describe('planReport', () => {
   it('warns about an empty package on the edit that created it, not the first edit', () => {
     const report = planReport(LAYERED, [MOVE_SAVE, CREATE_PORTS], noCycles);
     expect(report.warnings).toEqual([[], [{ kind: 'empty-package', path: 'src/ports' }]]);
+  });
+
+  it('does not warn that a package is empty when its only file is deleted', () => {
+    const edits: PlanEdit[] = [CREATE_PORTS, { kind: 'move-file', file: 'src/app/save.ts', to: 'src/ports' }, { kind: 'fate', file: 'src/ports/save.ts', fate: 'delete' }];
+    const report = planReport(LAYERED, edits, noCycles);
+    expect(report.warnings).toEqual([[], [], []]);
+    expect(graphView(report.scan, 'src', 'repo')?.nodes.find(node => node.id === 'src/ports')).toMatchObject({ kind: 'package', files: 1 });
   });
 
   it('warns about an empty package nested under one a move has filled', () => {
