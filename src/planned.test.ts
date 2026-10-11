@@ -671,6 +671,52 @@ describe('package edits and file fates in the walk', () => {
     expect(graphView(planned, 'src', 'repo')?.nodes.map(node => node.id)).toEqual(['src/app/sub/deep', 'src/domain']);
   });
 
+  it('draws an empty declared package two levels under hidden packages', () => {
+    const files = ['src/app/a.ts', 'src/app/sub/b.ts', 'src/domain/model.ts'];
+    const scan: ScanResult = { ...LAYERED, files: files.map(path => ({ path, test: false })), edges: [], externals: [] };
+    const planned = applyPlan(scan, [
+      { kind: 'create-package', path: 'src/app/sub/deep' },
+      { kind: 'move-file', file: 'src/app/a.ts', to: 'src/domain' },
+      { kind: 'move-file', file: 'src/app/sub/b.ts', to: 'src/domain' },
+    ]);
+    expect(planned.hidden).toEqual(['src/app', 'src/app/sub']);
+    expect(planned.declared).toEqual(['src/app/sub/deep']);
+    const drawn = graphView(planned, 'src', 'repo');
+    expect(drawn?.nodes.find(node => node.id === 'src/app/sub/deep')).toMatchObject({ kind: 'package', files: 0 });
+    expect(drawn?.nodes.map(node => node.id)).toEqual(['src/app/sub/deep', 'src/domain']);
+  });
+
+  it('omits a planned edge that still names a package a later split hides', () => {
+    const edits: PlanEdit[] = [{ kind: 'add-edge', from: 'src/domain', to: 'src/app' }, SPLIT_APP];
+    const report = planReport(LAYERED, edits, cycleTexts);
+    expect(report.stale).toEqual([null, null]);
+    expect(report.scan.hidden).toEqual(['src/app']);
+    expect(report.scan.planned).toEqual([{ from: 'src/domain', to: 'src/app' }]);
+    const drawn = graphView(report.scan, 'src', 'repo');
+    expect(drawn?.nodes.map(node => node.id)).toEqual(['src/app/read', 'src/app/write', 'src/infra', 'src/domain']);
+    expect(drawn?.edges.filter(edge => edge.planned === true)).toEqual([]);
+  });
+
+  it('draws the empty package left under a package a planned edge still names', () => {
+    const edits: PlanEdit[] = [
+      { kind: 'add-edge', from: 'src/domain', to: 'src/app' },
+      { kind: 'create-package', path: 'src/app/spare' },
+      { kind: 'move-file', file: 'src/app/a.ts', to: 'src/domain' },
+      { kind: 'move-file', file: 'src/app/b.ts', to: 'src/domain' },
+      { kind: 'move-file', file: 'src/app/a.test.ts', to: 'src/domain' },
+      { kind: 'move-file', file: 'src/app/save.ts', to: 'src/domain' },
+    ];
+    const report = planReport(LAYERED, edits, cycleTexts);
+    expect(report.stale).toEqual([null, null, null, null, null, null]);
+    expect(report.scan.hidden).toEqual(['src/app']);
+    expect(report.scan.declared).toEqual(['src/app/spare']);
+    expect(report.scan.planned).toEqual([{ from: 'src/domain', to: 'src/app' }]);
+    const drawn = graphView(report.scan, 'src', 'repo');
+    expect(drawn?.nodes.find(node => node.id === 'src/app/spare')).toMatchObject({ kind: 'package', files: 0 });
+    expect(drawn?.nodes.map(node => node.id)).not.toContain('src/app');
+    expect(drawn?.edges.filter(edge => edge.planned === true)).toEqual([]);
+  });
+
   it('counts a declared package as known to a merge and as taken to a split', () => {
     const merged = planReport(LAYERED, [CREATE_PORTS, { kind: 'merge-packages', packages: ['src/ports', 'src/app'], into: 'src/core' }], noCycles);
     expect(merged.stale).toEqual([null, null]);

@@ -126,7 +126,11 @@ function groupedId(path: string, at: string, ws: WorkspaceOrder): string {
 
 function nodeIdFor(path: string, at: string, ws: WorkspaceOrder): string {
   let id = groupedId(path, at, ws);
-  while (ws.hidden.has(id)) id = childNodeId(path, id);
+  while (ws.hidden.has(id)) {
+    const next = childNodeId(path, id);
+    if (next === id) return id;
+    id = next;
+  }
   return id;
 }
 
