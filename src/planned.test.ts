@@ -325,6 +325,37 @@ describe('package edits and file fates in the walk', () => {
     expect(pathsOf(planned)).toContain('src/app/b.ts');
   });
 
+  it('keeps the outgoing edges of a deleted file', () => {
+    const planned = applyPlan(LAYERED, [{ kind: 'fate', file: 'src/app/b.ts', fate: 'delete' }]);
+    expect(planned.deleted).toEqual(['src/app/b.ts']);
+    expect(pathsOf(planned)).toContain('src/app/b.ts');
+    expect(edgesOf(planned)).toContain('src/app/b.ts>src/app/a.ts');
+    expect(edgesOf(planned)).toContain('src/app/b.ts>src/infra/db.ts');
+  });
+
+  it('keeps a deleted file path taken for a later move, merge and split', () => {
+    const deleteB: PlanEdit = { kind: 'fate', file: 'src/app/b.ts', fate: 'delete' };
+    const withLib: ScanResult = { ...LAYERED, files: [...LAYERED.files, { path: 'src/lib/b.ts', test: false }] };
+    const move: PlanEdit[] = [deleteB, { kind: 'move-file', file: 'src/lib/b.ts', to: 'src/app' }];
+    expect(staleReasons(withLib, move)).toEqual([null, 'src/app/b.ts already exists']);
+    const unmoved = applyPlan(withLib, move);
+    expect(pathsOf(unmoved)).toContain('src/lib/b.ts');
+    expect(pathsOf(unmoved).filter(path => path === 'src/app/b.ts')).toEqual(['src/app/b.ts']);
+    const merge: PlanEdit[] = [deleteB, { kind: 'merge-packages', packages: ['src/app', 'src/infra'], into: 'src/app/b.ts' }];
+    expect(staleReasons(LAYERED, merge)).toEqual([null, 'src/app/b.ts already exists']);
+    expect(pathsOf(applyPlan(LAYERED, merge))).toEqual(pathsOf(LAYERED));
+    const split: PlanEdit[] = [deleteB, {
+      kind: 'split-package',
+      package: 'src/app',
+      parts: [
+        { name: 'b.ts', files: [] },
+        { name: 'write', files: ['src/app/a.ts', 'src/app/b.ts', 'src/app/save.ts', 'src/app/a.test.ts'] },
+      ],
+    }];
+    expect(staleReasons(LAYERED, split)).toEqual([null, 'src/app/b.ts already exists']);
+    expect(pathsOf(applyPlan(LAYERED, split))).toEqual(pathsOf(LAYERED));
+  });
+
   it('renames a package without moving a sibling that shares its prefix', () => {
     const scan: ScanResult = { ...LAYERED, files: [...LAYERED.files, { path: 'src/infra2/x.ts', test: false }] };
     const planned = applyPlan(scan, [{ kind: 'rename-package', from: 'src/infra', to: 'src/adapters' }]);

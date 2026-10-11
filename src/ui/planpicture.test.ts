@@ -73,6 +73,17 @@ describe('change warnings', () => {
       [],
     ]);
   });
+
+  it('lists every warning on one edit, an empty package before a cycle', () => {
+    const warnings = [[
+      { kind: 'empty-package' as const, path: 'src/ports' },
+      { kind: 'added-cycle' as const, cycle: 'read → write → read' },
+    ]];
+    expect(picture({ edits: [MOVE], warnings }).entries[0].warnings).toEqual([
+      { text: 'src/ports is empty', importers: [] },
+      { text: 'this plan adds a cycle: read → write → read', importers: [] },
+    ]);
+  });
 });
 
 describe('diskPath', () => {
