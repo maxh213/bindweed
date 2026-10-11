@@ -874,6 +874,35 @@ describe('graphView over a planned scan', () => {
     expect(edgePairs(scan, 'src', 'src/app', 'src/infra')).toEqual([['src/app/b.ts', 'src/infra/db.ts']]);
   });
 
+  it('keeps edges into and out of a deleted file in detail and pairs', () => {
+    const scan = applyPlan(
+      scanOf(
+        ['src/app/a.ts', 'src/app/b.ts'],
+        [
+          ['src/app/a.ts', 'src/app/b.ts'],
+          ['src/app/b.ts', 'src/app/a.ts'],
+        ],
+      ),
+      [{ kind: 'fate', file: 'src/app/b.ts', fate: 'delete' }],
+    );
+    expect(detailOf(scan, 'src/app/b.ts', 'src/app').imports.map(entry => entry.id)).toEqual(['src/app/a.ts']);
+    expect(detailOf(scan, 'src/app/a.ts', 'src/app').imports.map(entry => entry.id)).toEqual(['src/app/b.ts']);
+    expect(edgePairs(scan, 'src/app', 'src/app/a.ts', 'src/app/b.ts')).toEqual([['src/app/a.ts', 'src/app/b.ts']]);
+  });
+
+  it('regroups a planned edge through every hidden package above its file', () => {
+    const files = ['src/app/a.ts', 'src/app/sub/b.ts', 'src/app/sub/deep/c.ts', 'src/domain/model.ts'];
+    const scan = applyPlan(scanOf(files, []), [
+      { kind: 'add-edge', from: 'src/app/sub/deep/c.ts', to: 'src/domain/model.ts' },
+      { kind: 'move-file', file: 'src/app/a.ts', to: 'src/domain' },
+      { kind: 'move-file', file: 'src/app/sub/b.ts', to: 'src/domain' },
+    ]);
+    expect(scan.hidden).toEqual(['src/app', 'src/app/sub']);
+    expect(scan.planned).toEqual([{ from: 'src/app/sub/deep/c.ts', to: 'src/domain/model.ts' }]);
+    const drawn = view(scan, 'src').edges.filter(edge => edge.planned === true);
+    expect(drawn.map(edge => `${edge.from}>${edge.to}`)).toEqual(['src/app/sub/deep>src/domain']);
+  });
+
   it('regroups a planned edge after a split hides its package', () => {
     const split = applyPlan(
       {
