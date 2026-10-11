@@ -580,6 +580,21 @@ describe('package edits and file fates in the walk', () => {
     expect(moved.externals).toEqual([{ from: 'src/app/repo.ts', ...kept }]);
   });
 
+  it('keeps both externals when a fold lands two imports of one name on the same file', () => {
+    const scan: ScanResult = {
+      ...LAYERED,
+      externals: [
+        { from: 'src/domain/shape.ts', name: 'react', kind: 'runtime' },
+        { from: 'src/infra/repo.ts', name: 'react', kind: 'type', heritage: 1 },
+      ],
+    };
+    const folded = applyPlan(scan, [{ kind: 'fate', file: 'src/infra/repo.ts', fate: 'fold', into: 'src/domain/shape.ts' }]);
+    expect(folded.externals).toEqual([
+      { from: 'src/domain/shape.ts', name: 'react', kind: 'runtime' },
+      { from: 'src/domain/shape.ts', name: 'react', kind: 'type', heritage: 1 },
+    ]);
+  });
+
   it('renames a file in its directory and keeps its edges', () => {
     const planned = applyPlan(LAYERED, [{ kind: 'rename-file', from: 'src/app/b.ts', to: 'c.ts' }]);
     expect(pathsOf(planned)).toContain('src/app/c.ts');
@@ -864,6 +879,16 @@ describe('package edits and file fates in the walk', () => {
     expect(graphView(planned, 'src', 'repo')?.nodes.map(node => node.id)).toEqual(['src/domain', 'src/infra/sub']);
   });
 
+  it('does not hide a child that never had a direct file', () => {
+    const files = ['src/app/a.ts', 'src/app/sub/deep/c.ts', 'src/domain/model.ts'];
+    const scan: ScanResult = { ...LAYERED, files: files.map(path => ({ path, test: false })), edges: [], externals: [] };
+    const planned = applyPlan(scan, [{ kind: 'move-file', file: 'src/app/a.ts', to: 'src/domain' }]);
+    expect(planned.hidden).toEqual(['src/app']);
+    const drawn = graphView(planned, 'src', 'repo');
+    expect(drawn?.nodes.map(node => node.id)).toEqual(['src/domain', 'src/app/sub']);
+    expect(drawn?.nodes.find(node => node.id === 'src/app/sub')).toMatchObject({ kind: 'package', files: 1 });
+  });
+
   it('does not hide a package whose only direct file is deleted', () => {
     const scan: ScanResult = { ...LAYERED, files: [{ path: 'src/domain/model.ts', test: false }, { path: 'src/app/a.ts', test: false }, { path: 'src/app/sub/x.ts', test: false }], edges: [], externals: [] };
     const planned = applyPlan(scan, [{ kind: 'fate', file: 'src/app/a.ts', fate: 'delete' }]);
@@ -1118,6 +1143,14 @@ describe('package edits and file fates in the walk', () => {
     expect(folded.edges.filter(edge => edge.from === 'src/app/a.ts' && edge.to === 'src/infra/db.ts')).toEqual([
       { from: 'src/app/a.ts', to: 'src/infra/db.ts', kind: 'runtime' },
       { from: 'src/app/a.ts', to: 'src/infra/db.ts', kind: 'type' },
+    ]);
+  });
+
+  it('keeps both runtime edges when a fold lands them on the same file', () => {
+    const folded = applyPlan(LAYERED, [{ kind: 'fate', file: 'src/app/b.ts', fate: 'fold', into: 'src/app/a.ts' }]);
+    expect(folded.edges.filter(edge => edge.from === 'src/app/a.ts' && edge.to === 'src/infra/db.ts' && edge.kind === 'runtime')).toEqual([
+      { from: 'src/app/a.ts', to: 'src/infra/db.ts', kind: 'runtime' },
+      { from: 'src/app/a.ts', to: 'src/infra/db.ts', kind: 'runtime' },
     ]);
   });
 
