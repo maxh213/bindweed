@@ -310,6 +310,14 @@ describe('package edits and file fates in the walk', () => {
     ]);
   });
 
+  it('stales a file rename onto its own name and leaves the file', () => {
+    const edit: PlanEdit = { kind: 'rename-file', from: 'src/app/save.ts', to: 'save.ts' };
+    expect(staleReasons(LAYERED, [edit])).toEqual(['src/app/save.ts already exists']);
+    const planned = applyPlan(LAYERED, [edit]);
+    expect(pathsOf(planned)).toEqual(pathsOf(LAYERED));
+    expect(planned.edges).toEqual(LAYERED.edges);
+  });
+
   it('refuses a file rename onto a directory and onto a declared package', () => {
     const nested: ScanResult = { ...LAYERED, files: [...LAYERED.files, { path: 'src/app/deep/x.ts', test: false }] };
     const ontoDir: PlanEdit = { kind: 'rename-file', from: 'src/app/save.ts', to: 'deep' };
@@ -1002,6 +1010,30 @@ describe('package edits and file fates in the walk', () => {
       { kind: 'fate', file: 'src/infra/repo.ts', fate: 'fold', into: 'src/infra/db.ts' },
     ]);
     expect(planned.planned).toEqual([{ from: 'src/infra/db.ts', to: 'src/app' }]);
+  });
+
+  it('keeps an edge onto a longer path when a fold lands on its prefix and drops a self edge', () => {
+    const scan: ScanResult = {
+      files: [
+        { path: 'src/a.ts', test: false },
+        { path: 'src/b.ts', test: false },
+        { path: 'src/b.ts/nested.ts', test: false },
+      ],
+      edges: [
+        { from: 'src/a.ts', to: 'src/b.ts/nested.ts', kind: 'runtime' },
+        { from: 'src/a.ts', to: 'src/b.ts', kind: 'runtime' },
+      ],
+      planned: [
+        { from: 'src/a.ts', to: 'src/b.ts/nested.ts' },
+        { from: 'src/a.ts', to: 'src/b.ts' },
+      ],
+      externals: [],
+      workspaces: [],
+    };
+    const folded = applyPlan(scan, [{ kind: 'fate', file: 'src/a.ts', fate: 'fold', into: 'src/b.ts' }]);
+    expect(pathsOf(folded)).toEqual(['src/b.ts', 'src/b.ts/nested.ts']);
+    expect(folded.edges).toEqual([{ from: 'src/b.ts', to: 'src/b.ts/nested.ts', kind: 'runtime' }]);
+    expect(folded.planned).toEqual([{ from: 'src/b.ts', to: 'src/b.ts/nested.ts' }]);
   });
 
   it('drops a planned edge whose ends become the same file', () => {
