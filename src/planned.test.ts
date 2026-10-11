@@ -1275,6 +1275,28 @@ describe('planReport', () => {
     expect(report.warnings).toEqual([[], []]);
   });
 
+  it('puts a restored cycle on the edit that first added it, not the move that brings it back', () => {
+    const scan: ScanResult = {
+      files: [
+        { path: 'a/p.ts', test: false },
+        { path: 'b/q.ts', test: false },
+        { path: 'b/stay.ts', test: false },
+      ],
+      edges: [{ from: 'a/p.ts', to: 'b/q.ts', kind: 'runtime' }],
+      externals: [],
+      workspaces: [],
+    };
+    const add: PlanEdit = { kind: 'add-edge', from: 'b', to: 'a' };
+    const away: PlanEdit = { kind: 'move-file', file: 'b/q.ts', to: 'a' };
+    const back: PlanEdit = { kind: 'move-file', file: 'a/q.ts', to: 'b' };
+    expect(cycleTexts(applyPlan(scan, [add]))).toEqual(['a → b → a']);
+    expect(cycleTexts(applyPlan(scan, [add, away]))).toEqual([]);
+    expect(cycleTexts(applyPlan(scan, [add, away, back]))).toEqual(['a → b → a']);
+    const report = planReport(scan, [add, away, back], cycleTexts);
+    expect(report.stale).toEqual([null, null, null]);
+    expect(report.warnings).toEqual([[{ kind: 'added-cycle', cycle: 'a → b → a' }], [], []]);
+  });
+
   it('warns about a deleted file that is still imported, with its distinct importers sorted', () => {
     const twice: ScanResult = { ...LAYERED, edges: [...LAYERED.edges, { from: 'src/app/b.ts', to: 'src/app/a.ts', kind: 'type' }] };
     const report = planReport(twice, [{ kind: 'fate', file: 'src/app/a.ts', fate: 'delete' }, { kind: 'fate', file: 'src/app/save.ts', fate: 'delete' }], noCycles);
@@ -1294,6 +1316,24 @@ describe('planReport', () => {
     };
     const report = planReport(scan, [{ kind: 'fate', file: 'src/app/a.ts', fate: 'delete' }], noCycles);
     expect(report.warnings).toEqual([[{ kind: 'deleted-imports', file: 'src/app/a.ts', importers: ['src/app/a.test.ts', 'src/app/b.ts'] }]]);
+  });
+
+  it('counts a file that imports itself and not an edge into a path under that file', () => {
+    const scan: ScanResult = {
+      files: [
+        { path: 'src/a.ts', test: false },
+        { path: 'src/b.ts', test: false },
+        { path: 'src/a.ts/nested.ts', test: false },
+      ],
+      edges: [
+        { from: 'src/a.ts', to: 'src/a.ts', kind: 'runtime' },
+        { from: 'src/b.ts', to: 'src/a.ts/nested.ts', kind: 'runtime' },
+      ],
+      externals: [],
+      workspaces: [],
+    };
+    const report = planReport(scan, [{ kind: 'fate', file: 'src/a.ts', fate: 'delete' }], noCycles);
+    expect(report.warnings).toEqual([[{ kind: 'deleted-imports', file: 'src/a.ts', importers: ['src/a.ts'] }]]);
   });
 
   it('deletes a file whose path extends an already deleted file', () => {
