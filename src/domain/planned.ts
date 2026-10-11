@@ -477,7 +477,7 @@ type CutAsk = { edits: PlanEdit[]; stale: (string | null)[]; files: Set<string> 
 const REGEX_SPECIAL = /[\\^$.*+?()[\]{}|]/g;
 
 function escaped(path: string): string {
-  return path.replace(REGEX_SPECIAL, '\\$&');
+  return path.replace(REGEX_SPECIAL, String.raw`\$&`);
 }
 
 function spelled(path: string): string {
@@ -514,8 +514,7 @@ function cutRulesAt(edit: PlanEdit, index: number, ask: CutAsk): ContractRule[] 
 }
 
 function distinctRules(rules: ContractRule[]): ContractRule[] {
-  const seen = new Set<string>();
-  return rules.filter(rule => seen.size < seen.add(JSON.stringify(rule)).size);
+  return [...new Map(rules.map(rule => [JSON.stringify(rule), rule])).values()];
 }
 
 function ancestorsOf(path: string): string[] {
@@ -536,8 +535,8 @@ function siblingPair(from: string, to: string): [string, string] | null {
   return [left.slice(0, split + 1).join('/'), right.slice(0, split + 1).join('/')];
 }
 
-function pairKey(user: string, used: string): string {
-  return JSON.stringify([user, used]);
+function pairKey(first: string, second: string): string {
+  return JSON.stringify([first, second]);
 }
 
 function packagePair(pair: [string, string] | null, packages: Set<string>): pair is [string, string] {

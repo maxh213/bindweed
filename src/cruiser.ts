@@ -1,5 +1,5 @@
 import * as ts from 'typescript';
-import type { ContractRule } from './domain/plan.ts';
+import { CONTRACT_RULE_PREFIX, type ContractRule } from './domain/plan.ts';
 import { unifiedDiff } from './linediff.ts';
 
 export type CruiserPreview = { text: string; diff: string } | { error: string; snippet: string };
@@ -11,10 +11,10 @@ type Splice = { start: number; end: number; text: string };
 const CRUISER_NAME = '.dependency-cruiser.cjs';
 const REFUSAL = "bindweed can't merge into this .dependency-cruiser.cjs: forbidden is not a plain array";
 const RULE_INDENT = '    ';
-const RULE_PREFIX = 'bindweed:';
 
 function quoted(text: string): string {
-  return `'${text.replace(/[\\']/g, '\\$&')}'`;
+  const escapedText = text.replace(/[\\']/g, String.raw`\$&`);
+  return `'${escapedText}'`;
 }
 
 function endText(end: ContractRule['from'] | ContractRule['to']): string {
@@ -30,7 +30,8 @@ function ruleText(rule: ContractRule, indent: string): string {
     `from: ${endText(rule.from)},`,
     `to: ${endText(rule.to)}`,
   ];
-  return `{\n${fields.map(field => `${indent}  ${field}\n`).join('')}${indent}}`;
+  const body = fields.map(field => indent + '  ' + field + '\n').join('');
+  return `{\n${body}${indent}}`;
 }
 
 function snippetOf(rules: ContractRule[]): string {
@@ -46,7 +47,8 @@ function freshArray(rules: ContractRule[]): string {
 function canonicalFile(rules: ContractRule[], tsconfig: boolean): string {
   const options = ["doNotFollow: { path: 'node_modules' }", 'tsPreCompilationDeps: true'];
   if (tsconfig) options.push("tsConfig: { fileName: 'tsconfig.json' }");
-  return `module.exports = {\n  forbidden: ${freshArray(rules)},\n  options: {\n${options.map(line => `    ${line}`).join(',\n')}\n  }\n};\n`;
+  const optionLines = options.map(line => '    ' + line).join(',\n');
+  return `module.exports = {\n  forbidden: ${freshArray(rules)},\n  options: {\n${optionLines}\n  }\n};\n`;
 }
 
 function parsesCleanly(source: string): boolean {
@@ -103,7 +105,7 @@ function readForbidden(source: string): Forbidden | undefined {
 
 function isBindweed(element: ts.ObjectLiteralExpression): boolean {
   const name = propertyNamed(element, 'name');
-  return name !== undefined && ts.isStringLiteral(name) && name.text.startsWith(RULE_PREFIX);
+  return name !== undefined && ts.isStringLiteral(name) && name.text.startsWith(CONTRACT_RULE_PREFIX);
 }
 
 function forbidsCycles(element: ts.ObjectLiteralExpression): boolean {

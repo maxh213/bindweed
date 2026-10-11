@@ -424,8 +424,9 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
   const saveContract = (rules: ContractRule[]): void => {
     withDoc(current => {
       const key = ['plan', props.token, slug];
-      queryClient.setQueryData(key, { ...current, contract: { rules } });
-      void putPlan(props.token, { ...current, contract: { rules } }, props.fetcher).then(saved => {
+      const withContract: PlanDoc = { ...current, contract: { rules } };
+      queryClient.setQueryData(key, withContract);
+      void putPlan(props.token, withContract, props.fetcher).then(saved => {
         if (!('error' in saved)) return;
         queryClient.setQueryData(key, current);
         setNotice(saved.error);

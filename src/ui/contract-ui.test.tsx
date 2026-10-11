@@ -319,7 +319,7 @@ describe('the contract panel', () => {
     await click(button('Close'));
     expect(panel()).toBeNull();
     await click(button('Contract'));
-    await settled(() => expect(rows().length).toBe(5));
+    await settled(() => expect(rows()).toHaveLength(5));
     expect(box('bindweed:no-circular').checked).toBe(true);
     await click(box('bindweed:no-circular'));
     await click(button('Save to plan'));
@@ -351,7 +351,7 @@ describe('the contract panel', () => {
     expect(storedDoc().edits).toEqual([PACKAGE_CUT, FILE_CUT]);
     expect(storedDoc().contract).toEqual(saved);
     await click(button('Contract'));
-    await settled(() => expect(rows().length).toBe(5));
+    await settled(() => expect(rows()).toHaveLength(5));
     expect(rows().map(row => row.checked)).toEqual([true, true, true, true, false]);
   });
 
@@ -441,7 +441,7 @@ describe('the contract panel', () => {
     await settled(() => expect(document.body.textContent).toContain('bad plan'));
     world.doc = { ...storedDoc(), slug: 'gate' };
     await click(button('Contract'));
-    await settled(() => expect(rows().length).toBe(5));
+    await settled(() => expect(rows()).toHaveLength(5));
     expect(rows().every(row => row.checked)).toBe(true);
   });
 

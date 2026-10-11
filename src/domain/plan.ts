@@ -53,7 +53,7 @@ const CREATED_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const COMMIT = /^[0-9a-f]{40}$/;
 const PLAN_KEYS = ['version', 'name', 'slug', 'createdAt', 'baseCommit', 'edits', 'redo', 'contract'];
 const RULE_KEYS = ['name', 'severity', 'comment', 'from', 'to'];
-const RULE_PREFIX = 'bindweed:';
+export const CONTRACT_RULE_PREFIX = 'bindweed:';
 const NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 
 function isDash(value: string, index: number): boolean {
@@ -448,7 +448,7 @@ function toEnd(raw: unknown): ContractRule['to'] | undefined {
 function ruleWords(rec: Record<string, unknown>): { name: string; comment: string } | undefined {
   const name = stringOf(rec.name);
   const comment = stringOf(rec.comment);
-  if (!name?.startsWith(RULE_PREFIX) || !comment) return undefined;
+  if (!name?.startsWith(CONTRACT_RULE_PREFIX) || !comment) return undefined;
   return { name, comment };
 }
 
