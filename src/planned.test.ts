@@ -694,6 +694,37 @@ describe('package edits and file fates in the walk', () => {
     expect(drawn?.nodes.map(node => node.id)).toEqual(['src/app/sub/deep', 'src/domain']);
   });
 
+  it('draws a package recreated after its files moved out, and does not hide it', () => {
+    const edits: PlanEdit[] = [
+      { kind: 'move-file', file: 'src/app/a.ts', to: 'src/domain' },
+      { kind: 'move-file', file: 'src/app/b.ts', to: 'src/domain' },
+      { kind: 'move-file', file: 'src/app/a.test.ts', to: 'src/domain' },
+      { kind: 'move-file', file: 'src/app/save.ts', to: 'src/domain' },
+      { kind: 'create-package', path: 'src/app' },
+    ];
+    const report = planReport(LAYERED, edits, noCycles);
+    expect(report.stale).toEqual([null, null, null, null, null]);
+    expect(report.scan).not.toHaveProperty('hidden');
+    expect(report.scan.declared).toEqual(['src/app']);
+    const drawn = graphView(report.scan, 'src', 'repo');
+    expect(drawn?.nodes.map(node => node.id).sort()).toEqual(['src/app', 'src/domain', 'src/infra']);
+    expect(drawn?.nodes.find(node => node.id === 'src/app')).toMatchObject({ kind: 'package', files: 0 });
+    expect(report.warnings).toEqual([[], [], [], [], [{ kind: 'empty-package', path: 'src/app' }]]);
+  });
+
+  it('draws a created empty package that only holds another empty package', () => {
+    const planned = applyPlan(LAYERED, [CREATE_PORTS, { kind: 'create-package', path: 'src/ports/deep' }]);
+    expect(planned).not.toHaveProperty('hidden');
+    const atSrc = graphView(planned, 'src', 'repo');
+    const atNodes = atSrc === null ? [] : atSrc.nodes;
+    expect(atNodes.map(node => node.id).sort()).toEqual(['src/app', 'src/domain', 'src/infra', 'src/ports']);
+    expect(atNodes.find(node => node.id === 'src/ports')).toMatchObject({ kind: 'package', files: 0 });
+    const inside = graphView(planned, 'src/ports', 'repo');
+    const inNodes = inside === null ? [] : inside.nodes;
+    expect(inNodes.map(node => node.id)).toEqual(['src/ports/deep']);
+    expect(inNodes[0]).toMatchObject({ kind: 'package', files: 0 });
+  });
+
   it('omits a planned edge that still names a package a later split hides', () => {
     const edits: PlanEdit[] = [{ kind: 'add-edge', from: 'src/domain', to: 'src/app' }, SPLIT_APP];
     const report = planReport(LAYERED, edits, cycleTexts);
