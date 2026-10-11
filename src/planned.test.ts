@@ -160,6 +160,23 @@ describe('staleReasons', () => {
     expect(staleReasons(LAYERED, [CUT_APP_DOMAIN, CUT_APP_DOMAIN])).toEqual([null, 'src/app/a.ts no longer imports src/domain/model.ts']);
   });
 
+  it('still reports an add the graph has when the only edge touches a deleted file', () => {
+    const scan: ScanResult = {
+      files: [
+        { path: 'src/app/a.ts', test: false },
+        { path: 'src/infra/db.ts', test: false },
+      ],
+      edges: [{ from: 'src/app/a.ts', to: 'src/infra/db.ts', kind: 'runtime' }],
+      externals: [],
+      workspaces: [],
+    };
+    const edits: PlanEdit[] = [
+      { kind: 'fate', file: 'src/app/a.ts', fate: 'delete' },
+      { kind: 'add-edge', from: 'src/app', to: 'src/infra' },
+    ];
+    expect(staleReasons(scan, edits)).toEqual([null, 'src/app already imports src/infra']);
+  });
+
   it('marks an add whose box is gone or whose edge already exists, file or planned', () => {
     expect(staleReasons(LAYERED, [{ kind: 'add-edge', from: 'src/app', to: 'src/infra' }])).toEqual(['src/app already imports src/infra']);
     expect(staleReasons(LAYERED, [ADD_INFRA_APP, ADD_INFRA_APP])).toEqual([null, 'src/infra already imports src/app']);

@@ -1205,6 +1205,44 @@ describe('the page reshapes packages and files', () => {
     return el;
   }
 
+  async function cutDrawn(from: string, to: string): Promise<void> {
+    const edge = edgeOf(from, to);
+    await click(edge);
+    await click(button('Menu', edge));
+    await click(button('Cut', edge));
+  }
+
+  it('cuts a planned arrow after a merge moves it, storing no cut', async () => {
+    const merge: PlanEdit = { kind: 'merge-packages', packages: ['src/infra', 'src/app'], into: 'src/core' };
+    await seed('Reshape', 'reshape', [{ kind: 'add-edge', from: 'src/domain', to: 'src/infra' }, merge]);
+    await showApp('#at=src&plan=reshape');
+    await waitFor(() => expect(boxIds()).toContain('src/core'));
+    await cutDrawn('src/domain', 'src/core');
+    await waitFor(() => expect(sentences()).toEqual(['Merge src/infra and src/app into src/core']));
+    expect(notice()).toBe('');
+    expect(storedEdits()).toEqual([merge]);
+    expect(document.querySelector('[data-from="src/domain"][data-to="src/core"]')).toBeNull();
+  });
+
+  it('cuts a planned arrow after a split groups it, storing no cut', async () => {
+    const split: PlanEdit = {
+      kind: 'split-package',
+      package: 'src/app',
+      parts: [
+        { name: 'read', files: ['src/app/save.ts'] },
+        { name: 'write', files: ['src/app/a.ts', 'src/app/b.ts', 'src/app/a.test.ts'] },
+      ],
+    };
+    await seed('Reshape', 'reshape', [{ kind: 'add-edge', from: 'src/app/save.ts', to: 'src/app/b.ts' }, split]);
+    await showApp('#at=src&plan=reshape');
+    await waitFor(() => expect(boxIds()).toContain('src/app/read'));
+    await cutDrawn('src/app/read', 'src/app/write');
+    await waitFor(() => expect(sentences()).toEqual(['Split src/app into src/app/read (1 file) and src/app/write (3 files)']));
+    expect(notice()).toBe('');
+    expect(storedEdits()).toEqual([split]);
+    expect(document.querySelector('[data-from="src/app/read"][data-to="src/app/write"]')).toBeNull();
+  });
+
   it('refuses an external the planned graph already draws, and cuts that arrow', async () => {
     layout = { version: 1, views: {}, settings: { tests: false, external: true } };
     await showApp('#at=src&plan=reshape');

@@ -447,8 +447,102 @@ export function withoutEdit(doc: PlanDoc, index: number): PlanDoc {
   return { ...doc, edits: doc.edits.filter((_, i) => i !== index) };
 }
 
-export function addEdgeIndex(edits: PlanEdit[], stale: (string | null)[], from: string, to: string): number {
-  return edits.findIndex((edit, index) => stale[index] === null && edit.kind === 'add-edge' && edit.from === from && edit.to === to);
+function packageRename(path: string, edit: RenamePackageEdit): string {
+  return within(edit.from, path) ? `${edit.to}${path.slice(edit.from.length)}` : path;
+}
+
+function fileRename(path: string, edit: RenameFileEdit): string {
+  return path === edit.from ? renamedFile(edit.from, edit.to) : path;
+}
+
+function renamedTo(path: string, edit: PlanEdit): string | undefined {
+  if (edit.kind === 'rename-package') return packageRename(path, edit);
+  if (edit.kind === 'rename-file') return fileRename(path, edit);
+  return undefined;
+}
+
+function splitFileDest(edit: SplitEdit, path: string): string | undefined {
+  const part = edit.parts.find(item => item.files.includes(path));
+  if (part === undefined) return undefined;
+  return `${splitPartPath(edit.package, part.name)}${path.slice(edit.package.length)}`;
+}
+
+function repackedTo(path: string, edit: PlanEdit): string | undefined {
+  if (edit.kind === 'merge-packages') return mergeDest(edit, path);
+  if (edit.kind === 'split-package') return splitFileDest(edit, path) ?? path;
+  return undefined;
+}
+
+function folded(path: string, edit: PlanEdit): string {
+  if (edit.kind !== 'fate' || edit.fate !== 'fold') return path;
+  return path === edit.file ? edit.into : path;
+}
+
+function movedBy(path: string, edit: PlanEdit): string {
+  const named = renamedTo(path, edit);
+  if (named !== undefined) return named;
+  return repackedTo(path, edit) ?? folded(path, edit);
+}
+
+function stepLater(path: string, edit: PlanEdit, reason: string | null | undefined): string {
+  if (reason !== null) return path;
+  return movedBy(path, edit);
+}
+
+function applyLater(path: string, edits: PlanEdit[], stale: (string | null)[], from: number): string {
+  return edits.slice(from + 1).reduce((current, edit, offset) => stepLater(current, edit, stale[from + 1 + offset]), path);
+}
+
+function firstSegment(path: string): string {
+  const slash = path.indexOf('/');
+  return slash === -1 ? path : path.slice(0, slash);
+}
+
+function childUnder(path: string, at: string): string {
+  const prefix = `${at}/`;
+  if (!path.startsWith(prefix)) return path;
+  const rel = path.slice(prefix.length);
+  const slash = rel.indexOf('/');
+  return slash === -1 ? path : `${at}/${rel.slice(0, slash)}`;
+}
+
+function groupedStart(path: string, at: string): string {
+  if (at === '') return firstSegment(path);
+  return childUnder(path, at);
+}
+
+function boxInView(path: string, at: string, ids: ReadonlySet<string>): string | null {
+  let id = groupedStart(path, at);
+  while (!ids.has(id)) {
+    const next = childUnder(path, id);
+    if (next === id) return null;
+    id = next;
+  }
+  return id;
+}
+
+function drawnPair(edit: AddEdit, edits: PlanEdit[], stale: (string | null)[], index: number, at: string, ids: ReadonlySet<string>): [string, string] | null {
+  const from = boxInView(applyLater(edit.from, edits, stale, index), at, ids);
+  const to = boxInView(applyLater(edit.to, edits, stale, index), at, ids);
+  if (from === null || to === null) return null;
+  return [from, to];
+}
+
+function liveAdd(edit: PlanEdit, stale: (string | null)[], index: number): edit is AddEdit {
+  return stale[index] === null && edit.kind === 'add-edge';
+}
+
+function sameArrow(drawn: [string, string] | null, from: string, to: string): boolean {
+  return drawn !== null && drawn[0] === from && drawn[1] === to;
+}
+
+function drawsArrow(edit: PlanEdit, edits: PlanEdit[], stale: (string | null)[], index: number, from: string, to: string, at: string, ids: ReadonlySet<string>): boolean {
+  if (!liveAdd(edit, stale, index)) return false;
+  return sameArrow(drawnPair(edit, edits, stale, index, at, ids), from, to);
+}
+
+export function addEdgeIndex(edits: PlanEdit[], stale: (string | null)[], from: string, to: string, at: string, ids: ReadonlySet<string>): number {
+  return edits.findIndex((edit, index) => drawsArrow(edit, edits, stale, index, from, to, at, ids));
 }
 
 function cutSentence(from: string, to: string, count: number): string {

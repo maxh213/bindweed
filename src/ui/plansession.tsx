@@ -414,7 +414,7 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     editPlan({ kind: 'cut-edge', from, to, files: pairs.pairs });
   };
   const cutArrow = async (from: string, to: string): Promise<void> => {
-    const added = addEdgeIndex(edits, stale, from, to);
+    const added = addEdgeIndex(edits, stale, from, to, props.at, props.ids);
     if (added !== -1) {
       removeEdit(added);
       return;

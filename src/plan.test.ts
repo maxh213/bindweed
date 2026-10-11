@@ -160,6 +160,7 @@ describe('package edits and file fates', () => {
     const good: PlanEdit[] = [
       { kind: 'create-package', path: 'src/ports' },
       { kind: 'create-package', path: 'ports' },
+      { kind: 'create-package', path: 'src/...' },
       { kind: 'rename-package', from: 'src/util', to: 'src/text' },
       { kind: 'rename-package', from: 'util', to: 'text' },
       { kind: 'rename-file', from: 'src/app/x.ts', to: 'y.ts' },
@@ -262,7 +263,7 @@ describe('package edits and file fates', () => {
   });
 
   it('reads names and paths by the pinned rules', () => {
-    expect(['a', 'a.ts', 'A-b_c.9', '.hidden'].map(legalName)).toEqual([true, true, true, true]);
+    expect(['a', 'a.ts', 'A-b_c.9', '.hidden', '...', 'a..b'].map(legalName)).toEqual([true, true, true, true, true, true]);
     expect(['', '.', '..', 'a b', 'a/b', 'é'].map(legalName)).toEqual([false, false, false, false, false, false]);
     expect([parentOf('src/app/a.ts'), parentOf('a.ts')]).toEqual(['src/app', '']);
     expect([lastSegment('src/app/a.ts'), lastSegment('a.ts')]).toEqual(['a.ts', 'a.ts']);
@@ -383,10 +384,43 @@ describe('plan document edits', () => {
     const add: PlanEdit = { kind: 'add-edge', from: 'a', to: 'b' };
     const other: PlanEdit = { kind: 'add-edge', from: 'a', to: 'c' };
     const wrongFrom: PlanEdit = { kind: 'add-edge', from: 'z', to: 'b' };
-    expect(addEdgeIndex([move, add], [null, null], 'a', 'b')).toBe(1);
-    expect(addEdgeIndex([add, add], ['x', null], 'a', 'b')).toBe(1);
-    expect(addEdgeIndex([other], [null], 'a', 'b')).toBe(-1);
-    expect(addEdgeIndex([wrongFrom], [null], 'a', 'b')).toBe(-1);
-    expect(addEdgeIndex([], [], 'a', 'b')).toBe(-1);
+    const ids = new Set(['a', 'b', 'c', 'z']);
+    expect(addEdgeIndex([move, add], [null, null], 'a', 'b', '', ids)).toBe(1);
+    expect(addEdgeIndex([add, add], ['x', null], 'a', 'b', '', ids)).toBe(1);
+    expect(addEdgeIndex([other], [null], 'a', 'b', '', ids)).toBe(-1);
+    expect(addEdgeIndex([wrongFrom], [null], 'a', 'b', '', ids)).toBe(-1);
+    expect(addEdgeIndex([], [], 'a', 'b', '', ids)).toBe(-1);
+  });
+
+  it('finds an add-edge by the arrow later edits draw, grouping included', () => {
+    const add = (from: string, to: string): PlanEdit => ({ kind: 'add-edge', from, to });
+    const merge: PlanEdit = { kind: 'merge-packages', packages: ['src/infra', 'src/app'], into: 'src/core' };
+    const split: PlanEdit = {
+      kind: 'split-package',
+      package: 'src/app',
+      parts: [
+        { name: 'read', files: ['src/app/deep/a.ts', 'src/app/save.ts'] },
+        { name: 'write', files: ['src/app/b.ts'] },
+      ],
+    };
+    const boxes = (...names: string[]): Set<string> => new Set(names);
+    const src = boxes('src/domain', 'src/core', 'src/app', 'src/infra', 'src/adapters', 'src/infra2');
+    const splitView = boxes('src/domain', 'src/infra', 'src/app/read', 'src/app/write');
+    expect(addEdgeIndex([add('src/domain', 'src/infra'), merge], [null, null], 'src/domain', 'src/core', 'src', src)).toBe(0);
+    expect(addEdgeIndex([add('src/app/save.ts', 'src/app/b.ts'), split], [null, null], 'src/app/read', 'src/app/write', 'src', splitView)).toBe(0);
+    expect(addEdgeIndex([add('src/app/save.ts', 'src/domain/model.ts'), split], [null, null], 'src/app/read', 'src/domain', 'src', splitView)).toBe(0);
+    expect(addEdgeIndex([add('src/app/save.ts', 'src/app/a.ts'), { kind: 'rename-file', from: 'src/app/save.ts', to: 'writer.ts' }], [null, null], 'src/app/writer.ts', 'src/app/a.ts', 'src/app', boxes('src/app/writer.ts', 'src/app/a.ts'))).toBe(0);
+    expect(addEdgeIndex([add('src/infra/db.ts', 'src/infra2/x.ts'), { kind: 'rename-package', from: 'src/infra', to: 'src/adapters' }], [null, null], 'src/adapters', 'src/infra2', 'src', src)).toBe(0);
+    expect(addEdgeIndex([add('src/infra/deep/x.ts', 'src/infra/nest/y.ts'), { kind: 'rename-package', from: 'src/infra', to: 'src/adapters' }], [null, null], 'src/adapters/deep', 'src/adapters/nest', 'src/adapters', boxes('src/adapters/deep', 'src/adapters/nest'))).toBe(0);
+    const nested: PlanEdit = { kind: 'split-package', package: 'src/app', parts: [{ name: 'read', files: ['src/app/deep/a.ts', 'src/app/other/b.ts'] }, { name: 'write', files: [] }] };
+    expect(addEdgeIndex([add('src/app/deep/a.ts', 'src/app/other/b.ts'), nested], [null, null], 'src/app/read/deep', 'src/app/read/other', 'src/app/read', boxes('src/app/read/deep', 'src/app/read/other'))).toBe(0);
+    expect(addEdgeIndex([add('src/domain/model.ts', 'src/infra/repo.ts'), { kind: 'move-file', file: 'src/domain/model.ts', to: 'src/app' }], [null, null], 'src/domain', 'src/infra', 'src', src)).toBe(0);
+    expect(addEdgeIndex([add('src/domain/model.ts', 'src/infra/repo.ts'), { kind: 'move-file', file: 'src/domain/model.ts', to: 'src/app' }], [null, null], 'src/app', 'src/infra', 'src', src)).toBe(-1);
+    expect(addEdgeIndex([add('src/infra', 'src/app'), { kind: 'rename-package', from: 'src/infra', to: 'src/adapters' }], [null, 'no such directory src/infra'], 'src/infra', 'src/app', 'src', src)).toBe(0);
+    expect(addEdgeIndex([add('src/infra', 'src/app'), { kind: 'rename-package', from: 'src/infra', to: 'src/adapters' }], [null, 'no such directory src/infra'], 'src/adapters', 'src/app', 'src', src)).toBe(-1);
+    expect(addEdgeIndex([add('src/app/save.ts', 'src/domain/model.ts'), { kind: 'fate', file: 'src/app/save.ts', fate: 'fold', into: 'src/app/a.ts' }], [null, null], 'src/app', 'src/domain', 'src', src)).toBe(0);
+    expect(addEdgeIndex([add('src/app/save.ts', 'src/domain/model.ts'), { kind: 'fate', file: 'src/app/b.ts', fate: 'delete' }], [null, null], 'src/app', 'src/domain', 'src', src)).toBe(0);
+    expect(addEdgeIndex([add('a/p.ts', 'b/q.ts')], [null], 'a', 'b', '', boxes('a', 'b'))).toBe(0);
+    expect(addEdgeIndex([add('src/domain', 'src/infra')], [null], 'src/domain', 'src/infra', 'src/app', boxes('src/app/a.ts'))).toBe(-1);
   });
 });
