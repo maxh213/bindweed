@@ -293,6 +293,38 @@ describe('package edits and file fates in the walk', () => {
     ]);
   });
 
+  it('refuses a file rename onto a directory and onto a declared package', () => {
+    const nested: ScanResult = { ...LAYERED, files: [...LAYERED.files, { path: 'src/app/deep/x.ts', test: false }] };
+    const ontoDir: PlanEdit = { kind: 'rename-file', from: 'src/app/save.ts', to: 'deep' };
+    expect(staleReasons(nested, [ontoDir])).toEqual(['src/app/deep already exists']);
+    expect(pathsOf(applyPlan(nested, [ontoDir]))).toContain('src/app/save.ts');
+    const ontoDeclared: PlanEdit[] = [
+      { kind: 'create-package', path: 'src/app/empty' },
+      { kind: 'rename-file', from: 'src/app/save.ts', to: 'empty' },
+    ];
+    expect(staleReasons(LAYERED, ontoDeclared)).toEqual([null, 'src/app/empty already exists']);
+    expect(pathsOf(applyPlan(LAYERED, ontoDeclared))).toContain('src/app/save.ts');
+  });
+
+  it('refuses a package rename onto a file', () => {
+    const scan: ScanResult = { ...LAYERED, files: [...LAYERED.files, { path: 'src/app/read/a.ts', test: false }] };
+    const edit: PlanEdit = { kind: 'rename-package', from: 'src/app/read', to: 'src/app/b.ts' };
+    expect(staleReasons(scan, [edit])).toEqual(['src/app/b.ts already exists']);
+    expect(pathsOf(applyPlan(scan, [edit]))).toContain('src/app/read/a.ts');
+  });
+
+  it('keeps a deleted file path taken for a later rename and create', () => {
+    const edits: PlanEdit[] = [
+      { kind: 'fate', file: 'src/app/b.ts', fate: 'delete' },
+      { kind: 'rename-file', from: 'src/app/save.ts', to: 'b.ts' },
+      { kind: 'create-package', path: 'src/app/b.ts' },
+    ];
+    expect(staleReasons(LAYERED, edits)).toEqual([null, 'src/app/b.ts already exists', 'src/app/b.ts already exists']);
+    const planned = applyPlan(LAYERED, edits);
+    expect(pathsOf(planned)).toContain('src/app/save.ts');
+    expect(pathsOf(planned)).toContain('src/app/b.ts');
+  });
+
   it('renames a package without moving a sibling that shares its prefix', () => {
     const scan: ScanResult = { ...LAYERED, files: [...LAYERED.files, { path: 'src/infra2/x.ts', test: false }] };
     const planned = applyPlan(scan, [{ kind: 'rename-package', from: 'src/infra', to: 'src/adapters' }]);
