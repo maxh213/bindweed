@@ -1322,6 +1322,31 @@ describe('planReport', () => {
     expect(report.warnings).toEqual([[], [{ kind: 'added-cycle', cycle: 'p.ts → q.ts → p.ts' }], [], []]);
   });
 
+  it('warns with the smaller cycle text when a workspace name sorts ahead of its directory', () => {
+    const scan: ScanResult = {
+      files: [
+        { path: 'pkg/a/x.ts', test: false },
+        { path: 'pkg/b/y.ts', test: false },
+      ],
+      edges: [],
+      externals: [],
+      workspaces: [
+        { dir: 'pkg/a', name: 'zeta' },
+        { dir: 'pkg/b', name: 'alpha' },
+      ],
+    };
+    const report = planReport(
+      scan,
+      [
+        { kind: 'add-edge', from: 'pkg/a', to: 'pkg/b' },
+        { kind: 'add-edge', from: 'pkg/b', to: 'pkg/a' },
+      ],
+      cycleTexts,
+    );
+    expect(report.stale).toEqual([null, null]);
+    expect(report.warnings).toEqual([[], [{ kind: 'added-cycle', cycle: 'alpha → zeta → alpha' }]]);
+  });
+
   it('warns when the only new cycle is drawn at the root', () => {
     const scan: ScanResult = {
       files: [

@@ -1027,4 +1027,14 @@ describe('cycleTexts', () => {
   it('leaves out test files', () => {
     expect(cycleTexts(scanOf(['src/a.ts', 'src/a.test.ts'], [['src/a.ts', 'src/a.test.ts'], ['src/a.test.ts', 'src/a.ts']]))).toEqual([]);
   });
+
+  it('keeps the lexicographically smaller text when a workspace name sorts ahead of its directory', () => {
+    const named = scanOf(
+      ['pkg/a/x.ts', 'pkg/b/y.ts'],
+      [['pkg/a/x.ts', 'pkg/b/y.ts'], ['pkg/b/y.ts', 'pkg/a/x.ts']],
+      [{ dir: 'pkg/a', name: 'zeta' }, { dir: 'pkg/b', name: 'alpha' }],
+    );
+    expect(view(named, '').edges.map(edge => edge.cycleText)).toEqual(['zeta → alpha → zeta', 'alpha → zeta → alpha']);
+    expect(cycleTexts(named)).toEqual(['alpha → zeta → alpha']);
+  });
 });
