@@ -474,6 +474,19 @@ describe('package edits and file fates in the walk', () => {
     expect(planned.deleted).toEqual(['src/adapters/db.ts']);
   });
 
+  it('moves external imports when a merge, a split or a file rename moves their file', () => {
+    const merged = applyPlan(LAYERED, [{ kind: 'merge-packages', packages: ['src/infra', 'src/app'], into: 'src/core' }]);
+    expect(merged.externals.map(ext => ext.from)).toEqual(['src/core/repo.ts', 'src/core/repo.ts']);
+    const split = applyPlan(LAYERED, [{
+      kind: 'split-package',
+      package: 'src/infra',
+      parts: [{ name: 'read', files: ['src/infra/repo.ts'] }, { name: 'write', files: ['src/infra/db.ts'] }],
+    }]);
+    expect(split.externals.map(ext => ext.from)).toEqual(['src/infra/read/repo.ts', 'src/infra/read/repo.ts']);
+    const renamed = applyPlan(LAYERED, [{ kind: 'rename-file', from: 'src/infra/repo.ts', to: 'store.ts' }]);
+    expect(renamed.externals.map(ext => ext.from)).toEqual(['src/infra/store.ts', 'src/infra/store.ts']);
+  });
+
   it('renames a file in its directory and keeps its edges', () => {
     const planned = applyPlan(LAYERED, [{ kind: 'rename-file', from: 'src/app/b.ts', to: 'c.ts' }]);
     expect(pathsOf(planned)).toContain('src/app/c.ts');
@@ -647,6 +660,17 @@ describe('package edits and file fates in the walk', () => {
     expect(report.scan.declared).toEqual(['src/core/sub']);
     expect(report.stale).toEqual([null, null]);
     expect(report.warnings).toEqual([[{ kind: 'empty-package', path: 'src/core/sub' }], []]);
+  });
+
+  it('keeps a declared package under the package a merge lands in', () => {
+    const edits: PlanEdit[] = [
+      { kind: 'create-package', path: 'src/app/spare' },
+      { kind: 'merge-packages', packages: ['src/app', 'src/infra'], into: 'src/app' },
+    ];
+    const report = planReport(LAYERED, edits, noCycles);
+    expect(report.stale).toEqual([null, null]);
+    expect(report.scan.declared).toEqual(['src/app/spare']);
+    expect(report.warnings).toEqual([[{ kind: 'empty-package', path: 'src/app/spare' }], []]);
   });
 
   it('gives the pinned reasons for splits', () => {
@@ -971,6 +995,24 @@ describe('package edits and file fates in the walk', () => {
     expect(folded.externals.map(ext => ext.from)).toEqual(['src/domain/shape.ts', 'src/domain/shape.ts']);
     expect(folded).not.toHaveProperty('deleted');
   });
+
+  it('keeps a runtime edge and a type edge that a fold lands on the same file', () => {
+    const folded = applyPlan(LAYERED, [{ kind: 'fate', file: 'src/infra/repo.ts', fate: 'fold', into: 'src/infra/db.ts' }]);
+    expect(folded.edges.filter(edge => edge.from === 'src/app/a.ts' && edge.to === 'src/infra/db.ts')).toEqual([
+      { from: 'src/app/a.ts', to: 'src/infra/db.ts', kind: 'runtime' },
+      { from: 'src/app/a.ts', to: 'src/infra/db.ts', kind: 'type' },
+    ]);
+  });
+
+  it('cuts an edge of a file a delete kept', () => {
+    const edits: PlanEdit[] = [
+      { kind: 'fate', file: 'src/app/b.ts', fate: 'delete' },
+      { kind: 'cut-edge', from: 'src/app', to: 'src/infra', files: [['src/app/b.ts', 'src/infra/db.ts']] },
+    ];
+    const report = planReport(LAYERED, edits, noCycles);
+    expect(report.stale).toEqual([null, null]);
+    expect(report.scan.edges.some(edge => edge.from === 'src/app/b.ts' && edge.to === 'src/infra/db.ts')).toBe(false);
+  });
 });
 
 const SHOWN: { tests: true; external: false } = { tests: true, external: false };
@@ -1203,6 +1245,11 @@ describe('planReport', () => {
     const twice: ScanResult = { ...LAYERED, edges: [...LAYERED.edges, { from: 'src/app/b.ts', to: 'src/app/a.ts', kind: 'type' }] };
     const report = planReport(twice, [{ kind: 'fate', file: 'src/app/a.ts', fate: 'delete' }, { kind: 'fate', file: 'src/app/save.ts', fate: 'delete' }], noCycles);
     expect(report.warnings).toEqual([[{ kind: 'deleted-imports', file: 'src/app/a.ts', importers: ['src/app/a.test.ts', 'src/app/b.ts'] }], []]);
+  });
+
+  it('counts a heritage edge as an import of the deleted file', () => {
+    const report = planReport(LAYERED, [{ kind: 'fate', file: 'src/domain/shape.ts', fate: 'delete' }], noCycles);
+    expect(report.warnings).toEqual([[{ kind: 'deleted-imports', file: 'src/domain/shape.ts', importers: ['src/infra/repo.ts'] }]]);
   });
 
   it('does not count an import of a longer path as an import of the deleted file', () => {

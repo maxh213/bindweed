@@ -251,8 +251,12 @@ describe('package edits and file fates', () => {
     expect(sentenceOf({ kind: 'merge-packages', packages: ['src/app', 'src/domain', 'src/infra'], into: 'src/core' })).toBe(
       'Merge src/app, src/domain and src/infra into src/core',
     );
+    expect(sentenceOf({ kind: 'merge-packages', packages: ['a', 'b', 'c', 'd'], into: 'e' })).toBe('Merge a, b, c and d into e');
     expect(sentenceOf(split([4, 3]))).toBe('Split src/app into src/app/p0 (4 files) and src/app/p1 (3 files)');
     expect(sentenceOf(split([1, 1, 0]))).toBe('Split src/app into src/app/p0 (1 file), src/app/p1 (1 file) and src/app/p2 (0 files)');
+    expect(sentenceOf(split([1, 1, 1, 1]))).toBe(
+      'Split src/app into src/app/p0 (1 file), src/app/p1 (1 file), src/app/p2 (1 file) and src/app/p3 (1 file)',
+    );
     expect(sentenceOf({ kind: 'fate', file: 'src/legacy.ts', fate: 'delete' })).toBe('Delete src/legacy.ts');
     expect(sentenceOf({ kind: 'fate', file: 'src/helpers.ts', fate: 'fold', into: 'src/text/format.ts' })).toBe('Fold src/helpers.ts into src/text/format.ts');
   });
