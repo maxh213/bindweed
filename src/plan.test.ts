@@ -478,6 +478,18 @@ describe('plan document edits', () => {
     expect(addEdgeIndex([add, moveA, moveB], [null, null, null], 'src/app/sub/deep', 'src/domain', 'src', ids)).toBe(0);
   });
 
+  it('matches the box drawn after three hidden packages', () => {
+    const add: PlanEdit = { kind: 'add-edge', from: 'src/app/sub/deep/nest/d.ts', to: 'src/domain/model.ts' };
+    const moveA: PlanEdit = { kind: 'move-file', file: 'src/app/a.ts', to: 'src/domain' };
+    const moveB: PlanEdit = { kind: 'move-file', file: 'src/app/sub/b.ts', to: 'src/domain' };
+    const moveC: PlanEdit = { kind: 'move-file', file: 'src/app/sub/deep/c.ts', to: 'src/domain' };
+    const edits = [add, moveA, moveB, moveC];
+    const stale = [null, null, null, null];
+    const ids = new Set(['src/app/sub/deep/nest', 'src/domain']);
+    expect(addEdgeIndex(edits, stale, 'src/app/sub/deep/nest', 'src/domain', 'src', ids)).toBe(0);
+    expect(addEdgeIndex(edits, stale, 'src/app/sub/deep', 'src/domain', 'src', ids)).toBe(-1);
+  });
+
   it('names one file when a fold retargets an added edge', () => {
     const add: PlanEdit = { kind: 'add-edge', from: 'src/app/a.ts.bak', to: 'src/domain/model.ts' };
     const fold: PlanEdit = { kind: 'fate', file: 'src/app/a.ts', fate: 'fold', into: 'src/domain/shape.ts' };

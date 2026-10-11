@@ -914,6 +914,39 @@ describe('graphView over a planned scan', () => {
     expect(edgePairs(scan, 'src', 'src/app/sub/deep', 'react', { tests: false, external: true })).toEqual([['src/app/sub/deep/c.ts', 'react']]);
   });
 
+  it('draws an external through three hidden packages above its file', () => {
+    const base: ScanResult = {
+      ...scanOf(
+        ['src/app/a.ts', 'src/app/sub/b.ts', 'src/app/sub/deep/c.ts', 'src/app/sub/deep/nest/d.ts', 'src/domain/model.ts'],
+        [
+          ['src/app/sub/deep/nest/d.ts', 'src/domain/model.ts'],
+          ['src/domain/model.ts', 'src/app/sub/deep/nest/d.ts'],
+        ],
+      ),
+      externals: [{ from: 'src/app/sub/deep/nest/d.ts', name: 'react', kind: 'runtime' }],
+    };
+    const scan = applyPlan(base, [
+      { kind: 'move-file', file: 'src/app/a.ts', to: 'src/domain' },
+      { kind: 'move-file', file: 'src/app/sub/b.ts', to: 'src/domain' },
+      { kind: 'move-file', file: 'src/app/sub/deep/c.ts', to: 'src/domain' },
+    ]);
+    expect(scan.hidden).toEqual(['src/app', 'src/app/sub', 'src/app/sub/deep']);
+    const drawn = viewWith(scan, 'src', { tests: false, external: true });
+    expect(drawn.nodes.map(node => node.id).sort()).toEqual(['react', 'src/app/sub/deep/nest', 'src/domain']);
+    expect(drawn.nodes.find(node => node.id === 'src/app/sub/deep/nest')).toMatchObject({ kind: 'package', files: 1 });
+    expect(drawn.edges.filter(edge => edge.to !== 'react').map(edge => `${edge.from}>${edge.to}`).sort()).toEqual([
+      'src/app/sub/deep/nest>src/domain',
+      'src/domain>src/app/sub/deep/nest',
+    ]);
+    expect(drawn.edges.find(edge => edge.to === 'react')).toMatchObject({ from: 'src/app/sub/deep/nest', to: 'react', runtime: 1 });
+    const nest = nodeDetail(scan, 'src/app/sub/deep/nest', 'src', 'repo', { tests: false, external: true });
+    expect(nest?.imports.map(entry => entry.id)).toEqual(['react', 'src/domain']);
+    expect(nest?.importedBy.map(entry => entry.id)).toEqual(['src/domain']);
+    expect(edgePairs(scan, 'src', 'src/app/sub/deep/nest', 'react', { tests: false, external: true })).toEqual([
+      ['src/app/sub/deep/nest/d.ts', 'react'],
+    ]);
+  });
+
   it('regroups a planned edge through every hidden package above its file', () => {
     const files = ['src/app/a.ts', 'src/app/sub/b.ts', 'src/app/sub/deep/c.ts', 'src/domain/model.ts'];
     const scan = applyPlan(scanOf(files, []), [

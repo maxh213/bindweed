@@ -1024,6 +1024,8 @@ describe('the page reshapes packages and files', () => {
       { path: 'src/app/sub/a.test.ts', test: true },
       { path: 'src/app/sub/deep/x.ts', test: false },
       { path: 'src/app/sub/deep/y.test.ts', test: true },
+      { path: 'src/app/sub/deep/nest/z.ts', test: false },
+      { path: 'src/app/sub/deep/nest/w.test.ts', test: true },
     ];
     await showApp('#at=src&plan=reshape');
     await waitFor(() => expect(boxIds()).toContain('src/app'));
@@ -1035,6 +1037,8 @@ describe('the page reshapes packages and files', () => {
       'b.ts',
       'save.ts',
       'sub/a.test.ts',
+      'sub/deep/nest/w.test.ts',
+      'sub/deep/nest/z.ts',
       'sub/deep/x.ts',
       'sub/deep/y.test.ts',
     ]);

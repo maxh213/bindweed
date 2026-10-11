@@ -85,6 +85,10 @@ describe('the reshape dialog rules', () => {
     expect(nameTaken('src', boxes, 'rename', [])).toEqual(hidden);
     expect(nameTaken('src', boxes, 'merge', [])).toEqual(new Set(ids));
     expect(nameTaken('src', [{ id: 'src/app/write/deep', kind: 'package', files: 1 }], 'create', [])).toEqual(new Set(['src/app/write/deep', 'src/app/write', 'src/app']));
+    const deep = [{ id: 'src/app/sub/deep/nest', kind: 'package', files: 1 }];
+    const ancestors = nameTaken('src', deep, 'create', []);
+    expect(ancestors).toEqual(new Set(['src/app/sub/deep/nest', 'src/app/sub/deep', 'src/app/sub', 'src/app']));
+    expect(nameEdit(CREATE, 'app', scene('src', [...ancestors]))).toEqual({ problem: 'src/app already exists' });
     expect(nameTaken('', [{ id: 'src', kind: 'package', files: 7 }], 'create', [])).toEqual(new Set(['src']));
     expect(nameTaken('src', [], 'create', [])).toEqual(new Set());
   });
