@@ -474,6 +474,23 @@ describe('package edits and file fates in the walk', () => {
     expect(planned.deleted).toEqual(['src/adapters/db.ts']);
   });
 
+  it('moves a planned edge when a merge or a file rename moves its end', () => {
+    const merged = applyPlan(LAYERED, [
+      { kind: 'add-edge', from: 'src/domain', to: 'src/infra' },
+      { kind: 'merge-packages', packages: ['src/infra', 'src/app'], into: 'src/core' },
+    ]);
+    expect(merged.planned).toEqual([{ from: 'src/domain', to: 'src/core' }]);
+    const atSrc = graphView(merged, 'src', 'repo');
+    expect(atSrc?.edges.find(edge => edge.from === 'src/domain' && edge.to === 'src/core')).toMatchObject({ planned: true });
+    const renamed = applyPlan(LAYERED, [
+      { kind: 'add-edge', from: 'src/app/save.ts', to: 'src/app/a.ts' },
+      { kind: 'rename-file', from: 'src/app/save.ts', to: 'writer.ts' },
+    ]);
+    expect(renamed.planned).toEqual([{ from: 'src/app/writer.ts', to: 'src/app/a.ts' }]);
+    const atApp = graphView(renamed, 'src/app', 'repo');
+    expect(atApp?.edges.find(edge => edge.from === 'src/app/writer.ts' && edge.to === 'src/app/a.ts')).toMatchObject({ planned: true });
+  });
+
   it('moves external imports when a merge, a split or a file rename moves their file', () => {
     const merged = applyPlan(LAYERED, [{ kind: 'merge-packages', packages: ['src/infra', 'src/app'], into: 'src/core' }]);
     expect(merged.externals.map(ext => ext.from)).toEqual(['src/core/repo.ts', 'src/core/repo.ts']);
