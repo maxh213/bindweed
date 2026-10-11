@@ -261,6 +261,24 @@ describe('package edits and file fates', () => {
     );
     expect(sentenceOf({ kind: 'fate', file: 'src/legacy.ts', fate: 'delete' })).toBe('Delete src/legacy.ts');
     expect(sentenceOf({ kind: 'fate', file: 'src/helpers.ts', fate: 'fold', into: 'src/text/format.ts' })).toBe('Fold src/helpers.ts into src/text/format.ts');
+    expect(sentenceOf({
+      kind: 'split-package',
+      package: 'src/app',
+      parts: [{ name: 'write', files: ['src/app/a.ts'] }, { name: 'read', files: ['src/app/b.ts', 'src/app/c.ts'] }],
+    })).toBe('Split src/app into src/app/write (1 file) and src/app/read (2 files)');
+  });
+
+  it('refuses a package rename that changes the parent', () => {
+    expect(parsePlanEdit({ kind: 'rename-package', from: 'src/app/read', to: 'src/write' })).toBeUndefined();
+    expect(parsePlanEdit({ kind: 'rename-package', from: 'src/app', to: 'src/app/read' })).toBeUndefined();
+  });
+
+  it('accepts a package rename whose new name is a prefix or extension of the old', () => {
+    const shorter = { kind: 'rename-package', from: 'src/infra', to: 'src/in' };
+    const longer = { kind: 'rename-package', from: 'src/infra', to: 'src/infrastructure' };
+    expect(parsePlanEdit(shorter)).toEqual(shorter);
+    expect(parsePlanEdit(longer)).toEqual(longer);
+    expect(parsePlanEdit({ kind: 'rename-package', from: 'src/infra', to: 'src/infra' })).toBeUndefined();
   });
 
   it('reads names and paths by the pinned rules', () => {
