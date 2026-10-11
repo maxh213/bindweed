@@ -317,6 +317,25 @@ describe('a fold leaves no ghost', () => {
     expect(boxes([moved, foldMoved])).toEqual(['src/app/a.ts.bak']);
   });
 
+  it('drops the ghost of a longer path a later split part listed', () => {
+    const now = viewOf([fileNode('src/app/a.ts', 0, 0), fileNode('src/app/a.ts.bak', 0, 1)]);
+    const pack = [{ id: 'src/app', now, planned: viewOf([]) }];
+    const split: PlanEdit = {
+      kind: 'split-package',
+      package: 'src/app',
+      parts: [
+        { name: 'read', files: ['src/app/a.ts'] },
+        { name: 'write', files: ['src/app/a.ts.bak'] },
+      ],
+    };
+    const fold: PlanEdit = { kind: 'fate', file: 'src/app/write/a.ts.bak', fate: 'fold', into: 'src/app/write/b.ts' };
+    const edits = [split, fold];
+    const stale = edits.map(() => null);
+    const kept = { path: 'src/app/a.ts', name: 'a.ts', ghost: true, deleted: false };
+    expect(picture({ packages: pack, edits, stale }).ink.rows.get('src/app')).toEqual([kept]);
+    expect(picture({ nodes: [], other: now, edits, stale }).ink.ghosts).toEqual([{ id: 'src/app/a.ts', name: 'a.ts', x: 0, y: 0 }]);
+  });
+
   it('keeps the ghost of a same-named file a fold did not name', () => {
     const packages = [
       { id: 'src/app', now: viewOf([fileNode('src/app/a.ts')]), planned: viewOf([]) },

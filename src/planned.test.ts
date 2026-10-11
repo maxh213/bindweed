@@ -423,6 +423,14 @@ describe('package edits and file fates in the walk', () => {
     const folded = applyPlan(scan, [{ kind: 'fate', file: 'src/app/a.ts', fate: 'fold', into: 'src/domain/model.ts' }]);
     expect(pathsOf(folded)).toEqual(['src/app/a.ts.bak', 'src/domain/model.ts', 'src/infra/db.ts']);
     expect(folded.edges).toEqual(edge);
+    const split = applyPlan(scan, [{
+      kind: 'split-package',
+      package: 'src/app',
+      parts: [{ name: 'read', files: ['src/app/a.ts'] }, { name: 'write', files: [] }],
+    }]);
+    expect(pathsOf(split)).toEqual(['src/app/read/a.ts', 'src/app/a.ts.bak', 'src/domain/model.ts', 'src/infra/db.ts']);
+    expect(split.edges).toEqual(edge);
+    expect(pathsOf(split)).not.toContain('src/app/read/a.ts.bak');
   });
 
   it('renames one file and leaves another file of the same name', () => {
@@ -953,6 +961,20 @@ describe('planReport', () => {
     const report = planReport(LAYERED, [CREATE_PORTS, CREATE_PORTS], noCycles);
     expect(report.stale).toEqual([null, 'src/ports already exists']);
     expect(report.warnings).toEqual([[{ kind: 'empty-package', path: 'src/ports' }], []]);
+  });
+
+  it('warns about an empty part whose name is a prefix of a file left beside it', () => {
+    const split: PlanEdit = {
+      kind: 'split-package',
+      package: 'src/app',
+      parts: [
+        { name: 'read', files: ['src/app/a.ts', 'src/app/a.test.ts', 'src/app/save.ts'] },
+        { name: 'b', files: [] },
+      ],
+    };
+    const report = planReport(LAYERED, [split], noCycles);
+    expect(report.warnings).toEqual([[{ kind: 'empty-package', path: 'src/app/b' }]]);
+    expect(pathsOf(report.scan)).toContain('src/app/b.ts');
   });
 
   it('warns about an empty package on the edit that created it, not the first edit', () => {
