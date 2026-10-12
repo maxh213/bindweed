@@ -1,0 +1,59 @@
+# QA: a plan becomes task files and a slop-cannon brief
+
+For a person with two terminals and a desktop browser on the machine that runs bindweed (Node 22.18 or newer, git, curl, and a clipboard tool: `pbpaste`, `wl-paste -n` or `xclip -selection clipboard -o`). The tree is `qa/fixtures/layered` plus a `tasks/` folder. No real LLM runs: the backend is bindweed's `qa/fixtures/fake-llm.mjs`, which saves each prompt as `<log>/<n>.prompt` and its environment as `<n>.env.json`, answers two questions, then three slices and a brief once the prompt holds an `A: ` line or `Reply with slices now.`, answers invalid JSON once when the prompt holds `BAD-ONCE`, and sleeps when it holds `SLEEP-NOW` (see `features/flesh-out-into-tasks-and-brief.feature`). `.bindweed/` is gitignored, so `git status --porcelain` stays empty.
+
+## Setup
+
+Port 5000 must be free. In the first terminal set `BW` to bindweed's checkout, then paste:
+
+```sh
+(cd "$BW" && npm run build)
+export QA=$(cd "$(mktemp -d)" && pwd -P)
+cp -a "$BW/qa/fixtures/layered" "$QA/layered" && mkdir "$QA/log" "$QA/layered/tasks"
+printf '# 004 — x\n' > "$QA/layered/tasks/004-x.md"
+printf '# Our guide\n\nOne slice per step.\n' > "$QA/layered/tasks/README.md"
+cd "$QA/layered"
+git init -q && git add -A && git -c user.name=qa -c user.email=qa@example.test -c commit.gpgsign=false commit -qm fixture
+echo "export BW=$BW QA=$QA U=http://127.0.0.1:5000"
+echo "node $BW/qa/fixtures/fake-llm.mjs $QA/log"
+```
+
+Paste the printed `export` line into the second terminal. Keep the last printed line; it is "the fake command".
+
+## Steps
+
+1. In the first terminal run `CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli node $BW/src/cli.ts --port 5000`. Open the printed address with `#at=src` appended.
+   **Expect:** the page shows `app` (2 files), `infra` and `domain`. A gear button named `Settings` is in the toolbar. There is no `Tasks` button.
+
+2. Click `Settings`, choose `command` in `Backend`, leave `Command` blank and click `Save`. Then paste the fake command into `Command` and click `Save`. In the second terminal run `cat $QA/layered/.bindweed/config.json; echo`.
+   **Expect:** the blank save shows `write a command` and the dialog stays. After the second save the dialog closes, and the file is `{"llm":{"backend":"command","command":"<the fake command>"}}`.
+
+3. Create a plan named `Gate`. Click the arrow from `app` to `domain` and press Delete. Click `Tasks`, then `Generate`.
+   **Expect:** `running for 0 s` shows and counts up, `Cancel` shows, and `Generate` is disabled. Then the run line reads `command: <the fake command>` and two questions show: `Must a.ts keep exporting a?` with `Other code may import it.`, and `Should b.ts move before the cut?` with `The order decides which slice breaks the build.`
+
+4. In the second terminal run `grep -c 'src/app must not import src/domain (1 import)' $QA/log/1.prompt; grep -F -e '# Our guide' -e 004-x.md -e 'src/app/a.ts imports' $QA/log/1.prompt; cat $QA/log/1.env.json; echo`.
+   **Expect:** the count is at least `1`. grep prints `# Our guide`, a line naming `004-x.md`, and `src/app/a.ts imports src/app/b.ts, src/domain/model.ts, src/infra/db.ts`. The JSON has `cwd` and `root` equal to `$QA/layered`, and `claudecode` and `entrypoint` both `null`.
+
+5. Type `Yes, keep it.` for the first question, leave the second blank, and click `Continue`. Then run `grep -A1 '^Q: ' $QA/log/2.prompt`.
+   **Expect:** three slices: `005-add-core.md`, `006-move-b.md`, `007-cut-app-domain.md`. The third body is `# 007 — Cut app from domain`, a blank line, `No behaviour changes.`. grep shows `A: Yes, keep it.` under the first question and `A: your call` under the second. The brief box holds `# Reshape layered`, a blank line, `Move b, then cut app from domain.`.
+
+6. Click `Move 007-cut-app-domain.md up`.
+   **Expect:** the order is `005-add-core.md`, `006-cut-app-domain.md`, `007-move-b.md`. Their bodies start `# 005 — Add the core package`, `# 006 — Cut app from domain`, `# 007 — Move b into infra`.
+
+7. Click `Merge 005-add-core.md with next`, then `Delete 006-move-b.md`.
+   **Expect:** after the merge the slices are `005-add-core.md` and `006-move-b.md`, and the first body is `# 005 — Add the core package`, blank, `Create src/core.`, blank, `No behaviour changes.`. After the delete only `005-add-core.md` is left.
+
+8. Click `Save as files`. Run `ls $QA/layered/.bindweed/plans/gate/tasks; cat $QA/layered/.bindweed/plans/gate/brief.md`. Click `Copy command` and paste the clipboard into the second terminal without pressing Enter.
+   **Expect:** the page shows `saved to $QA/layered/.bindweed/plans/gate/tasks/`. `ls` prints only `005-add-core.md`; `cat` prints the brief. The pasted line is `sc --repo $QA/layered --safety on -m "$(cat $QA/layered/.bindweed/plans/gate/brief.md)"` with `$QA` expanded. Clear the line.
+
+9. Reload the page and click `Tasks`.
+   **Expect:** the one slice `005-add-core.md` with its merged body and the brief are still there.
+
+10. Close the dialog. Open `domain`'s menu, choose `Add note`, add `BAD-ONCE`. Click `Tasks`, then `Just write it`. Run `ls $QA/log; grep -c 'Your last reply was not usable: ' $QA/log/4.prompt`.
+    **Expect:** three slices `005-add-core.md`, `006-move-b.md`, `007-cut-app-domain.md` replace the old one, with no error shown. `ls` shows `bad.done` and prompts `1` to `4`. grep prints `1`.
+
+11. Close the dialog, add the note `SLEEP-NOW` to `domain`, click `Tasks`, then `Just write it`. When `running for` shows, run `cat $QA/log/sleep.pids`, click `Cancel`, wait 2 seconds and run `for p in $(cat $QA/log/sleep.pids); do kill -0 $p 2>/dev/null && echo alive $p; done; echo checked`.
+    **Expect:** the page shows `cancelled` and the three slices from step 10 are unchanged. Only `checked` is printed.
+
+12. In the first terminal press Ctrl-C. In the second run `cd ~ && git -C $QA/layered status --porcelain && ls $QA/layered/tasks && echo clean`, then `rm -rf "$QA"`.
+    **Expect:** `004-x.md`, `README.md` and `clean`, and nothing else.
