@@ -314,7 +314,13 @@ Feature: flesh a plan out into ordered marestail task files and a slop-cannon br
     the dialog; with backend command and a blank box it shows "write a
     command", stays open and saves nothing.
     "Tasks" is in the plan toolbar while a plan is open and opens the dialog
-    labelled "Tasks", showing the saved interview, slices and brief. While a
+    labelled "Tasks", showing the saved interview, slices and brief.
+    "Generate" sends {"step":"ask"}. "Continue" shows only while a round is
+    pending and sends {"step":"answer"} with the boxes in question order.
+    "Just write it" sends {"step":"write"} with the boxes in question order
+    while a round is pending, else with []. The plan a run returns becomes the
+    open plan, and every later canvas edit, Undo and Redo keeps its
+    "interview", "tasks", "brief" and "contract". While a
     run is alive it shows "running for N s", counting up, and "Cancel"; the
     other buttons are disabled. After a run it shows "ran" and any note; after
     an error it shows the error and, when there is one, the raw output in a
@@ -354,6 +360,29 @@ Feature: flesh a plan out into ordered marestail task files and a slop-cannon br
       When I reload the page and click "Tasks"
       Then the one slice and the brief are still there
       And "git status --porcelain" in "/tmp/qa/layered" is empty
+
+    Scenario: Just write it with questions pending sends the typed answers
+      Given the plan "Gate" has the package cut and the note "ASK-AGAIN" and is open with the Tasks dialog
+      Then "Continue" is not shown
+      When I click "Generate"
+      Then the two questions show and "Continue" is shown
+      When I type "a" in "Must a.ts keep exporting a?", leave "Should b.ts move before the cut?" blank and click "Just write it"
+      Then the slices read 005-add-core.md, 006-move-b.md, 007-cut-app-domain.md and "Continue" is not shown
+      And /tmp/qa/log/2.prompt contains "A: a", "A: your call" and "Reply with slices now."
+      And "GET /api/plans/gate" has "interview" with one round, round 1, whose answers are ["a","your call"]
+
+    Scenario: Canvas edits, Undo and Redo after Generate keep the slices without a reload
+      Given the plan "Gate" has the package cut and is open with the Tasks dialog
+      When I click "Just write it"
+      Then the slices read 005-add-core.md, 006-move-b.md, 007-cut-app-domain.md
+      When I close the dialog, choose "Add note" on the "domain" box, type "X" and click "Add", without reloading
+      Then "GET /api/plans/gate" has two edits, the package cut and the note "X", and "interview" [], the three tasks and the brief from the fake
+      When I click "Undo"
+      Then "GET /api/plans/gate" has the package cut as its one edit, the note as its one redo, and the same interview, tasks and brief
+      When I click "Redo"
+      Then "GET /api/plans/gate" has the two edits again and the same interview, tasks and brief
+      When I click "Tasks"
+      Then the slices read 005-add-core.md, 006-move-b.md, 007-cut-app-domain.md
 
     Scenario: Cancel from the page
       Given the plan "Gate" has the package cut and the note "SLEEP-NOW" and is open with the Tasks dialog
