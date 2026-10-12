@@ -103,7 +103,9 @@ Feature: flesh a plan out into ordered marestail task files and a slop-cannon br
     "ask" empties "interview" and asks round 1. "answer" needs a pending round
     (the last round, with "answers" []) and one answer per question; "write"
     needs one per pending question, or [] with none pending. A blank answer is
-    stored as "your call". After "answer", round 4 is never asked: when the
+    stored as "your call". "answer" and "write" keep the rounds already there
+    and fill the pending round's answers; "write" sets "interview" to [] when
+    the key is absent. After "answer", round 4 is never asked: when the
     third round was just answered, the prompt demands slices, as "write" does.
     Any other body answers 400 {"error":"bad generate"}; a second run on the
     same plan while one is alive answers 409 {"error":"already running"}.
@@ -117,7 +119,8 @@ Feature: flesh a plan out into ordered marestail task files and a slop-cannon br
     A first unusable reply is retried once with the first prompt, a blank line
     and "Your last reply was not usable: <reason>". A second answers 200
     {"error":"the LLM's reply was not usable: <reason>","raw":<stdout>,"ran"}.
-    A non-zero exit answers {"error":"the LLM command exited with code N","raw","ran"},
+    Cancel answers the run's POST 200 {"error":"cancelled","ran"} (plus
+    "note"), with no "raw". A non-zero exit answers {"error":"the LLM command exited with code N","raw","ran"},
     and a stop by a signal S not sent by bindweed {"error":"the LLM command was
     stopped by S","raw","ran"} (S as Node names it, e.g. SIGTERM); neither retries.
     Numbering: the target's tasks/ names starting with three digits and "-"
@@ -152,6 +155,11 @@ Feature: flesh a plan out into ordered marestail task files and a slop-cannon br
       files it touches, the imports that must be gone when it ends, the
       contract rules it makes pass, and what must not change." and "Write one
       thin slice per logical step.";
+    - the line "Reply with exactly one JSON object, in a fenced json block.";
+    - only when slices are not demanded, the line
+      To ask, reply {"questions":[{"id":"<id>","text":"<question>","why":"<why you ask>"}]} with at most 5 questions.
+    - the line
+      To write, reply {"slices":[{"title":"<title>","slug":"<slug>","body":"<markdown>"}],"brief":"<markdown>"}.
     - "Reply with slices now." exactly when slices are demanded.
 
     Scenario: Two questions, one left blank, then three slices after 004
@@ -160,7 +168,7 @@ Feature: flesh a plan out into ordered marestail task files and a slop-cannon br
       Then "ran" is "command: <the fake>"
       And "plan.interview" is [{"round":1,"questions":[{"id":"q1","text":"Must a.ts keep exporting a?","why":"Other code may import it."},{"id":"q2","text":"Should b.ts move before the cut?","why":"The order decides which slice breaks the build."}],"answers":[]}]
       And /tmp/qa/log/1.prompt contains "src/app must not import src/domain (1 import)", the edits' JSON, "# Our guide" and "004-x.md"
-      And it contains the four instruction sentences of the rule, word for word
+      And it contains the four instruction sentences of the rule and the "Reply with exactly one", "To ask, reply" and "To write, reply" lines, word for word
       And it contains the lines "src/app/a.ts imports src/app/b.ts, src/domain/model.ts, src/infra/db.ts", "src/app/a.ts is imported by src/app/b.ts" and "src/domain/model.ts imports nothing"
       And it does not contain "Reply with slices now."
       And /tmp/qa/log/1.env.json is {"cwd":"/tmp/qa/layered","root":"/tmp/qa/layered","claudecode":null,"entrypoint":null}
@@ -181,7 +189,8 @@ Feature: flesh a plan out into ordered marestail task files and a slop-cannon br
       And the plan "Gate" has the package cut
       When I send "POST /api/plans/gate/generate" with the token and {"step":"write","answers":[]}
       Then the task files are "001-add-core.md", "002-move-b.md" and "003-cut-app-domain.md"
-      And /tmp/qa/log/1.prompt contains "Reply with slices now." and "**Slice vertically.**"
+      And /tmp/qa/log/1.prompt contains "Reply with slices now.", "**Slice vertically.**" and the "Reply with exactly one" and "To write, reply" lines of the rule
+      And it does not contain "To ask, reply"
       And "plan.interview" is []
 
     Scenario: The prompt carries the saved contract, the warnings and every touched file
@@ -207,6 +216,14 @@ Feature: flesh a plan out into ordered marestail task files and a slop-cannon br
       When I send {"step":"answer","answers":["c",""]}
       Then /tmp/qa/log/4.prompt contains "Reply with slices now." and "plan.tasks" has three tasks
 
+    Scenario: Just write it after a round keeps the interview and fills the pending answers
+      Given the plan "Gate" has the package cut and the note "ASK-AGAIN"
+      When I send {"step":"ask"}, then {"step":"answer","answers":["a","b"]}
+      And I send {"step":"write","answers":["c",""]}
+      Then /tmp/qa/log/3.prompt contains "A: a", "A: b", "A: c", "A: your call" and "Reply with slices now."
+      And "plan.interview" has rounds 1 and 2 with answers ["a","b"] and ["c","your call"]
+      And "plan.tasks" has three tasks
+
     Scenario: A bad reply is retried once, and two bad replies show the raw output
       Given the plan "Gate" has the package cut and the note "BAD-ONCE"
       When I send "POST /api/plans/gate/generate" with the token and {"step":"write","answers":[]}
@@ -230,7 +247,7 @@ Feature: flesh a plan out into ordered marestail task files and a slop-cannon br
       Then the second answers 409 {"error":"already running"}
       When I send "POST /api/plans/gate/cancel" with the token
       Then the body is {"cancelled":true} and within 2 seconds neither pid in sleep.pids is alive
-      And the first POST answers 200 with "error" "cancelled"
+      And the first POST answers 200 {"error":"cancelled","ran":"command: <the fake>"}
       And "GET /api/plans/gate" has no "interview" key
       When I send "POST /api/plans/gate/cancel" with the token
       Then the body is {"cancelled":false}
@@ -253,7 +270,8 @@ Feature: flesh a plan out into ordered marestail task files and a slop-cannon br
   Rule: plan files gain optional interview, tasks and brief, and old routes stay
     A round is exactly {"round","questions","answers"}; a task exactly
     {"file","title","body"}, file matching ^\d{3}-[a-z0-9][a-z0-9-]*\.md$;
-    brief a string. Absent keys stay absent. A bad value answers PUT 400
+    brief a string. Absent keys stay absent, apart from "interview" as the
+    Generate rule says. A bad value answers PUT 400
     {"error":"bad plan"}. Summaries gain nothing.
 
     Scenario: A 007 plan loads unchanged and a bad task file name is refused
@@ -273,6 +291,8 @@ Feature: flesh a plan out into ordered marestail task files and a slop-cannon br
         | request                         | credentials                                        | status | body                               |
         | GET /api/config                 | no header of my own                                | 401    | {"error":"missing or wrong token"} |
         | POST /api/plans/gate/generate   | no header of my own                                | 401    | {"error":"missing or wrong token"} |
+        | POST /api/plans/gate/cancel     | no header of my own                                | 401    | {"error":"missing or wrong token"} |
+        | PUT /api/config                 | the body {"llm":{"backend":"claude"}} and no header of my own | 401 | {"error":"missing or wrong token"} |
         | POST /api/plans/gate/files      | the header "Host: evil.example:5000" and the token | 403    | {"error":"bad host"}               |
         | POST /api/plans/nope/generate   | the body {"step":"ask"} and the token              | 404    | {"error":"no such plan"}           |
         | POST /api/plans/gate/generate   | the body {"step":"answer","answers":[]} and the token, with no pending round | 400 | {"error":"bad generate"} |
@@ -367,6 +387,10 @@ Feature: flesh a plan out into ordered marestail task files and a slop-cannon br
       When I click "Copy 008-cut-app-domain.md"
       Then the clipboard is "# 008 — Cut app from domain\n\nNo behaviour changes.\n"
       And "GET /api/plans/gate" has those four tasks in that order with those bodies
+      When I type "Just cut it." over "Brief" and leave the box
+      Then "GET /api/plans/gate" has "brief" "Just cut it." and the command line is unchanged
+      When I click "Save as files"
+      Then "/tmp/qa/layered/.bindweed/plans/gate/brief.md" holds "Just cut it."
 
     Scenario: An unusable reply shows the error and the raw output on the page
       Given the plan "Gate" has three tasks and the brief from the fake and the backend command is "echo nope"
