@@ -13,7 +13,7 @@ type TasksPanelProps = {
   onClose: () => void;
 };
 
-type RunWords = Exclude<GenerateAnswer, { plan: PlanDoc }> | { ran: string; note?: string };
+type Run = { kind: 'idle' } | { kind: 'running' } | ({ kind: 'failed' } & Exclude<GenerateAnswer, { plan: PlanDoc }>) | { kind: 'done'; ran: string; note?: string };
 
 type Listed<T> = { key: string; item: T; index: number };
 
@@ -91,18 +91,15 @@ function Questions(props: Readonly<{ round: Round | null; boxes: Record<string, 
   );
 }
 
-function RunState(props: Readonly<{ running: boolean; seconds: number; words: RunWords | null; onCancel: () => void }>) {
-  if (props.running) {
-    return (
-      <p className="tasks-running">
-        running for {props.seconds} s{' '}
-        <button type="button" onClick={props.onCancel}>
-          Cancel
-        </button>
-      </p>
-    );
-  }
-  return <RunWordsView words={props.words} />;
+function Running(props: Readonly<{ seconds: number; onCancel: () => void }>) {
+  return (
+    <p className="tasks-running">
+      running for {props.seconds} s{' '}
+      <button type="button" onClick={props.onCancel}>
+        Cancel
+      </button>
+    </p>
+  );
 }
 
 function RawOutput(props: Readonly<{ raw: string | undefined }>) {
@@ -114,26 +111,33 @@ function RawOutput(props: Readonly<{ raw: string | undefined }>) {
   );
 }
 
-function RunError(props: Readonly<{ words: RunWords }>) {
-  if (!('error' in props.words)) return null;
+function RunNotes(props: Readonly<{ ran: string | undefined; note: string | undefined }>) {
   return (
     <>
-      <p className="plan-dialog-error">{props.words.error}</p>
-      <RawOutput raw={props.words.raw} />
+      {props.ran === undefined ? null : <output aria-label="ran">{props.ran}</output>}
+      {props.note === undefined ? null : <output aria-label="note">{props.note}</output>}
     </>
   );
 }
 
-function RunWordsView(props: Readonly<{ words: RunWords | null }>) {
-  const words = props.words;
-  if (words === null) return null;
-  return (
-    <>
-      <RunError words={words} />
-      {words.ran === undefined ? null : <output aria-label="ran">{words.ran}</output>}
-      {words.note === undefined ? null : <output aria-label="note">{words.note}</output>}
-    </>
-  );
+function RunState(props: Readonly<{ run: Run; seconds: number; onCancel: () => void }>) {
+  const run = props.run;
+  switch (run.kind) {
+    case 'idle':
+      return null;
+    case 'running':
+      return <Running seconds={props.seconds} onCancel={props.onCancel} />;
+    case 'failed':
+      return (
+        <>
+          <p className="plan-dialog-error">{run.error}</p>
+          <RawOutput raw={run.raw} />
+          <RunNotes ran={run.ran} note={run.note} />
+        </>
+      );
+    default:
+      return <RunNotes ran={run.ran} note={run.note} />;
+  }
 }
 
 function SliceBody(props: Readonly<{ task: PlanTask; preview: boolean; onBody: (text: string) => void }>) {
@@ -310,30 +314,27 @@ function bodyFor(step: GenerateBody['step'], answers: string[]): GenerateBody {
 
 export function TasksPanel(props: Readonly<TasksPanelProps>) {
   const doc = props.doc;
-  const [running, setRunning] = useState(false);
-  const [words, setWords] = useState<RunWords | null>(null);
+  const [run, setRun] = useState<Run>({ kind: 'idle' });
   const [boxes, setBoxes] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState<string | null>(null);
   const saving = useRef<Promise<void>>(Promise.resolve());
-  const [seconds, restartTicker] = useTicker(running);
+  const [seconds, restartTicker] = useTicker(run.kind === 'running');
   const pending = pendingOf(doc);
   const store = (next: PlanDoc): void => {
     saving.current = props.onSave(next);
   };
-  const run = async (step: GenerateBody['step']): Promise<void> => {
+  const generate = async (step: GenerateBody['step']): Promise<void> => {
     await saving.current;
     restartTicker();
-    setRunning(true);
-    setWords(null);
+    setRun({ kind: 'running' });
     const answer = await postGenerate(props.token, doc.slug, bodyFor(step, typedAnswers(pending, boxes)), props.fetcher);
-    setRunning(false);
     if (!('plan' in answer)) {
-      setWords(answer);
+      setRun({ kind: 'failed', ...answer });
       return;
     }
     props.onPlan(answer.plan);
     setBoxes({});
-    setWords({ ran: answer.ran, note: answer.note });
+    setRun({ kind: 'done', ran: answer.ran, note: answer.note });
   };
   const saveFiles = async (): Promise<void> => {
     await saving.current;
@@ -343,11 +344,11 @@ export function TasksPanel(props: Readonly<TasksPanelProps>) {
   return (
     <div className="plan-dialog-backdrop">
       <dialog open aria-label="Tasks" className="plan-dialog tasks-panel">
-        <RunState running={running} seconds={seconds} words={words} onCancel={() => void postCancel(props.token, doc.slug, props.fetcher)} />
-        <fieldset disabled={running} className="tasks-fields">
+        <RunState run={run} seconds={seconds} onCancel={() => void postCancel(props.token, doc.slug, props.fetcher)} />
+        <fieldset disabled={run.kind === 'running'} className="tasks-fields">
           <Interview rounds={answeredRounds(doc.interview)} />
           <Questions round={pending} boxes={boxes} onType={(key, value) => setBoxes(current => ({ ...current, [key]: value }))} />
-          <GenerateButtons pending={pending !== null} onRun={step => void run(step)} />
+          <GenerateButtons pending={pending !== null} onRun={step => void generate(step)} />
           <Slices tasks={tasksOf(doc)} onEdit={edit => store({ ...doc, tasks: editTasks(tasksOf(doc), edit) })} />
           <Brief brief={doc.brief} onBrief={text => store({ ...doc, brief: text })} />
           <BriefCommand token={props.token} fetcher={props.fetcher} slug={doc.slug} />
