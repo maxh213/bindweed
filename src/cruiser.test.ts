@@ -166,10 +166,32 @@ describe('readCruiser().preview over an existing file', () => {
   it('An existing circular rule leaves bindweed:no-circular out', () => {
     expect(readCruiser(CYCLES_KEPT).keepsCycleRule).toBe(true);
     const three = FIVE.slice(2, 4);
-    const merged = textOf(CYCLES_KEPT, three);
-    expect(merged.startsWith(CYCLES_KEPT.slice(0, CYCLES_KEPT.indexOf('    }\n  ]') + 5))).toBe(true);
-    expect(merged).not.toContain('bindweed:no-circular');
-    expect(merged).toContain("      name: 'bindweed:src-infra-does-not-use-src-app',");
+    expect(textOf(CYCLES_KEPT, three)).toBe(`module.exports = {
+  forbidden: [
+    {
+      name: 'no-circular',
+      severity: 'error',
+      comment: 'No circular dependencies allowed',
+      from: {},
+      to: { circular: true }
+    },
+    {
+      name: 'bindweed:src-domain-does-not-use-src-infra',
+      severity: 'error',
+      comment: 'src/domain does not use src/infra',
+      from: { path: '^src/domain/' },
+      to: { path: '^src/infra/' }
+    },
+    {
+      name: 'bindweed:src-infra-does-not-use-src-app',
+      severity: 'error',
+      comment: 'src/infra does not use src/app',
+      from: { path: '^src/infra/' },
+      to: { path: '^src/app/' }
+    }
+  ]
+};
+`);
   });
 
   it('Old bindweed rules are removed with what sits in front of them, and do not leave cycles out', () => {
@@ -212,6 +234,26 @@ ${CIRCULAR_TEXT}
     expect(textOf(source, [])).toBe("module.exports = {\n  'forbidden': []\n};\n");
   });
 
+  it('finds an export default after other statements, and skips a spread before forbidden', () => {
+    expect(textOf('const x = 1;\nexport default { forbidden: [] };\n', [CIRCULAR])).toBe(`const x = 1;\nexport default { forbidden: [\n${CIRCULAR_TEXT}\n  ] };\n`);
+    expect(textOf('const base = {};\nmodule.exports = { ...base, forbidden: [] };\n', [CIRCULAR])).toBe(
+      `const base = {};\nmodule.exports = { ...base, forbidden: [\n${CIRCULAR_TEXT}\n  ] };\n`,
+    );
+  });
+
+  it('keeps a rule whose name is not a plain string, and indents after it from the start of its line', () => {
+    expect(textOf('module.exports = { forbidden: [{ name: `bindweed:x` }] };\n', [CIRCULAR])).toBe(
+      "module.exports = { forbidden: [{ name: `bindweed:x` },\n{\n  name: 'bindweed:no-circular',\n  severity: 'error',\n  comment: 'No circular dependencies',\n  from: {},\n  to: { circular: true }\n}] };\n",
+    );
+    expect(textOf("module.exports = {\n  forbidden: [{ name: 'k' }]\n};\n", [CIRCULAR])).toBe(
+      "module.exports = {\n  forbidden: [{ name: 'k' },\n  {\n    name: 'bindweed:no-circular',\n    severity: 'error',\n    comment: 'No circular dependencies',\n    from: {},\n    to: { circular: true }\n  }]\n};\n",
+    );
+  });
+
+  it('removes a leading bindweed rule through the comma past a comment', () => {
+    expect(textOf("module.exports = { forbidden: [ { name: 'bindweed:a' } /*c*/ , { name: 'k' } ] };\n", [])).toBe("module.exports = { forbidden: [ { name: 'k' } ] };\n");
+  });
+
   it('prefers module.exports to export default and ignores other statements', () => {
     const source = "const x = 1;\nx;\nexports.y = 2;\nmodule.exports.z = 3;\nexport default { forbidden: 3 };\nmodule.exports = { [x]: 1, forbidden: [] };\n";
     expect(textOf(source, [])).toBe(source);
@@ -227,6 +269,9 @@ ${CIRCULAR_TEXT}
     'module.exports = make();\n',
     'module.exports += { forbidden: [] };\n',
     'const nothing = 1;\n',
+    'module.exports = { forbidden: [] };\n}\n',
+    'const o = {};\no.exports = { forbidden: [] };\n',
+    'module.other = { forbidden: [] };\n',
   ])('A forbidden list we cannot read is refused: %j', source => {
     expect(readCruiser(source).preview([CIRCULAR], true)).toEqual({ error: REFUSAL, snippet: `${CIRCULAR_TEXT}\n` });
     expect(readCruiser(source).preview([], true)).toEqual({ error: REFUSAL, snippet: '' });

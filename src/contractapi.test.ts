@@ -194,6 +194,10 @@ function hit(port: number, method: string, path: string, headers: Record<string,
   });
 }
 
+function directionText(user: string, used: string): string {
+  return `    {\n      name: 'bindweed:src-${user}-does-not-use-src-${used}',\n      severity: 'error',\n      comment: 'src/${user} does not use src/${used}',\n      from: { path: '^src/${user}/' },\n      to: { path: '^src/${used}/' }\n    }`;
+}
+
 function json(res: Hit): unknown {
   return JSON.parse(res.body.toString());
 }
@@ -360,10 +364,7 @@ describe('the contract route over the layered fixture', () => {
     await writeFile(join(world().root, CRUISER), CYCLES_KEPT);
     expect(await world().names()).toEqual(EMPTY_NAMES.slice(0, 3));
     const merged = mergedText(await world().merge([...EMPTY_NAMES.slice(0, 3), 'bindweed:no-circular']));
-    const kept = CYCLES_KEPT.slice(0, CYCLES_KEPT.indexOf('    }\n  ]') + 5);
-    expect(merged.startsWith(kept)).toBe(true);
-    expect(merged).not.toContain('bindweed:no-circular');
-    expect(merged.slice(kept.length)).toContain("name: 'bindweed:src-infra-does-not-use-src-app'");
+    expect(merged).toBe(CYCLES_KEPT.replace('    }\n  ]', `    },\n${[directionText('domain', 'app'), directionText('domain', 'infra'), directionText('infra', 'app')].join(',\n')}\n  ]`));
   });
 
   it('Old bindweed rules are removed with what sits in front of them, and do not leave cycles out', async () => {
@@ -486,7 +487,8 @@ describe('the contract route over the layered fixture', () => {
     await world().plan([]);
     const tree = z.object({ entries: z.array(z.object({ name: z.string() })) }).parse(json(await world().read('/api/tree')));
     expect(tree.entries.map(entry => entry.name)).toEqual(['notes', 'src', 'tsconfig.json']);
-    expect((await world().read('/api/file?path=src/domain/model.ts')).body.toString()).toBe('{"path":"src/domain/model.ts","text":"export class Model { id = 0; }\\n"}');
+    const model = await readFile(join(world().root, 'src/domain/model.ts'), 'utf8');
+    expect((await world().read('/api/file?path=src/domain/model.ts')).body.toString()).toBe(JSON.stringify({ path: 'src/domain/model.ts', text: model }));
     const body = loose.parse(json(await world().read('/api/graph?at=src')));
     expect(Object.keys(body)).not.toContain('contract');
     expect(Object.keys(body)).not.toContain('stale');

@@ -181,10 +181,12 @@ describe('the contract panel', () => {
   let dom: JSDOM;
   let root: Root;
   let copied: string[] = [];
+  let thrown: unknown[] = [];
 
   function install(): void {
     dom = new JSDOM('<!DOCTYPE html><html><body><div id="root"></div></body></html>', { url: 'http://127.0.0.1:5000/#at=src&plan=gate', pretendToBeVisual: true });
     const w = dom.window;
+    w.addEventListener('error', event => thrown.push(event.error));
     Object.defineProperty(globalThis, 'window', { value: w, configurable: true });
     Object.defineProperty(globalThis, 'document', { value: w.document, configurable: true });
     Object.defineProperty(globalThis, 'HTMLElement', { value: w.HTMLElement, configurable: true });
@@ -296,6 +298,7 @@ describe('the contract panel', () => {
   beforeEach(async () => {
     Object.assign(world, { doc: freshDoc([PACKAGE_CUT, FILE_CUT]), refused: false, rulesDown: false, previewDown: false, previewHangs: false, puts: 0 });
     copied = [];
+    thrown = [];
     install();
   });
 
@@ -423,6 +426,7 @@ describe('the contract panel', () => {
     expect(button('Save to plan').disabled).toBe(true);
     await click(button('Copy'));
     expect(copied).toEqual([]);
+    expect(thrown).toEqual([]);
   });
 
   it('copies nothing before the preview answers', async () => {
@@ -431,12 +435,15 @@ describe('the contract panel', () => {
     await openContract();
     await click(button('Copy'));
     expect(copied).toEqual([]);
+    expect(thrown).toEqual([]);
     expect(region('diff')).toBeNull();
   });
 
   it('puts the plan back and says why when Save is refused', async () => {
     await mount();
     await openContract();
+    await settled(() => expect(rows()).toHaveLength(5));
+    await click(box('bindweed:no-circular'));
     world.doc = { ...storedDoc(), slug: 'elsewhere' };
     await click(button('Save to plan'));
     await settled(() => expect(document.body.textContent).toContain('bad plan'));

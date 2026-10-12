@@ -35,6 +35,22 @@ describe('unifiedDiff', () => {
     expect(unifiedDiff(before, near, 'f')).toContain('@@ -2,13 +2,13 @@\n');
   });
 
+  it('changes the first line of a file that keeps later lines', () => {
+    expect(unifiedDiff('b\nc\nd\ne\nf\n', 'a\nb\nc\nd\ne\nf\n', 'f')).toBe(`${HEADER}@@ -1,3 +1,4 @@\n+a\n b\n c\n d\n`);
+    expect(unifiedDiff('a\nb\nc\nd\ne\n', 'b\nc\nd\ne\n', 'f')).toBe(`${HEADER}@@ -1,4 +1,3 @@\n-a\n b\n c\n d\n`);
+  });
+
+  it('replaces the first of two equal lines', () => {
+    expect(unifiedDiff('a\na\n', 'b\na\n', 'f')).toBe(`${HEADER}@@ -1,2 +1,2 @@\n-a\n+b\n a\n`);
+  });
+
+  it('joins two hunks whose context exactly touches', () => {
+    const touching = numbered(1, 20).replace('5\n', 'five\n').replace('12\n', 'twelve\n');
+    expect(unifiedDiff(numbered(1, 20), touching, 'f')).toBe(
+      `${HEADER}@@ -2,14 +2,14 @@\n 2\n 3\n 4\n-5\n+five\n 6\n 7\n 8\n 9\n 10\n 11\n-12\n+twelve\n 13\n 14\n 15\n`,
+    );
+  });
+
   it('inserts lines between kept ones', () => {
     expect(unifiedDiff('a\nc\n', 'a\nb\nc\n', 'f')).toBe(`${HEADER}@@ -1,2 +1,3 @@\n a\n+b\n c\n`);
   });
