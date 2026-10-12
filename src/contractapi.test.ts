@@ -516,6 +516,7 @@ describe('the contract route over the layered fixture', () => {
     { method: 'GET', path: '/api/plans/Gate/contract', headers: {}, body: undefined, status: 404, answer: { error: 'no such plan' }, token: true },
     { method: 'PUT', path: '/api/plans/gate/contract', headers: {}, body: '{"names":[]}', status: 404, answer: { error: 'not found' }, token: true },
     { method: 'GET', path: '/api/plans/gate/contract/extra', headers: {}, body: undefined, status: 404, answer: { error: 'not found' }, token: true },
+    { method: 'GET', path: '/api/plans/x/api/plans/gate/contract', headers: {}, body: undefined, status: 404, answer: { error: 'not found' }, token: true },
     { method: 'GET', path: '/api/plans/gate/nope', headers: {}, body: undefined, status: 404, answer: { error: 'not found' }, token: true },
     { method: 'GET', path: '/api/graph?at=src', headers: {}, body: undefined, status: 401, answer: { error: 'missing or wrong token' } },
   ])('The new route refuses what it cannot answer, and the guards still hold', async row => {

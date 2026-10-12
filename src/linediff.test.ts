@@ -51,6 +51,11 @@ describe('unifiedDiff', () => {
     );
   });
 
+  it('keeps the longest common lines where a greedy match would interleave', () => {
+    expect(unifiedDiff('a\nc\na\nc\nc\na\n', 'b\nb\nb\na\n', 'f')).toBe(`${HEADER}@@ -1,6 +1,4 @@\n-a\n-c\n-a\n-c\n-c\n+b\n+b\n+b\n a\n`);
+    expect(unifiedDiff('c\na\nc\na\nb\nc\n', 'a\na\na\nc\na\n', 'f')).toBe(`${HEADER}@@ -1,6 +1,5 @@\n-c\n a\n-c\n a\n-b\n+a\n c\n+a\n`);
+  });
+
   it('inserts lines between kept ones', () => {
     expect(unifiedDiff('a\nc\n', 'a\nb\nc\n', 'f')).toBe(`${HEADER}@@ -1,2 +1,3 @@\n a\n+b\n c\n`);
   });

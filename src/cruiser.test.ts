@@ -272,10 +272,21 @@ ${CIRCULAR_TEXT}
     'module.exports = { forbidden: [] };\n}\n',
     'const o = {};\no.exports = { forbidden: [] };\n',
     'module.other = { forbidden: [] };\n',
+    'let c;\nc = { forbidden: [] };\nmodule.exports = c;\n',
+    'const x: number = 1;\nmodule.exports = { forbidden: [] };\n',
   ])('A forbidden list we cannot read is refused: %j', source => {
     expect(readCruiser(source).preview([CIRCULAR], true)).toEqual({ error: REFUSAL, snippet: `${CIRCULAR_TEXT}\n` });
     expect(readCruiser(source).preview([], true)).toEqual({ error: REFUSAL, snippet: '' });
     expect(readCruiser(source).keepsCycleRule).toBe(false);
+  });
+
+  it('keeps an unnamed cycle rule and appends after it', () => {
+    const rule: ContractRule = { name: 'bindweed:x', severity: 'error', comment: 'c', from: { path: '^a/' }, to: { path: '^b/' } };
+    const cruiser = readCruiser('module.exports = { forbidden: [{ from: {}, to: { circular: true } }] };\n');
+    expect(cruiser.keepsCycleRule).toBe(true);
+    expect(cruiser.preview([rule], true)).toMatchObject({
+      text: "module.exports = { forbidden: [{ from: {}, to: { circular: true } },\n{\n  name: 'bindweed:x',\n  severity: 'error',\n  comment: 'c',\n  from: { path: '^a/' },\n  to: { path: '^b/' }\n}] };\n",
+    });
   });
 
   it('joins snippet rules with a comma', () => {
