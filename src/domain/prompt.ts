@@ -1,4 +1,4 @@
-import { byStrings, pendingRound, sentenceOf, within, type FateEdit, type NoteTarget, type PlanDoc, type PlanEdit, type Question, type Round } from './plan.ts';
+import { byStrings, everyRead, listOfAtLeast, pendingRound, recordOf, sentenceOf, stringsFrom, within, type FateEdit, type NoteTarget, type PlanDoc, type PlanEdit, type Question, type Round } from './plan.ts';
 import type { PlanWarning, ScanResult } from './scan.ts';
 import { LAST_TASK_NUMBER, numberedTasks, type Slice } from './tasks.ts';
 
@@ -33,19 +33,8 @@ const ASK_LINE = 'To ask, reply {"questions":[{"id":"<id>","text":"<question>","
 const WRITE_LINE = 'To write, reply {"slices":[{"title":"<title>","slug":"<slug>","body":"<markdown>"}],"brief":"<markdown>"}.';
 const DEMAND_LINE = 'Reply with slices now.';
 
-function recordOf(raw: unknown): Record<string, unknown> | undefined {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
-  return Object.fromEntries(Object.entries(raw));
-}
-
 function keysOf(rec: Record<string, unknown>): string {
   return Object.keys(rec).sort(byStrings).join(',');
-}
-
-function stringList(raw: unknown): string[] | undefined {
-  if (!Array.isArray(raw)) return undefined;
-  const items: unknown[] = raw;
-  return items.every(item => typeof item === 'string') ? items.map(String) : undefined;
 }
 
 function answeredStep(raw: unknown): 'answer' | 'write' | undefined {
@@ -53,7 +42,7 @@ function answeredStep(raw: unknown): 'answer' | 'write' | undefined {
 }
 
 function answeredAsk(rec: Record<string, unknown>): GenerateAsk | undefined {
-  const answers = stringList(rec.answers);
+  const answers = stringsFrom(rec.answers);
   const step = answeredStep(rec.step);
   if (keysOf(rec) !== 'answers,step' || answers === undefined || step === undefined) return undefined;
   return { step, answers };
@@ -221,22 +210,19 @@ function sliceOf(raw: unknown): Slice | undefined {
   return sliceFields(filledString(rec.title), sliceSlug(rec.slug), rec.body);
 }
 
-function allOf<T>(raw: unknown, read: (item: unknown) => T | undefined): T[] | undefined {
-  if (!Array.isArray(raw) || raw.length === 0) return undefined;
-  const items: unknown[] = raw;
-  const values = items.map(read);
-  return values.every(value => value !== undefined) ? values.filter(value => value !== undefined) : undefined;
+function everyOfOneOrMore<T>(raw: unknown, read: (item: unknown) => T | undefined): T[] | undefined {
+  return everyRead(listOfAtLeast(raw, 1), read);
 }
 
 function questionsReply(raw: unknown, demanded: boolean): Reply | { problem: string } {
   if (demanded) return { problem: 'it asked questions, but slices were demanded' };
-  const questions = allOf(raw, questionOf);
+  const questions = everyOfOneOrMore(raw, questionOf);
   if (questions === undefined || questions.length > MAX_QUESTIONS) return { problem: 'it needs 1 to 5 questions, each with a non-empty id, text and why' };
   return { questions };
 }
 
 function slicesReply(rec: Record<string, unknown>): Reply | { problem: string } {
-  const slices = allOf(rec.slices, sliceOf);
+  const slices = everyOfOneOrMore(rec.slices, sliceOf);
   if (slices === undefined || typeof rec.brief !== 'string') {
     return { problem: 'it needs at least one slice, each with a non-empty title, a slug of a-z, 0-9 and dashes, and a body, plus a string brief' };
   }

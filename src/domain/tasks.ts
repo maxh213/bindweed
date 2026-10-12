@@ -44,7 +44,7 @@ export function numberedTasks(slices: Slice[], first: number): PlanTask[] {
 }
 
 function slugOfFile(file: string): string {
-  return file.slice(4, -'.md'.length);
+  return file.replace(NUMBERED, '').slice(0, -'.md'.length);
 }
 
 function renumbered(tasks: PlanTask[], first: number): PlanTask[] {
@@ -61,8 +61,14 @@ function swapped(tasks: PlanTask[], at: number): PlanTask[] {
   return next;
 }
 
+function withoutTrailingNewlines(text: string): string {
+  let end = text.length;
+  while (text[end - 1] === '\n') end -= 1;
+  return text.slice(0, end);
+}
+
 function mergedBody(first: PlanTask, second: PlanTask): string {
-  return `${first.body.replace(/\n+$/, '')}\n\n${bodyRest(second.body)}`;
+  return `${withoutTrailingNewlines(first.body)}\n\n${bodyRest(second.body)}`;
 }
 
 function merged(tasks: PlanTask[], at: number): PlanTask[] {
@@ -74,7 +80,7 @@ function replaced(tasks: PlanTask[], at: number, change: Partial<PlanTask>): Pla
   return tasks.map((task, index) => (index === at ? { ...task, ...change } : task));
 }
 
-const LIST_EDITS: Record<string, (tasks: PlanTask[], at: number, text: string) => PlanTask[]> = {
+const LIST_EDITS: Record<TaskEdit['kind'], (tasks: PlanTask[], at: number, text: string) => PlanTask[]> = {
   up: (tasks, at) => swapped(tasks, at - 1),
   down: swapped,
   merge: merged,
@@ -114,5 +120,7 @@ function blockStep(state: BlockState, line: string): BlockState {
 }
 
 export function markdownBlocks(body: string): MarkdownBlock[] {
-  return flushed(body.split('\n').reduce(blockStep, { blocks: [], lines: [] })).blocks;
+  let state: BlockState = { blocks: [], lines: [] };
+  for (const line of body.split('\n')) state = blockStep(state, line);
+  return flushed(state).blocks;
 }

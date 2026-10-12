@@ -285,10 +285,10 @@ function ReshapeDialogs(
   );
 }
 
-type ContractOpening = { open: boolean; count: number };
+type PanelOpening = { open: boolean; count: number };
 
 function ContractSlot(
-  props: Readonly<{ opening: ContractOpening; token: string; fetcher: typeof fetch; doc: PlanDoc | null; onSave: (rules: ContractRule[]) => void; onClose: () => void }>,
+  props: Readonly<{ opening: PanelOpening; token: string; fetcher: typeof fetch; doc: PlanDoc | null; onSave: (rules: ContractRule[]) => void; onClose: () => void }>,
 ) {
   if (!props.opening.open || props.doc === null) return null;
   return (
@@ -306,7 +306,7 @@ function ContractSlot(
 
 function TasksSlot(
   props: Readonly<{
-    opening: ContractOpening;
+    opening: PanelOpening;
     token: string;
     fetcher: typeof fetch;
     doc: PlanDoc | null;
@@ -395,9 +395,9 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
   const [splitAsk, setSplitAsk] = useState<SplitAsk | null>(null);
   const [askError, setAskError] = useState<string | null>(null);
   const [foldFrom, setFoldFrom] = useState<string | null>(null);
-  const [contractOpening, setContractOpening] = useState<ContractOpening>({ open: false, count: 0 });
+  const [contractOpening, setContractOpening] = useState<PanelOpening>({ open: false, count: 0 });
   const closeContract = (): void => setContractOpening(current => ({ ...current, open: false }));
-  const [tasksOpening, setTasksOpening] = useState<ContractOpening>({ open: false, count: 0 });
+  const [tasksOpening, setTasksOpening] = useState<PanelOpening>({ open: false, count: 0 });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const roster = planRoster(plansQuery.data, planQuery.data, slug, deleteTarget);
   const doc = roster.doc;

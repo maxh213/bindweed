@@ -146,12 +146,12 @@ export function mergeDest(edit: MergeEdit, path: string): string {
   return `${edit.into}${path.slice(home.length)}`;
 }
 
-function recordOf(raw: unknown): Record<string, unknown> | undefined {
+export function recordOf(raw: unknown): Record<string, unknown> | undefined {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
   return Object.fromEntries(Object.entries(raw));
 }
 
-function noExtraKeys(rec: Record<string, unknown>, keys: string[]): boolean {
+export function noExtraKeys(rec: Record<string, unknown>, keys: string[]): boolean {
   const known = new Set(keys);
   return Object.keys(rec).filter(key => !known.has(key)).length === 0;
 }
@@ -184,12 +184,12 @@ function stringPair(raw: unknown): [string, string] | undefined {
   return typeof first === 'string' && typeof second === 'string' ? [first, second] : undefined;
 }
 
-function listOfAtLeast(raw: unknown, min: number): unknown[] | undefined {
+export function listOfAtLeast(raw: unknown, min: number): unknown[] | undefined {
   if (!Array.isArray(raw) || raw.length < min) return undefined;
   return raw;
 }
 
-function everyRead<T>(items: unknown[] | undefined, read: (item: unknown) => T | undefined): T[] | undefined {
+export function everyRead<T>(items: unknown[] | undefined, read: (item: unknown) => T | undefined): T[] | undefined {
   if (items === undefined) return undefined;
   const values: T[] = [];
   for (const item of items) {
@@ -290,7 +290,7 @@ function renameFileFrom(rec: Record<string, unknown>): PlanEdit | undefined {
   return { kind: 'rename-file', from: ends.from, to: ends.to };
 }
 
-function stringsFrom(raw: unknown): string[] | undefined {
+export function stringsFrom(raw: unknown): string[] | undefined {
   return everyRead(listOfAtLeast(raw, 0), stringOf);
 }
 
@@ -569,7 +569,7 @@ export function parsePlan(raw: unknown): PlanDoc | undefined {
 
 export function pendingRound(interview: Round[]): Round | undefined {
   const last = interview.at(-1);
-  return last !== undefined && last.answers.length === 0 && last.questions.length > 0 ? last : undefined;
+  return last?.answers.length === 0 && last.questions.length > 0 ? last : undefined;
 }
 
 export function summarisePlan(doc: PlanDoc): PlanSummary {

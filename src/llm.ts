@@ -1,6 +1,8 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcessByStdio } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { Readable, Writable } from 'node:stream';
+import { noExtraKeys, recordOf } from './domain/plan.ts';
 
 type BackendName = 'route' | 'claude' | 'command';
 
@@ -29,16 +31,7 @@ export type RunPlace = { root: string; env: NodeJS.ProcessEnv; limits: Limits; s
 const DEFAULT_CONFIG: LlmConfig = { llm: { backend: 'route' } };
 const FALLBACK_MODEL = 'claude-opus-5-5';
 const CLAUDE_PROVIDERS = new Set(['claude', 'claude-work']);
-const DROPPED_ENV = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT'];
-
-function recordOf(raw: unknown): Record<string, unknown> | undefined {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
-  return Object.fromEntries(Object.entries(raw));
-}
-
-function onlyKeys(rec: Record<string, unknown>, keys: string[]): boolean {
-  return Object.keys(rec).filter(key => !keys.includes(key)).length === 0;
-}
+const DROPPED_ENV = new Set(['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT']);
 
 function backendOf(raw: unknown): BackendName | undefined {
   return raw === 'route' || raw === 'claude' || raw === 'command' ? raw : undefined;
@@ -55,14 +48,14 @@ function withCommand(backend: BackendName, command: unknown): LlmConfig['llm'] |
 
 function llmFrom(raw: unknown): LlmConfig['llm'] | undefined {
   const rec = recordOf(raw);
-  if (rec === undefined || !onlyKeys(rec, ['backend', 'command'])) return undefined;
+  if (rec === undefined || !noExtraKeys(rec, ['backend', 'command'])) return undefined;
   const backend = backendOf(rec.backend);
   return backend === undefined ? undefined : withCommand(backend, rec.command);
 }
 
 export function parseConfig(raw: unknown): LlmConfig | undefined {
   const rec = recordOf(raw);
-  if (rec === undefined || !onlyKeys(rec, ['llm'])) return undefined;
+  if (rec === undefined || !noExtraKeys(rec, ['llm'])) return undefined;
   const llm = llmFrom(rec.llm);
   return llm === undefined ? undefined : { llm };
 }
@@ -100,13 +93,10 @@ function closedOutcome(stop: Stop, code: number | null, signal: NodeJS.Signals |
   return stop === 'timeout' ? { kind: 'timeout', stdout } : endedOutcome(code, signal, stdout);
 }
 
-export function runProcess(spec: Spawned, input: string, place: RunPlace, limitMs: number): Promise<Outcome> {
+type Child = ChildProcessByStdio<Writable, Readable, null>;
+
+function outcomeOf(child: Child, bin: string, signal: AbortSignal, limitMs: number): Promise<Outcome> {
   return new Promise(done => {
-    if (place.signal.aborted) {
-      done({ kind: 'cancelled' });
-      return;
-    }
-    const child = spawn(spec.bin, spec.args, { cwd: place.root, env: spec.env, detached: true, stdio: ['pipe', 'pipe', 'ignore'] });
     const out: Buffer[] = [];
     let stop: Stop = null;
     const halt = (why: Stop): void => {
@@ -117,20 +107,26 @@ export function runProcess(spec: Spawned, input: string, place: RunPlace, limitM
     const onAbort = (): void => halt('cancelled');
     const settle = (outcome: Outcome): void => {
       clearTimeout(timer);
-      place.signal.removeEventListener('abort', onAbort);
+      signal.removeEventListener('abort', onAbort);
       done(outcome);
     };
-    place.signal.addEventListener('abort', onAbort);
+    signal.addEventListener('abort', onAbort);
     child.stdout.on('data', (piece: Buffer) => out.push(Buffer.from(piece)));
-    child.stdin.on('error', () => undefined);
-    child.stdin.end(input);
-    child.on('error', () => settle({ kind: 'missing', bin: spec.bin }));
-    child.on('close', (code, signal) => settle(closedOutcome(stop, code, signal, Buffer.concat(out).toString())));
+    child.on('error', () => settle({ kind: 'missing', bin }));
+    child.on('close', (code, ended) => settle(closedOutcome(stop, code, ended, Buffer.concat(out).toString())));
   });
 }
 
+export async function runProcess(spec: Spawned, input: string, place: RunPlace, limitMs: number): Promise<Outcome> {
+  if (place.signal.aborted) return { kind: 'cancelled' };
+  const child = spawn(spec.bin, spec.args, { cwd: place.root, env: spec.env, detached: true, stdio: ['pipe', 'pipe', 'ignore'] });
+  child.stdin.on('error', () => undefined);
+  child.stdin.end(input);
+  return outcomeOf(child, spec.bin, place.signal, limitMs);
+}
+
 function cleanEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return Object.fromEntries(Object.entries(env).filter(([key]) => !DROPPED_ENV.includes(key)));
+  return Object.fromEntries(Object.entries(env).filter(([key]) => !DROPPED_ENV.has(key)));
 }
 
 function claudeArgs(model: string, effort: string): string[] {

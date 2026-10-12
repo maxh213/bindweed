@@ -29,7 +29,7 @@ const SHIPPED_GUIDE = fileURLToPath(new URL('../templates/tasks-README.md', impo
 
 async function taskNames(root: string): Promise<string[]> {
   return readdir(join(root, 'tasks')).then(
-    names => names.sort(byStrings),
+    names => names.toSorted(byStrings),
     () => [],
   );
 }

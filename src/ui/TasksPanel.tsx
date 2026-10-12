@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type FocusEvent } from 'react';
 import { pendingRound, type PlanDoc, type PlanTask, type Question, type Round } from '../domain/plan.ts';
 import { editTasks, LAST_TASK_NUMBER, lastTaskNumber, markdownBlocks, type TaskEdit } from '../domain/tasks.ts';
 import { fetchRepo, postCancel, postFiles, postGenerate, type GenerateAnswer, type GenerateBody } from './client.ts';
@@ -13,7 +13,7 @@ type TasksPanelProps = {
   onClose: () => void;
 };
 
-type RunWords = Exclude<GenerateAnswer, { plan: PlanDoc }>;
+type RunWords = Exclude<GenerateAnswer, { plan: PlanDoc }> | { ran: string; note?: string };
 
 type Listed<T> = { key: string; item: T; index: number };
 
@@ -36,6 +36,12 @@ function typedAnswers(round: Round | null, boxes: Record<string, string>): strin
 
 function copy(text: string): void {
   void navigator.clipboard.writeText(text);
+}
+
+function whenChanged(original: string, commit: (text: string) => void): (event: FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => void {
+  return event => {
+    if (event.currentTarget.value !== original) commit(event.currentTarget.value);
+  };
 }
 
 function briefCommand(root: string, slug: string): string {
@@ -85,7 +91,7 @@ function Questions(props: Readonly<{ round: Round | null; boxes: Record<string, 
   );
 }
 
-function RunState(props: Readonly<{ running: boolean; seconds: number; words: RunWords | { ran: string; note?: string } | null; onCancel: () => void }>) {
+function RunState(props: Readonly<{ running: boolean; seconds: number; words: RunWords | null; onCancel: () => void }>) {
   if (props.running) {
     return (
       <p className="tasks-running">
@@ -108,7 +114,7 @@ function RawOutput(props: Readonly<{ raw: string | undefined }>) {
   );
 }
 
-function RunError(props: Readonly<{ words: RunWords | { ran: string; note?: string } }>) {
+function RunError(props: Readonly<{ words: RunWords }>) {
   if (!('error' in props.words)) return null;
   return (
     <>
@@ -118,7 +124,7 @@ function RunError(props: Readonly<{ words: RunWords | { ran: string; note?: stri
   );
 }
 
-function RunWordsView(props: Readonly<{ words: RunWords | { ran: string; note?: string } | null }>) {
+function RunWordsView(props: Readonly<{ words: RunWords | null }>) {
   const words = props.words;
   if (words === null) return null;
   return (
@@ -146,9 +152,7 @@ function SliceBody(props: Readonly<{ task: PlanTask; preview: boolean; onBody: (
       key={props.task.body}
       aria-label={`Body of ${props.task.file}`}
       defaultValue={props.task.body}
-      onBlur={event => {
-        if (event.currentTarget.value !== props.task.body) props.onBody(event.currentTarget.value);
-      }}
+      onBlur={whenChanged(props.task.body, props.onBody)}
     />
   );
 }
@@ -199,9 +203,7 @@ function SliceRow(props: Readonly<SliceProps>) {
         key={task.title}
         aria-label={`Title of ${task.file}`}
         defaultValue={task.title}
-        onBlur={event => {
-          if (event.currentTarget.value !== task.title) props.onEdit({ kind: 'title', index: props.index, text: event.currentTarget.value });
-        }}
+        onBlur={whenChanged(task.title, text => props.onEdit({ kind: 'title', index: props.index, text }))}
       />
       <SliceActions {...props} />
       <SliceBody task={task} preview={props.preview} onBody={text => props.onEdit({ kind: 'body', index: props.index, text })} />
@@ -260,9 +262,7 @@ function Brief(props: Readonly<{ brief: string | undefined; onBrief: (text: stri
         key={brief}
         aria-label="Brief"
         defaultValue={brief}
-        onBlur={event => {
-          if (event.currentTarget.value !== brief) props.onBrief(event.currentTarget.value);
-        }}
+        onBlur={whenChanged(brief, props.onBrief)}
       />
     </label>
   );
@@ -311,7 +311,7 @@ function bodyFor(step: GenerateBody['step'], answers: string[]): GenerateBody {
 export function TasksPanel(props: Readonly<TasksPanelProps>) {
   const doc = props.doc;
   const [running, setRunning] = useState(false);
-  const [words, setWords] = useState<RunWords | { ran: string; note?: string } | null>(null);
+  const [words, setWords] = useState<RunWords | null>(null);
   const [boxes, setBoxes] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState<string | null>(null);
   const saving = useRef<Promise<void>>(Promise.resolve());
