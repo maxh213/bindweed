@@ -10,17 +10,19 @@ import { cycleTexts, edgePairs, graphView, nodeDetail, type GraphFlags, type Gra
 import { emptyLayout, parseLayout, type LayoutDoc } from './domain/layout.ts';
 import { contractNamesFrom, PLAN_SLUG_PATTERN, parsePlan, planNameFrom, slugOf, type ContractRule, type PlanDoc } from './domain/plan.ts';
 import { applyPlan, plannedShape, planReport, type PlanReport } from './domain/planned.ts';
+import { generateAskFrom, turnFor, type Turn } from './domain/prompt.ts';
 import type { ScanResult } from './domain/scan.ts';
 import { buildTree, filePathSet, type TreeRoot } from './domain/tree.ts';
-import { freePlanSlug, listPlans, readPlan, removePlan, writePlan } from './plans.ts';
+import { parseConfig, readConfig, writeConfig, type Limits } from './llm.ts';
+import { freePlanSlug, listPlans, readPlan, removePlan, saveTaskFiles, writePlan } from './plans.ts';
 import { readHealth } from './reports.ts';
 import { gitHead, listedRegularFiles } from './repo.ts';
 
 export type PortChoice = { mode: 'fixed' | 'range'; port: number };
 
-type AppDeps = { repoRoot: string; uiDir: string };
+type AppDeps = { repoRoot: string; uiDir: string; env?: NodeJS.ProcessEnv; limits?: Limits };
 
-type App = AppDeps & { token: string };
+type App = Required<AppDeps> & { token: string; runs: Map<string, AbortController> };
 
 type ListenError = { kind: 'in-use'; port: number } | { kind: 'none-free'; from: number; to: number };
 
@@ -37,6 +39,7 @@ type Routes = Map<string, Handler>;
 type GraphHolder = { scan?: ScanResult };
 
 const MAX_BYTES = 1048576;
+const DEFAULT_LIMITS: Limits = { llmMs: 15 * 60 * 1000, routeMs: 60 * 1000 };
 const NUL_WINDOW = 8192;
 const RANGE_WIDTH = 20;
 const BEARER = 'Bearer ';
@@ -433,10 +436,9 @@ type PlanVerb = (app: App, req: IncomingMessage, res: ServerResponse, slug: stri
 const PLAN_DOC_VERBS: Record<string, PlanVerb> = { GET: getPlan, PUT: putPlan, DELETE: deletePlan };
 
 const PLANS_PREFIX = '/api/plans/';
-const CONTRACT_SUFFIX = '/contract';
-const CONTRACT_PATH = /^\/api\/plans\/[^/]*\/contract$/;
+const PLAN_ACTION_PATH = /^\/api\/plans\/[^/]*\/(contract|generate|cancel|files)$/;
 
-type ContractVerb = (app: App, graphs: GraphHolder, req: IncomingMessage, res: ServerResponse, doc: PlanDoc) => Promise<void>;
+type PlanAction = (app: App, graphs: GraphHolder, req: IncomingMessage, res: ServerResponse, doc: PlanDoc) => Promise<void>;
 
 async function cruiserSource(root: string): Promise<string | null> {
   return readFile(join(root, '.dependency-cruiser.cjs'), 'utf8').catch(() => null);
@@ -473,12 +475,76 @@ async function postContract(app: App, graphs: GraphHolder, req: IncomingMessage,
   sendJson(res, 200, cruiser.preview(chosen, await hasTsconfig(app.repoRoot)));
 }
 
+async function serveConfig(app: App, res: ServerResponse): Promise<void> {
+  sendJson(res, 200, await readConfig(app.repoRoot));
+}
+
+async function putConfig(app: App, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const config = parseConfig(await readJsonBody(req));
+  if (config === undefined) {
+    sendJson(res, 400, { error: 'bad config' });
+    return;
+  }
+  await writeConfig(app.repoRoot, config);
+  sendJson(res, 200, config);
+}
+
+async function generated(app: App, graphs: GraphHolder, doc: PlanDoc, turn: Turn, signal: AbortSignal): Promise<Record<string, unknown>> {
+  const { generate } = await import('./generate.ts');
+  const scan = await readyScan(app, graphs);
+  const result = await generate({
+    place: { root: app.repoRoot, env: app.env, limits: app.limits, signal },
+    config: await readConfig(app.repoRoot),
+    doc,
+    turn,
+    scan,
+    warnings: planReport(scan, doc.edits, cycleTexts).warnings.flat(),
+    latest: () => readPlan(app.repoRoot, doc.slug),
+  });
+  if (result.plan !== undefined) await writePlan(app.repoRoot, result.plan);
+  return result.body;
+}
+
+function turnOf(raw: unknown, doc: PlanDoc): Turn | undefined {
+  const ask = generateAskFrom(raw);
+  return ask === undefined ? undefined : turnFor(ask, doc.interview);
+}
+
+async function postGenerate(app: App, graphs: GraphHolder, req: IncomingMessage, res: ServerResponse, doc: PlanDoc): Promise<void> {
+  const turn = turnOf(await readJsonBody(req), doc);
+  if (turn === undefined) {
+    sendJson(res, 400, { error: 'bad generate' });
+    return;
+  }
+  if (app.runs.has(doc.slug)) {
+    sendJson(res, 409, { error: 'already running' });
+    return;
+  }
+  const controller = new AbortController();
+  app.runs.set(doc.slug, controller);
+  try {
+    sendJson(res, 200, await generated(app, graphs, doc, turn, controller.signal));
+  } finally {
+    app.runs.delete(doc.slug);
+  }
+}
+
+async function postCancel(app: App, _graphs: GraphHolder, _req: IncomingMessage, res: ServerResponse, doc: PlanDoc): Promise<void> {
+  const run = app.runs.get(doc.slug);
+  run?.abort();
+  sendJson(res, 200, { cancelled: run !== undefined });
+}
+
+async function postFiles(app: App, _graphs: GraphHolder, _req: IncomingMessage, res: ServerResponse, doc: PlanDoc): Promise<void> {
+  sendJson(res, 200, { dir: await saveTaskFiles(app.repoRoot, doc) });
+}
+
 async function namedPlan(app: App, slug: string): Promise<PlanDoc | undefined> {
   return PLAN_SLUG_PATTERN.test(slug) ? readPlan(app.repoRoot, slug) : undefined;
 }
 
-async function servePlanContract(app: App, graphs: GraphHolder, req: IncomingMessage, res: ServerResponse, url: URL, verb: ContractVerb): Promise<void> {
-  const doc = await namedPlan(app, url.pathname.slice(PLANS_PREFIX.length, -CONTRACT_SUFFIX.length));
+async function servePlanAction(app: App, graphs: GraphHolder, req: IncomingMessage, res: ServerResponse, url: URL, verb: PlanAction): Promise<void> {
+  const doc = await namedPlan(app, url.pathname.slice(PLANS_PREFIX.length, url.pathname.lastIndexOf('/')));
   if (doc === undefined) {
     sendJson(res, 404, NO_SUCH_PLAN);
     return;
@@ -538,14 +604,20 @@ function routesFor(app: App, graphs: GraphHolder): Routes {
   router.get('/api/plans', (_req, res) => servePlanList(app, res));
   router.post('/api/plans', (req, res) => postPlan(app, req, res));
   router.get('/api/pairs', (_req, res, url) => servePairs(app, graphs, res, url));
-  router.get('/api/plans/<slug>/contract', (req, res, url) => servePlanContract(app, graphs, req, res, url, getContract));
-  router.post('/api/plans/<slug>/contract', (req, res, url) => servePlanContract(app, graphs, req, res, url, postContract));
+  router.get('/api/plans/<slug>/contract', (req, res, url) => servePlanAction(app, graphs, req, res, url, getContract));
+  router.post('/api/plans/<slug>/contract', (req, res, url) => servePlanAction(app, graphs, req, res, url, postContract));
+  router.post('/api/plans/<slug>/generate', (req, res, url) => servePlanAction(app, graphs, req, res, url, postGenerate));
+  router.post('/api/plans/<slug>/cancel', (req, res, url) => servePlanAction(app, graphs, req, res, url, postCancel));
+  router.post('/api/plans/<slug>/files', (req, res, url) => servePlanAction(app, graphs, req, res, url, postFiles));
+  router.get('/api/config', (_req, res) => serveConfig(app, res));
+  router.put('/api/config', (req, res) => putConfig(app, req, res));
+  router.get('/api/repo', async (_req, res) => sendJson(res, 200, { root: app.repoRoot }));
   return table;
 }
 
 function routeKey(pathname: string): string {
   if (pathname.startsWith(ASSETS_PREFIX)) return ASSETS_PREFIX;
-  return CONTRACT_PATH.test(pathname) ? '/api/plans/<slug>/contract' : pathname;
+  return pathname.replace(PLAN_ACTION_PATH, '/api/plans/<slug>/$1');
 }
 
 function routeFor(routes: Routes, method: string, pathname: string): Handler | undefined {
@@ -579,7 +651,7 @@ function createAppServer(app: App): Server {
 }
 
 export async function bindApp(deps: AppDeps, choice: PortChoice): Promise<Bound | { error: ListenError }> {
-  const app: App = { ...deps, token: newToken() };
+  const app: App = { env: process.env, limits: DEFAULT_LIMITS, ...deps, token: newToken(), runs: new Map() };
   const server = createAppServer(app);
   const listened = await listenForChoice(server, choice);
   if ('error' in listened) return { error: listened.error };

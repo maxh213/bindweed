@@ -676,3 +676,48 @@ describe('cutEndLater', () => {
     expect(cutEndLater('src/app/a.ts', edits, [null, null, null], 0)).toBe('src/web/a.ts');
   });
 });
+
+describe('plan documents with an interview, tasks and a brief', () => {
+  const round = { round: 1, questions: [{ id: 'q1', text: 'Why?', why: 'Because.' }], answers: ['your call'] };
+  const task = { file: '005-add-core.md', title: 'Add core', body: '# 005 — Add core\n\nx\n' };
+
+  it('keeps the three keys when present and leaves them absent otherwise', () => {
+    const raw = { ...goodDoc(), interview: [round, { round: 2, questions: [], answers: [] }], tasks: [task], brief: '' };
+    expect(parsePlan(raw)).toEqual({ ...docOf([]), interview: [round, { round: 2, questions: [], answers: [] }], tasks: [task], brief: '' });
+    expect(Object.keys(parsePlan(goodDoc()) ?? {})).toEqual(['version', 'name', 'slug', 'createdAt', 'baseCommit', 'edits', 'redo']);
+  });
+
+  it('refuses a bad round, task or brief', () => {
+    const bad: Record<string, unknown>[] = [
+      { interview: {} },
+      { interview: [{ ...round, round: 0 }] },
+      { interview: [{ ...round, round: 1.5 }] },
+      { interview: [{ ...round, extra: 1 }] },
+      { interview: [{ ...round, answers: [1] }] },
+      { interview: [{ ...round, questions: [{ id: 'q1', text: 'Why?' }] }] },
+      { interview: [{ ...round, questions: [{ id: 'q1', text: 'Why?', why: 3 }] }] },
+      { interview: [{ ...round, questions: [{ id: 1, text: 'Why?', why: 'w' }] }] },
+      { interview: [{ ...round, questions: [{ id: 'q', text: 2, why: 'w' }] }] },
+      { interview: [{ ...round, questions: [{ id: 'q', text: 't', why: 'w', more: 1 }] }] },
+      { interview: ['round'] },
+      { tasks: [{ ...task, file: '5-x.md' }] },
+      { tasks: [{ ...task, file: '005-X.md' }] },
+      { tasks: [{ ...task, file: 5 }] },
+      { tasks: [{ ...task, title: 1 }] },
+      { tasks: [{ ...task, body: null }] },
+      { tasks: [{ ...task, more: 1 }] },
+      { tasks: [7] },
+      { brief: 3 },
+      { contract: { rules: 1 } },
+    ];
+    for (const extra of bad) expect(parsePlan({ ...goodDoc(), ...extra })).toBeUndefined();
+  });
+
+  it('keeps the new keys through an edit, an undo and a redo', () => {
+    const doc: PlanDoc = { ...docOf([]), interview: [round], tasks: [task], brief: 'b' };
+    const note: PlanEdit = { kind: 'note', target: { node: 'src' }, text: 'X' };
+    const edited = withEdit(doc, note);
+    expect([edited.interview, edited.tasks, edited.brief]).toEqual([[round], [task], 'b']);
+    expect(withRedo(withUndo(edited))).toEqual(edited);
+  });
+});

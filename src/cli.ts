@@ -46,7 +46,7 @@ async function closeServer(server: Server): Promise<void> {
 }
 
 async function serve(opts: MainOpts, root: string, choice: PortChoice): Promise<number> {
-  const bound = await bindApp({ repoRoot: root, uiDir: uiDir(opts.installDir) }, choice);
+  const bound = await bindApp({ repoRoot: root, uiDir: uiDir(opts.installDir), env: opts.env }, choice);
   if ('error' in bound) return fail(opts.io, listenErrorMessage(bound.error), 1);
   opts.io.writeOut(`bindweed: http://127.0.0.1:${bound.port}/?token=${bound.token}\n`);
   opts.io.writeOut(`serving ${root}\n`);

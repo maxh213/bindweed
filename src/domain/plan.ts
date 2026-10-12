@@ -34,6 +34,12 @@ export type ContractRule = {
 
 export type Contract = { rules: ContractRule[] };
 
+export type Question = { id: string; text: string; why: string };
+
+export type Round = { round: number; questions: Question[]; answers: string[] };
+
+export type PlanTask = { file: string; title: string; body: string };
+
 export type PlanDoc = {
   version: 1;
   name: string;
@@ -43,6 +49,9 @@ export type PlanDoc = {
   edits: PlanEdit[];
   redo: PlanEdit[];
   contract?: Contract;
+  interview?: Round[];
+  tasks?: PlanTask[];
+  brief?: string;
 };
 
 export type PlanSummary = { name: string; slug: string; editCount: number; createdAt: string };
@@ -51,7 +60,8 @@ const SLUG_MAX = 40;
 export const PLAN_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const CREATED_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const COMMIT = /^[0-9a-f]{40}$/;
-const PLAN_KEYS = ['version', 'name', 'slug', 'createdAt', 'baseCommit', 'edits', 'redo', 'contract'];
+const PLAN_KEYS = ['version', 'name', 'slug', 'createdAt', 'baseCommit', 'edits', 'redo', 'contract', 'interview', 'tasks', 'brief'];
+const TASK_FILE_PATTERN = /^\d{3}-[a-z0-9][a-z0-9-]*\.md$/;
 const RULE_KEYS = ['name', 'severity', 'comment', 'from', 'to'];
 export const CONTRACT_RULE_PREFIX = 'bindweed:';
 const NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
@@ -483,19 +493,83 @@ export function contractNamesFrom(raw: unknown): string[] | undefined {
   return stringsFrom(rec.names);
 }
 
-function docContract(rec: Record<string, unknown>): { contract?: Contract } | undefined {
-  if (rec.contract === undefined) return {};
-  const contract = parseContract(rec.contract);
-  return contract === undefined ? undefined : { contract };
+function questionFields(rec: Record<string, unknown>): Question | undefined {
+  const [id, text, why] = [stringOf(rec.id), stringOf(rec.text), stringOf(rec.why)];
+  if (id === undefined || text === undefined || why === undefined) return undefined;
+  return { id, text, why };
+}
+
+function questionFrom(raw: unknown): Question | undefined {
+  const rec = recordOf(raw);
+  if (rec === undefined || !noExtraKeys(rec, ['id', 'text', 'why'])) return undefined;
+  return questionFields(rec);
+}
+
+function roundNumber(raw: unknown): number | undefined {
+  return Number.isInteger(raw) && Number(raw) >= 1 ? Number(raw) : undefined;
+}
+
+function roundFields(rec: Record<string, unknown>): Round | undefined {
+  const round = roundNumber(rec.round);
+  const questions = everyRead(listOfAtLeast(rec.questions, 0), questionFrom);
+  const answers = stringsFrom(rec.answers);
+  if (round === undefined || questions === undefined || answers === undefined) return undefined;
+  return { round, questions, answers };
+}
+
+function roundFrom(raw: unknown): Round | undefined {
+  const rec = recordOf(raw);
+  if (rec === undefined || !noExtraKeys(rec, ['round', 'questions', 'answers'])) return undefined;
+  return roundFields(rec);
+}
+
+function taskFile(raw: unknown): string | undefined {
+  return typeof raw === 'string' && TASK_FILE_PATTERN.test(raw) ? raw : undefined;
+}
+
+function taskFields(rec: Record<string, unknown>): PlanTask | undefined {
+  const [file, title, body] = [taskFile(rec.file), stringOf(rec.title), stringOf(rec.body)];
+  if (file === undefined || title === undefined || body === undefined) return undefined;
+  return { file, title, body };
+}
+
+function taskFrom(raw: unknown): PlanTask | undefined {
+  const rec = recordOf(raw);
+  if (rec === undefined || !noExtraKeys(rec, ['file', 'title', 'body'])) return undefined;
+  return taskFields(rec);
+}
+
+type DocExtras = Pick<PlanDoc, 'contract' | 'interview' | 'tasks' | 'brief'>;
+
+const EXTRA_READERS: [keyof DocExtras, (raw: unknown) => DocExtras[keyof DocExtras] | undefined][] = [
+  ['contract', parseContract],
+  ['interview', raw => everyRead(listOfAtLeast(raw, 0), roundFrom)],
+  ['tasks', raw => everyRead(listOfAtLeast(raw, 0), taskFrom)],
+  ['brief', stringOf],
+];
+
+function docExtras(rec: Record<string, unknown>): DocExtras | undefined {
+  const extras: Record<string, unknown> = {};
+  for (const [key, read] of EXTRA_READERS) {
+    if (rec[key] === undefined) continue;
+    extras[key] = read(rec[key]);
+    if (extras[key] === undefined) return undefined;
+  }
+  return extras;
 }
 
 export function parsePlan(raw: unknown): PlanDoc | undefined {
   const rec = docCore(raw);
   if (rec === undefined) return undefined;
   const lists = docLists(rec);
-  const extra = docContract(rec);
+  const extra = docExtras(rec);
   if (lists === undefined || extra === undefined) return undefined;
   return { ...docFrom(rec, lists.edits, lists.redo), ...extra };
+}
+
+export function pendingRound(interview: Round[]): Round | undefined {
+  const last = interview.at(-1);
+  return last !== undefined && last.answers.length === 0 && last.questions.length > 0 ? last : undefined;
 }
 
 export function summarisePlan(doc: PlanDoc): PlanSummary {

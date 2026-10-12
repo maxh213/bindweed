@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { LayoutDoc } from '../domain/layout.ts';
 import type { PlanDoc } from '../domain/plan.ts';
-import { deletePlan, fetchContract, fetchDetail, fetchFile, fetchGraph, fetchLayout, fetchPairs, fetchPlan, fetchPlans, fetchTree, postContract, postPlan, postRescan, putLayout, putPlan, takeToken } from './client.ts';
+import { deletePlan, fetchConfig, fetchContract, fetchRepo, postCancel, postFiles, postGenerate, putConfig, fetchDetail, fetchFile, fetchGraph, fetchLayout, fetchPairs, fetchPlan, fetchPlans, fetchTree, postContract, postPlan, postRescan, putLayout, putPlan, takeToken } from './client.ts';
 
 describe('fetchTree', () => {
   it('returns the tree with a bearer header and no token in the address', async () => {
@@ -625,5 +625,58 @@ describe('fetchContract and postContract', () => {
     const bad = (async () => jsonResponse(true, { rules: [{ ...RULE, severity: 'warn' }] })) as typeof fetch;
     expect(await fetchContract('tok', 'gate', bad)).toEqual({ error: 'cannot reach bindweed' });
     expect(await postContract('tok', 'gate', [], bad)).toEqual({ error: 'cannot reach bindweed' });
+  });
+});
+
+describe('the 008 routes', () => {
+  const doc: PlanDoc = { version: 1, name: 'Gate', slug: 'gate', createdAt: '2026-10-01T00:00:00.000Z', baseCommit: 'a'.repeat(40), edits: [], redo: [], brief: 'b' };
+
+  function answering(body: unknown, ok = true, calls: { url: string; init?: RequestInit }[] = []): typeof fetch {
+    return (async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return { ok, json: async () => body } as Response;
+    }) as typeof fetch;
+  }
+
+  const down = (async () => {
+    throw new Error('down');
+  }) as typeof fetch;
+
+  it('reads and writes the config', async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    expect(await fetchConfig('tok', answering({ llm: { backend: 'route' } }, true, calls))).toEqual({ llm: { backend: 'route' } });
+    expect(await putConfig('tok', { llm: { backend: 'command', command: 'c' } }, answering({ llm: { backend: 'command', command: 'c' } }, true, calls))).toEqual({ llm: { backend: 'command', command: 'c' } });
+    expect(calls.map(call => [call.url, call.init?.method, call.init?.body])).toEqual([
+      ['/api/config', undefined, undefined],
+      ['/api/config', 'PUT', '{"llm":{"backend":"command","command":"c"}}'],
+    ]);
+    expect(await putConfig('tok', { llm: { backend: 'route' } }, answering({ error: 'bad config' }, false))).toEqual({ error: 'bad config' });
+    expect(await fetchConfig('tok', down)).toEqual({ error: 'cannot reach bindweed' });
+    expect(await putConfig('tok', { llm: { backend: 'route' } }, down)).toEqual({ error: 'cannot reach bindweed' });
+  });
+
+  it('posts a generate step and reads a plan, a failure or an error', async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    expect(await postGenerate('tok', 'gate', { step: 'write', answers: ['a'] }, answering({ plan: doc, ran: 'r', note: 'n' }, true, calls))).toEqual({ plan: doc, ran: 'r', note: 'n' });
+    expect(calls.map(call => [call.url, call.init?.method, call.init?.body])).toEqual([['/api/plans/gate/generate', 'POST', '{"step":"write","answers":["a"]}']]);
+    expect(await postGenerate('tok', 'gate', { step: 'ask' }, answering({ error: 'e', raw: 'x', ran: 'r' }))).toEqual({ error: 'e', raw: 'x', ran: 'r' });
+    expect(await postGenerate('tok', 'gate', { step: 'ask' }, answering({ error: 'already running' }, false))).toEqual({ error: 'already running' });
+    expect(await postGenerate('tok', 'gate', { step: 'ask' }, answering({ plan: { name: 1 }, ran: 'r' }))).toEqual({ error: 'cannot reach bindweed' });
+    expect(await postGenerate('tok', 'gate', { step: 'ask' }, answering({ nothing: true }))).toEqual({ error: 'cannot reach bindweed' });
+    expect(await postGenerate('tok', 'gate', { step: 'ask' }, down)).toEqual({ error: 'cannot reach bindweed' });
+  });
+
+  it('cancels, saves files and reads the repository root', async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    expect(await postCancel('tok', 'gate', answering({ cancelled: true }, true, calls))).toEqual({ cancelled: true });
+    expect(await postFiles('tok', 'gate', answering({ dir: '/r/.bindweed/plans/gate' }, true, calls))).toEqual({ dir: '/r/.bindweed/plans/gate' });
+    expect(await fetchRepo('tok', answering({ root: '/r' }, true, calls))).toEqual({ root: '/r' });
+    expect(calls.map(call => [call.url, call.init?.method])).toEqual([
+      ['/api/plans/gate/cancel', 'POST'],
+      ['/api/plans/gate/files', 'POST'],
+      ['/api/repo', undefined],
+    ]);
+    expect(await postFiles('tok', 'gate', down)).toEqual({ error: 'cannot reach bindweed' });
+    expect(await fetchRepo('tok', down)).toEqual({ error: 'cannot reach bindweed' });
   });
 });

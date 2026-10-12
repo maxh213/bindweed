@@ -523,3 +523,61 @@ aside[aria-label='changes'] ol {
   overflow: auto;
   font-size: 12px;
 }
+
+.tasks-panel {
+  width: min(56rem, 92vw);
+  max-height: 90vh;
+  overflow: auto;
+}
+
+.tasks-fields {
+  border: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.tasks-slices,
+.tasks-questions,
+.tasks-interview {
+  margin: 0;
+  padding-left: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.tasks-slice textarea,
+.tasks-brief textarea {
+  display: block;
+  width: 100%;
+  min-height: 6rem;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+
+.tasks-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin: 0.25rem 0;
+}
+
+.tasks-why {
+  margin: 0.2rem 0 0;
+  font-size: 0.8rem;
+  color: #475569;
+}
+
+.tasks-preview {
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  padding: 0.4rem 0.6rem;
+}
+
+.tasks-command code {
+  font-size: 12px;
+  word-break: break-all;
+}

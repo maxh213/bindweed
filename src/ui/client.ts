@@ -425,3 +425,91 @@ export function takeToken(location: Location, storage: Storage, historyApi: Hist
   }
   return storage.getItem(TOKEN_KEY);
 }
+
+const configSchema = z.object({ llm: z.object({ backend: z.enum(['route', 'claude', 'command']), command: z.string().optional() }) });
+
+export type LlmConfig = z.infer<typeof configSchema>;
+
+export async function fetchConfig(token: string, fetcher: typeof fetch = fetch): Promise<LlmConfig | { error: string }> {
+  try {
+    const res = await fetcher('/api/config', { headers: { Authorization: `Bearer ${token}` } });
+    return parseBody(configSchema, await res.json(), res.ok);
+  } catch {
+    return { error: 'cannot reach bindweed' };
+  }
+}
+
+export async function putConfig(token: string, config: LlmConfig, fetcher: typeof fetch = fetch): Promise<LlmConfig | { error: string }> {
+  try {
+    const res = await fetcher('/api/config', {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    });
+    return parseBody(configSchema, await res.json(), res.ok);
+  } catch {
+    return { error: 'cannot reach bindweed' };
+  }
+}
+
+const runWordsSchema = z.object({ ran: z.string(), note: z.string().optional() });
+
+const failedRunSchema = runWordsSchema.extend({ error: z.string(), raw: z.string().optional() });
+
+export type GenerateBody = { step: 'ask' } | { step: 'answer' | 'write'; answers: string[] };
+
+export type GenerateAnswer = { plan: PlanDoc; ran: string; note?: string } | { error: string; raw?: string; ran?: string; note?: string };
+
+const doneRunSchema = runWordsSchema.extend({ plan: z.unknown() });
+
+function donePlan(raw: unknown): GenerateAnswer {
+  const done = doneRunSchema.safeParse(raw);
+  if (!done.success) return { error: 'cannot reach bindweed' };
+  const plan = parsePlan(done.data.plan);
+  return plan === undefined ? { error: 'cannot reach bindweed' } : { ...done.data, plan };
+}
+
+function generateAnswer(raw: unknown, ok: boolean): GenerateAnswer {
+  if (!ok) return errorFrom(raw);
+  const failed = failedRunSchema.safeParse(raw);
+  return failed.success ? failed.data : donePlan(raw);
+}
+
+export async function postGenerate(token: string, slug: string, body: GenerateBody, fetcher: typeof fetch = fetch): Promise<GenerateAnswer> {
+  try {
+    const res = await fetcher(`/api/plans/${slug}/generate`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return generateAnswer(await res.json(), res.ok);
+  } catch {
+    return { error: 'cannot reach bindweed' };
+  }
+}
+
+async function postPlanAction<T>(token: string, slug: string, action: string, schema: z.ZodType<T>, fetcher: typeof fetch): Promise<T | { error: string }> {
+  try {
+    const res = await fetcher(`/api/plans/${slug}/${action}`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+    return parseBody(schema, await res.json(), res.ok);
+  } catch {
+    return { error: 'cannot reach bindweed' };
+  }
+}
+
+export function postCancel(token: string, slug: string, fetcher: typeof fetch = fetch): Promise<{ cancelled: boolean } | { error: string }> {
+  return postPlanAction(token, slug, 'cancel', z.object({ cancelled: z.boolean() }), fetcher);
+}
+
+export function postFiles(token: string, slug: string, fetcher: typeof fetch = fetch): Promise<{ dir: string } | { error: string }> {
+  return postPlanAction(token, slug, 'files', z.object({ dir: z.string() }), fetcher);
+}
+
+export async function fetchRepo(token: string, fetcher: typeof fetch = fetch): Promise<{ root: string } | { error: string }> {
+  try {
+    const res = await fetcher('/api/repo', { headers: { Authorization: `Bearer ${token}` } });
+    return parseBody(z.object({ root: z.string() }), await res.json(), res.ok);
+  } catch {
+    return { error: 'cannot reach bindweed' };
+  }
+}

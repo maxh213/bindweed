@@ -30,9 +30,15 @@ Status: being built by marestail, one slice per file in `tasks/`.
 | `/api/plans` | live |
 | `/api/pairs` | live |
 | `/api/plans/<slug>/contract` | live |
+| `/api/plans/<slug>/generate` | live |
+| `/api/plans/<slug>/cancel` | live |
+| `/api/plans/<slug>/files` | live |
+| `/api/config` | live |
+| `/api/repo` | live |
 
 ## Environment
 
 | name | meaning |
 |---|---|
 | `BINDWEED_PORT` | first port to try (default 4477); tries up to N+20 unless `--port` is set |
+| `BINDWEED_ROOT` | set by bindweed for the `command` LLM backend: the repository root the command runs in |

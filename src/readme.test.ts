@@ -42,4 +42,14 @@ describe('README routes', () => {
     expect(text).toContain('| `/api/plans` | live |');
     expect(text).toContain('BINDWEED_PORT');
   });
+
+  it('The README lists the new routes and BINDWEED_ROOT', () => {
+    const text = readFileSync(join(process.cwd(), 'README.md'), 'utf8');
+    const table = routesTable(text);
+    for (const route of ['/api/config', '/api/plans/<slug>/generate', '/api/plans/<slug>/cancel', '/api/plans/<slug>/files', '/api/plans/<slug>/contract', '/api/pairs']) {
+      expect(table).toContain(`| \`${route}\` | live |`);
+    }
+    const environment = text.slice(text.indexOf('## Environment'));
+    expect(environment).toContain('| `BINDWEED_ROOT` |');
+  });
 });
