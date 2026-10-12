@@ -2,14 +2,16 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { byStrings, type PlanDoc } from './domain/plan.ts';
-import { planAfter, promptOf, readReply, retryPrompt, type Reply, type Turn } from './domain/prompt.ts';
+import { generateAskFrom, planAfter, promptOf, readReply, retryPrompt, turnFor, type Reply, type Turn } from './domain/prompt.ts';
 import type { PlanWarning, ScanResult } from './domain/scan.ts';
 import { firstFreeNumber } from './domain/tasks.ts';
-import { backendFor, runProcess, type Backend, type LlmConfig, type Outcome, type RunPlace } from './llm.ts';
+import { backendFor, parseConfig, readConfig, runProcess, writeConfig, type Backend, type LlmConfig, type Outcome, type RunPlace } from './llm.ts';
+
+export { DEFAULT_LIMITS, readConfig, type Limits } from './llm.ts';
+export type { Turn } from './domain/prompt.ts';
 
 export type GenerateJob = {
   place: RunPlace;
-  config: LlmConfig;
   doc: PlanDoc;
   turn: Turn;
   scan: ScanResult;
@@ -26,6 +28,17 @@ type Settled = { reply: Reply; stdout: string } | { body: Record<string, unknown
 type Attempt = Settled | { problem: string; stdout: string };
 
 const SHIPPED_GUIDE = fileURLToPath(new URL('../templates/tasks-README.md', import.meta.url));
+
+export function turnOf(raw: unknown, doc: PlanDoc): Turn | undefined {
+  const ask = generateAskFrom(raw);
+  return ask === undefined ? undefined : turnFor(ask, doc.interview);
+}
+
+export async function saveConfig(root: string, raw: unknown): Promise<LlmConfig | undefined> {
+  const config = parseConfig(raw);
+  if (config !== undefined) await writeConfig(root, config);
+  return config;
+}
 
 async function taskNames(root: string): Promise<string[]> {
   return readdir(join(root, 'tasks')).then(
@@ -70,7 +83,7 @@ async function replied(backend: Backend, prompt: string, job: GenerateJob): Prom
 }
 
 export async function generate(job: GenerateJob): Promise<Generated> {
-  const backend = await backendFor(job.config, job.place);
+  const backend = await backendFor(await readConfig(job.place.root), job.place);
   const names = await taskNames(job.place.root);
   const guide = await guideText(job.place.root);
   const prompt = promptOf({ doc: job.doc, scan: job.scan, warnings: job.warnings, guide, names, turn: job.turn });

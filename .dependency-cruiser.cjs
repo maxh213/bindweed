@@ -370,14 +370,14 @@ module.exports = {
       severity: 'error',
       comment: 'A view is built from a scan the server has already planned',
       from: { path: '^src/domain/graph\\.ts$' },
-      to: { path: '^src/domain/(plan|planned|contract)\\.ts$' }
+      to: { path: '^src/domain/(plan|planned|contract|prompt|tasks)\\.ts$' }
     },
     {
       name: 'the-scanner-does-not-know-plans',
       severity: 'error',
       comment: 'Scanning a repository does not read or apply a plan',
       from: { path: '^src/(scan\\.ts|scanning/)' },
-      to: { path: '^src/(domain/(plan|planned|contract)|plans|cruiser|linediff)\\.ts$' }
+      to: { path: '^src/(domain/(plan|planned|contract|prompt|tasks)|plans|cruiser|linediff|generate|llm)\\.ts$' }
     },
     {
       name: 'plan-picture-imports-the-view-and-the-document',
@@ -468,7 +468,91 @@ module.exports = {
       severity: 'error',
       comment: 'The session edits a plan and builds its picture. The canvas draws. The server applies the scan and reads plan files',
       from: { path: '^src/ui/plansession\\.tsx$' },
-      to: { path: ['^src/ui/(ArchCanvas|ArchView|view)\\.tsx?$', '^src/domain/(planned|contract|layout|scan)\\.ts$', '^src/plans\\.ts$', '^src/serve\\.ts$', 'node_modules/@xyflow'] }
+      to: { path: ['^src/ui/(ArchCanvas|ArchView|view)\\.tsx?$', '^src/domain/(planned|contract|layout|scan|prompt|tasks)\\.ts$', '^src/plans\\.ts$', '^src/serve\\.ts$', 'node_modules/@xyflow'] }
+    },
+    {
+      name: 'only-serve-imports-generation',
+      severity: 'error',
+      comment: 'Turning a plan into tasks is one deep module: config, the turn, the prompt, the LLM run and the retry. Only serve composes it among production files',
+      from: { pathNot: '^src/(serve\\.ts|generate\\.ts|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/generate\\.ts$' }
+    },
+    {
+      name: 'generation-hides-the-llm',
+      severity: 'error',
+      comment: 'Backends, route, the config file, process groups and time limits are reached through generate only',
+      from: { pathNot: '^src/(generate\\.ts|llm\\.ts|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/llm\\.ts$' }
+    },
+    {
+      name: 'generation-hides-the-prompt',
+      severity: 'error',
+      comment: 'The interview turn, the prompt text and reply parsing are reached through generate only',
+      from: { pathNot: '^src/(generate\\.ts|domain/prompt\\.ts|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/domain/prompt\\.ts$' }
+    },
+    {
+      name: 'generation-composes-the-llm-and-the-prompt',
+      severity: 'error',
+      comment: 'One run reads the target tasks folder and the LLM config, runs the backend and builds the plan it returns. It does not serve HTTP, apply a plan or write plan files',
+      from: { path: '^src/generate\\.ts$' },
+      to: { path: ['^src/', '^(node:)?(http|https|net)$'], pathNot: '^src/(llm|domain/(plan|prompt|scan|tasks))\\.ts$' }
+    },
+    {
+      name: 'the-llm-reads-the-document-readers-only',
+      severity: 'error',
+      comment: 'Running a backend knows processes and the config file; the only src dependency is the JSON readers on the plan document',
+      from: { path: '^src/llm\\.ts$' },
+      to: { path: '^src/', pathNot: '^src/domain/plan\\.ts$' }
+    },
+    {
+      name: 'the-prompt-reads-the-document-the-scan-and-the-task-list',
+      severity: 'error',
+      comment: 'Writing the prompt and reading the reply is pure. It reads the plan, the scan record and task numbering, nothing else',
+      from: { path: '^src/domain/prompt\\.ts$' },
+      to: { path: '^src/', pathNot: '^src/domain/(plan|scan|tasks)\\.ts$' }
+    },
+    {
+      name: 'the-task-list-reads-the-document-only',
+      severity: 'error',
+      comment: 'Numbering, list edits and the preview are pure rules over plan tasks',
+      from: { path: '^src/domain/tasks\\.ts$' },
+      to: { path: '^src/', pathNot: '^src/domain/plan\\.ts$' }
+    },
+    {
+      name: 'only-the-panel-and-generation-read-the-task-list',
+      severity: 'error',
+      comment: 'The Tasks panel edits the list and generation numbers it. Nothing else reaches into the task rules',
+      from: { pathNot: '^src/(generate\\.ts|domain/(prompt|tasks)\\.ts|ui/TasksPanel\\.tsx|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/domain/tasks\\.ts$' }
+    },
+    {
+      name: 'only-the-session-opens-the-tasks-panel',
+      severity: 'error',
+      comment: 'The session opens the Tasks panel and owns the open plan it edits. Nothing else mounts it',
+      from: { pathNot: '^src/ui/(plansession\\.tsx|TasksPanel\\.tsx|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/ui/TasksPanel\\.tsx$' }
+    },
+    {
+      name: 'the-tasks-panel-asks-the-server',
+      severity: 'error',
+      comment: 'The panel runs generation through the client and edits the task list with the pure rules. It does not draw the canvas, parse JSON or build prompts',
+      from: { path: '^src/ui/TasksPanel\\.tsx$' },
+      to: { path: ['^src/', 'node_modules/(@xyflow|zod)'], pathNot: '^src/(domain/(plan|tasks)|ui/client)\\.ts$' }
+    },
+    {
+      name: 'only-the-session-opens-settings',
+      severity: 'error',
+      comment: 'The session opens the Settings dialog. Nothing else mounts it',
+      from: { pathNot: '^src/ui/(plansession\\.tsx|SettingsDialog\\.tsx|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/ui/SettingsDialog\\.tsx$' }
+    },
+    {
+      name: 'settings-ask-the-server',
+      severity: 'error',
+      comment: 'The Settings dialog reads and writes the LLM config through the client only',
+      from: { path: '^src/ui/SettingsDialog\\.tsx$' },
+      to: { path: ['^src/', 'node_modules/(@xyflow|zod)'], pathNot: '^src/ui/client\\.ts$' }
     }
   ],
   options: {

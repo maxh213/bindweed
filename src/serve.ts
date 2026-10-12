@@ -10,10 +10,9 @@ import { cycleTexts, edgePairs, graphView, nodeDetail, type GraphFlags, type Gra
 import { emptyLayout, parseLayout, type LayoutDoc } from './domain/layout.ts';
 import { contractNamesFrom, PLAN_SLUG_PATTERN, parsePlan, planNameFrom, slugOf, type ContractRule, type PlanDoc } from './domain/plan.ts';
 import { applyPlan, plannedShape, planReport, type PlanReport } from './domain/planned.ts';
-import { generateAskFrom, turnFor, type Turn } from './domain/prompt.ts';
 import type { ScanResult } from './domain/scan.ts';
 import { buildTree, filePathSet, type TreeRoot } from './domain/tree.ts';
-import { parseConfig, readConfig, writeConfig, type Limits } from './llm.ts';
+import { DEFAULT_LIMITS, generate, readConfig, saveConfig, turnOf, type Limits, type Turn } from './generate.ts';
 import { freePlanSlug, listPlans, readPlan, removePlan, saveTaskFiles, writePlan } from './plans.ts';
 import { readHealth } from './reports.ts';
 import { gitHead, listedRegularFiles } from './repo.ts';
@@ -39,7 +38,6 @@ type Routes = Map<string, Handler>;
 type GraphHolder = { scan?: ScanResult };
 
 const MAX_BYTES = 1048576;
-const DEFAULT_LIMITS: Limits = { llmMs: 15 * 60 * 1000, routeMs: 60 * 1000 };
 const NUL_WINDOW = 8192;
 const RANGE_WIDTH = 20;
 const BEARER = 'Bearer ';
@@ -480,21 +478,18 @@ async function serveConfig(app: App, res: ServerResponse): Promise<void> {
 }
 
 async function putConfig(app: App, req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const config = parseConfig(await readJsonBody(req));
+  const config = await saveConfig(app.repoRoot, await readJsonBody(req));
   if (config === undefined) {
     sendJson(res, 400, { error: 'bad config' });
     return;
   }
-  await writeConfig(app.repoRoot, config);
   sendJson(res, 200, config);
 }
 
 async function generated(app: App, graphs: GraphHolder, doc: PlanDoc, turn: Turn, signal: AbortSignal): Promise<Record<string, unknown>> {
-  const { generate } = await import('./generate.ts');
   const scan = await readyScan(app, graphs);
   const result = await generate({
     place: { root: app.repoRoot, env: app.env, limits: app.limits, signal },
-    config: await readConfig(app.repoRoot),
     doc,
     turn,
     scan,
@@ -503,11 +498,6 @@ async function generated(app: App, graphs: GraphHolder, doc: PlanDoc, turn: Turn
   });
   if (result.plan !== undefined) await writePlan(app.repoRoot, result.plan);
   return result.body;
-}
-
-function turnOf(raw: unknown, doc: PlanDoc): Turn | undefined {
-  const ask = generateAskFrom(raw);
-  return ask === undefined ? undefined : turnFor(ask, doc.interview);
 }
 
 async function postGenerate(app: App, graphs: GraphHolder, req: IncomingMessage, res: ServerResponse, doc: PlanDoc): Promise<void> {

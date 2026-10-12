@@ -28,6 +28,7 @@ type Stop = 'timeout' | 'cancelled' | null;
 
 export type RunPlace = { root: string; env: NodeJS.ProcessEnv; limits: Limits; signal: AbortSignal };
 
+export const DEFAULT_LIMITS: Limits = { llmMs: 15 * 60 * 1000, routeMs: 60 * 1000 };
 const DEFAULT_CONFIG: LlmConfig = { llm: { backend: 'route' } };
 const FALLBACK_MODEL = 'claude-opus-5-5';
 const CLAUDE_PROVIDERS = new Set(['claude', 'claude-work']);
