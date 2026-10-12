@@ -135,6 +135,34 @@ describe('promptOf', () => {
     expect(text).not.toContain('To ask, reply');
   });
 
+  it('keeps the sections in the pinned order', () => {
+    const doc = docOf([{ kind: 'move-file', file: 'src/app/a.ts', to: 'src/infra' }], { contract: { rules: [{ name: 'bindweed:r', severity: 'error', comment: 'C', from: {}, to: { circular: true } }] } });
+    const interview = [{ ...PENDING, answers: ['yes', 'your call'] }];
+    const facts: PromptFacts = { doc, scan: SCAN, warnings: [{ kind: 'empty-package', path: 'src/core' }], guide: 'GUIDE', names: ['004-x.md'], turn: { interview, demanded: false } };
+    const asked = [
+      'Move src/app/a.ts to src/infra',
+      'src/core is empty',
+      'bindweed:r: C',
+      'src/app/a.ts imports src/app/b.ts',
+      'GUIDE',
+      '004-x.md',
+      'Q: Why?',
+      'Order the slices so each leaves the repository working: leaves and new packages first, then moves, then cuts, then the contract.',
+      'Reply with exactly one JSON object, in a fenced json block.',
+      'To ask, reply {"questions":[{"id":"<id>","text":"<question>","why":"<why you ask>"}]} with at most 5 questions.',
+      'To write, reply {"slices":[{"title":"<title>","slug":"<slug>","body":"<markdown>"}],"brief":"<markdown>"}.',
+    ];
+    const indexesIn = (text: string, lines: string[]) => lines.map(line => text.split('\n').indexOf(line));
+    const ascending = (indexes: number[]) => [...indexes].sort((a, b) => a - b);
+    const askIndexes = indexesIn(promptOf(facts), asked);
+    expect(askIndexes).not.toContain(-1);
+    expect(askIndexes).toEqual(ascending(askIndexes));
+    const demanded = [...asked.filter(line => !line.startsWith('To ask')), 'Reply with slices now.'];
+    const demandIndexes = indexesIn(promptOf({ ...facts, turn: { interview, demanded: true } }), demanded);
+    expect(demandIndexes).not.toContain(-1);
+    expect(demandIndexes).toEqual(ascending(demandIndexes));
+  });
+
   it('adds the reason to a retry', () => {
     expect(retryPrompt('P', 'why')).toBe('P\n\nYour last reply was not usable: why');
   });

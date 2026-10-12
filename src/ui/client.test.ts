@@ -646,9 +646,9 @@ describe('the 008 routes', () => {
     const calls: { url: string; init?: RequestInit }[] = [];
     expect(await fetchConfig('tok', answering({ llm: { backend: 'route' } }, true, calls))).toEqual({ llm: { backend: 'route' } });
     expect(await putConfig('tok', { llm: { backend: 'command', command: 'c' } }, answering({ llm: { backend: 'command', command: 'c' } }, true, calls))).toEqual({ llm: { backend: 'command', command: 'c' } });
-    expect(calls.map(call => [call.url, call.init?.method, call.init?.body])).toEqual([
-      ['/api/config', undefined, undefined],
-      ['/api/config', 'PUT', '{"llm":{"backend":"command","command":"c"}}'],
+    expect(calls.map(call => [call.url, call.init?.method, call.init?.body, call.init?.headers])).toEqual([
+      ['/api/config', undefined, undefined, { Authorization: 'Bearer tok' }],
+      ['/api/config', 'PUT', '{"llm":{"backend":"command","command":"c"}}', { Authorization: 'Bearer tok', 'Content-Type': 'application/json' }],
     ]);
     expect(await putConfig('tok', { llm: { backend: 'route' } }, answering({ error: 'bad config' }, false))).toEqual({ error: 'bad config' });
     expect(await fetchConfig('tok', down)).toEqual({ error: 'cannot reach bindweed' });
@@ -658,7 +658,9 @@ describe('the 008 routes', () => {
   it('posts a generate step and reads a plan, a failure or an error', async () => {
     const calls: { url: string; init?: RequestInit }[] = [];
     expect(await postGenerate('tok', 'gate', { step: 'write', answers: ['a'] }, answering({ plan: doc, ran: 'r', note: 'n' }, true, calls))).toEqual({ plan: doc, ran: 'r', note: 'n' });
-    expect(calls.map(call => [call.url, call.init?.method, call.init?.body])).toEqual([['/api/plans/gate/generate', 'POST', '{"step":"write","answers":["a"]}']]);
+    expect(calls.map(call => [call.url, call.init?.method, call.init?.body, call.init?.headers])).toEqual([
+      ['/api/plans/gate/generate', 'POST', '{"step":"write","answers":["a"]}', { Authorization: 'Bearer tok', 'Content-Type': 'application/json' }],
+    ]);
     expect(await postGenerate('tok', 'gate', { step: 'ask' }, answering({ error: 'e', raw: 'x', ran: 'r' }))).toEqual({ error: 'e', raw: 'x', ran: 'r' });
     expect(await postGenerate('tok', 'gate', { step: 'ask' }, answering({ error: 'already running' }, false))).toEqual({ error: 'already running' });
     expect(await postGenerate('tok', 'gate', { step: 'ask' }, answering({ plan: { name: 1 }, ran: 'r' }))).toEqual({ error: 'cannot reach bindweed' });
@@ -671,10 +673,10 @@ describe('the 008 routes', () => {
     expect(await postCancel('tok', 'gate', answering({ cancelled: true }, true, calls))).toEqual({ cancelled: true });
     expect(await postFiles('tok', 'gate', answering({ dir: '/r/.bindweed/plans/gate' }, true, calls))).toEqual({ dir: '/r/.bindweed/plans/gate' });
     expect(await fetchRepo('tok', answering({ root: '/r' }, true, calls))).toEqual({ root: '/r' });
-    expect(calls.map(call => [call.url, call.init?.method])).toEqual([
-      ['/api/plans/gate/cancel', 'POST'],
-      ['/api/plans/gate/files', 'POST'],
-      ['/api/repo', undefined],
+    expect(calls.map(call => [call.url, call.init?.method, call.init?.headers])).toEqual([
+      ['/api/plans/gate/cancel', 'POST', { Authorization: 'Bearer tok' }],
+      ['/api/plans/gate/files', 'POST', { Authorization: 'Bearer tok' }],
+      ['/api/repo', undefined, { Authorization: 'Bearer tok' }],
     ]);
     expect(await postFiles('tok', 'gate', down)).toEqual({ error: 'cannot reach bindweed' });
     expect(await fetchRepo('tok', down)).toEqual({ error: 'cannot reach bindweed' });

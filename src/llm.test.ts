@@ -2,11 +2,17 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { backendFor, parseConfig, readConfig, routePick, runProcess, writeConfig, type RunPlace } from './llm.ts';
+import { backendFor, DEFAULT_LIMITS, parseConfig, readConfig, routePick, runProcess, writeConfig, type RunPlace } from './llm.ts';
 
 const ENV = { PATH: '/usr/bin:/bin', HOME: '/home/someone', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli', KEEP: 'yes' };
 const CLAUDE_ARGS = ['-p', '--model', 'claude-opus-5-5', '--effort', 'high', '--output-format', 'text', '--allowedTools', 'Read,Grep,Glob'];
 const CLEAN = { PATH: '/usr/bin:/bin', HOME: '/home/someone', KEEP: 'yes' };
+
+describe('DEFAULT_LIMITS', () => {
+  it('stops the LLM after 15 minutes and marestail route after 60 seconds', () => {
+    expect(DEFAULT_LIMITS).toEqual({ llmMs: 900_000, routeMs: 60_000 });
+  });
+});
 
 describe('routePick', () => {
   it('reads "<model> <effort> <provider>" for claude', () => {

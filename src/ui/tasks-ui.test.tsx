@@ -78,9 +78,11 @@ type World = {
   filesDown: boolean;
   repoDown: boolean;
   release: ((hit: Hit) => void) | null;
+  holdPut: boolean;
+  heldPut: (() => void) | null;
 };
 
-const world: World = { doc: null, config: null, outcomes: [], generated: [], files: [], puts: 0, refusePut: false, configDown: false, filesDown: false, repoDown: false, release: null };
+const world: World = { doc: null, config: null, outcomes: [], generated: [], files: [], puts: 0, refusePut: false, configDown: false, filesDown: false, repoDown: false, release: null, holdPut: false, heldPut: null };
 
 function freshDoc(edits: PlanEdit[], extra: Partial<PlanDoc> = {}): PlanDoc {
   return { version: 1, name: 'Gate', slug: 'gate', createdAt: '2026-10-01T00:00:00.000Z', baseCommit: HEAD, edits, redo: [], ...extra };
@@ -99,6 +101,11 @@ function putBody(raw: unknown): Hit {
   if (world.refusePut || doc === undefined) return { status: 400, body: { error: 'bad plan' } };
   world.doc = doc;
   return { status: 200, body: doc };
+}
+
+function heldOrPut(raw: unknown): Hit | Promise<Hit> {
+  if (!world.holdPut) return putBody(raw);
+  return new Promise<Hit>(release => (world.heldPut = () => release(putBody(raw))));
 }
 
 function repliedRun(raw: unknown, reply: Reply): Hit {
@@ -145,7 +152,7 @@ const ROUTES: Record<string, (url: URL, raw: unknown) => Hit | Promise<Hit>> = {
   'GET /api/plans': () => ({ status: 200, body: { plans: [{ name: 'Gate', slug: 'gate', editCount: storedDoc().edits.length, createdAt: storedDoc().createdAt }] } }),
   'GET /api/graph': url => ({ status: 200, body: viewAt(url.searchParams.get('at') ?? '', url.searchParams.has('plan') ? storedDoc().edits : []) }),
   'GET /api/plans/gate': () => (world.doc === null ? NO_PLAN : { status: 200, body: world.doc }),
-  'PUT /api/plans/gate': (_url, raw) => putBody(raw),
+  'PUT /api/plans/gate': (_url, raw) => heldOrPut(raw),
   'POST /api/plans/gate/generate': (_url, raw) => generateBody(raw),
   'POST /api/plans/gate/cancel': () => cancelBody(),
   'POST /api/plans/gate/files': () => filesBody(),
@@ -336,6 +343,8 @@ describe('the Tasks and Settings dialogs', () => {
       filesDown: false,
       repoDown: false,
       release: null,
+      holdPut: false,
+      heldPut: null,
     });
     copied = [];
     install();
@@ -382,6 +391,39 @@ describe('the Tasks and Settings dialogs', () => {
     await openTasks();
     expect(slices()).toEqual(['005-add-core.md']);
     expect(field('Brief').value).toBe(BRIEF);
+  });
+
+  it('starts a new interview with empty answer boxes', async () => {
+    world.outcomes = [{ reply: QUESTIONS }, { reply: SLICES }, { reply: QUESTIONS }, { reply: SLICES }];
+    await mount();
+    await openTasks();
+    await click(button('Generate'));
+    await settled(() => expect(maybeButton('Continue')).toBeDefined());
+    await type(field('Must a.ts keep exporting a?'), 'Yes, keep it.');
+    await click(button('Continue'));
+    await settled(() => expect(maybeButton('Continue')).toBeUndefined());
+    await click(button('Generate'));
+    await settled(() => expect(maybeButton('Continue')).toBeDefined());
+    expect(field('Must a.ts keep exporting a?').value).toBe('');
+    await click(button('Continue'));
+    await settled(() => expect(maybeButton('Continue')).toBeUndefined());
+    expect(world.generated).toEqual([{ step: 'ask' }, { step: 'answer', answers: ['Yes, keep it.', ''] }, { step: 'ask' }, { step: 'answer', answers: ['', ''] }]);
+  });
+
+  it('waits for the last list edit to be saved before generating or saving files', async () => {
+    world.doc = freshDoc([PACKAGE_CUT], { tasks: THREE, brief: BRIEF });
+    world.outcomes = [{ reply: SLICES }];
+    world.holdPut = true;
+    await mount();
+    await openTasks();
+    await click(named('Delete 005-add-core.md'));
+    await settled(() => expect(world.heldPut).not.toBeNull());
+    await click(button('Save as files'));
+    await click(button('Just write it'));
+    expect([world.files, world.generated]).toEqual([[], []]);
+    await fire(() => world.heldPut?.());
+    await settled(() => expect(world.generated).toEqual([{ step: 'write', answers: [] }]));
+    expect(world.files.map(doc => doc.tasks?.map(task => task.file))).toEqual([['005-move-b.md', '006-cut-app-domain.md']]);
   });
 
   it('Just write it with questions pending sends the typed answers', async () => {
@@ -437,6 +479,11 @@ describe('the Tasks and Settings dialogs', () => {
     expect(panelText()).not.toContain('running for');
     expect(named('ran').textContent).toBe(RAN);
     expect(storedDoc().interview).toBeUndefined();
+    world.outcomes = ['hang'];
+    await click(button('Just write it'));
+    await settled(() => expect(panelText()).toContain('running for 0 s'));
+    await click(button('Cancel'));
+    await settled(() => expect(panelText()).toContain('cancelled'));
   });
 
   it('Settings opens with the saved config and refuses a blank command', async () => {
