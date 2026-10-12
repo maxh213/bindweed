@@ -25,14 +25,14 @@ Paste the printed `export` line into the second terminal. Keep the last printed 
 1. In the first terminal run `CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli node $BW/src/cli.ts --port 5000`. Open the printed address with `#at=src` appended.
    **Expect:** the page shows `app` (2 files), `infra` and `domain`. A gear button named `Settings` is in the toolbar. There is no `Tasks` button.
 
-2. Click `Settings`, choose `command` in `Backend`, leave `Command` blank and click `Save`. Then paste the fake command into `Command` and click `Save`. In the second terminal run `cat $QA/layered/.bindweed/config.json; echo`.
-   **Expect:** the blank save shows `write a command` and the dialog stays. After the second save the dialog closes, and the file is `{"llm":{"backend":"command","command":"<the fake command>"}}`.
+2. Click `Settings`; note what it shows. Choose `command` in `Backend`, leave `Command` blank and click `Save`. Then paste the fake command into `Command` and click `Save`. In the second terminal run `cat $QA/layered/.bindweed/config.json; echo`.
+   **Expect:** the dialog opens with `Backend` on `route` and `Command` blank. The blank save shows `write a command` and the dialog stays. After the second save the dialog closes, and the file is `{"llm":{"backend":"command","command":"<the fake command>"}}`.
 
 3. Create a plan named `Gate`. Click the arrow from `app` to `domain` and press Delete. Click `Tasks`, then `Generate`.
-   **Expect:** `running for 0 s` shows and counts up, `Cancel` shows, and `Generate` is disabled. Then the run line reads `command: <the fake command>` and two questions show: `Must a.ts keep exporting a?` with `Other code may import it.`, and `Should b.ts move before the cut?` with `The order decides which slice breaks the build.`
+   **Expect:** the run line reads `command: <the fake command>` and two questions show: `Must a.ts keep exporting a?` with `Other code may import it.`, and `Should b.ts move before the cut?` with `The order decides which slice breaks the build.`
 
-4. In the second terminal run `grep -c 'src/app must not import src/domain (1 import)' $QA/log/1.prompt; grep -F -e '# Our guide' -e 004-x.md -e 'src/app/a.ts imports' $QA/log/1.prompt; cat $QA/log/1.env.json; echo`.
-   **Expect:** the count is at least `1`. grep prints `# Our guide`, a line naming `004-x.md`, and `src/app/a.ts imports src/app/b.ts, src/domain/model.ts, src/infra/db.ts`. The JSON has `cwd` and `root` equal to `$QA/layered`, and `claudecode` and `entrypoint` both `null`.
+4. In the second terminal run `grep -c 'src/app must not import src/domain (1 import)' $QA/log/1.prompt; grep -F -e '# Our guide' -e 004-x.md -e 'src/app/a.ts imports' -e 'freezes everything else' -e 'thin slice' $QA/log/1.prompt; cat $QA/log/1.env.json; echo`.
+   **Expect:** the count is at least `1`. grep prints `# Our guide`, a line naming `004-x.md`, `src/app/a.ts imports src/app/b.ts, src/domain/model.ts, src/infra/db.ts`, a line holding `A slice that changes no behaviour says so in its first line and freezes everything else.` and one holding `Write one thin slice per logical step.` The JSON has `cwd` and `root` equal to `$QA/layered`, and `claudecode` and `entrypoint` both `null`.
 
 5. Type `Yes, keep it.` for the first question, leave the second blank, and click `Continue`. Then run `grep -A1 '^Q: ' $QA/log/2.prompt`.
    **Expect:** three slices: `005-add-core.md`, `006-move-b.md`, `007-cut-app-domain.md`. The third body is `# 007 — Cut app from domain`, a blank line, `No behaviour changes.`. grep shows `A: Yes, keep it.` under the first question and `A: your call` under the second. The brief box holds `# Reshape layered`, a blank line, `Move b, then cut app from domain.`.
@@ -52,8 +52,14 @@ Paste the printed `export` line into the second terminal. Keep the last printed 
 10. Close the dialog. Open `domain`'s menu, choose `Add note`, add `BAD-ONCE`. Click `Tasks`, then `Just write it`. Run `ls $QA/log; grep -c 'Your last reply was not usable: ' $QA/log/4.prompt`.
     **Expect:** three slices `005-add-core.md`, `006-move-b.md`, `007-cut-app-domain.md` replace the old one, with no error shown. `ls` shows `bad.done` and prompts `1` to `4`. grep prints `1`.
 
-11. Close the dialog, add the note `SLEEP-NOW` to `domain`, click `Tasks`, then `Just write it`. When `running for` shows, run `cat $QA/log/sleep.pids`, click `Cancel`, wait 2 seconds and run `for p in $(cat $QA/log/sleep.pids); do kill -0 $p 2>/dev/null && echo alive $p; done; echo checked`.
-    **Expect:** the page shows `cancelled` and the three slices from step 10 are unchanged. Only `checked` is printed.
+11. Type `Add src/core` over `Title of 005-add-core.md` and press Tab. Click `Split 005-add-core.md`, then `Move 006-add-core.md down`. Click `Preview 005-add-core.md`, look, and click it again. Click `Copy 008-cut-app-domain.md`, save the clipboard into `$QA/copied` (for example `wl-paste -n > $QA/copied`) and run `cat $QA/copied`.
+    **Expect:** after the rename the body starts `# 005 — Add src/core` and the name is still `005-add-core.md`. After the split the slices are `005-add-core.md`, `006-add-core.md` (body `# 006 — Add src/core`, blank, `Create src/core.`), `007-move-b.md`, `008-cut-app-domain.md`. After the move: `005-add-core.md`, `006-move-b.md`, `007-add-core.md`, `008-cut-app-domain.md`. While previewing, the body box is gone and `005 — Add src/core` shows as a large heading over the text `Create src/core.`; the second click brings the box back. `cat` prints `# 008 — Cut app from domain`, a blank line, `No behaviour changes.`.
 
-12. In the first terminal press Ctrl-C. In the second run `cd ~ && git -C $QA/layered status --porcelain && ls $QA/layered/tasks && echo clean`, then `rm -rf "$QA"`.
+12. Close the dialog, add the note `SLEEP-NOW` to `domain`, click `Tasks`, then `Just write it`. Watch the page for three seconds, then run `cat $QA/log/sleep.pids`, click `Cancel`, wait 2 seconds and run `for p in $(cat $QA/log/sleep.pids); do kill -0 $p 2>/dev/null && echo alive $p; done; echo checked`.
+    **Expect:** while it runs the page shows `running for 0 s` counting up and a `Cancel` button, and `Generate` and `Just write it` are disabled. After Cancel the page shows `cancelled` and the four slices from step 11 are unchanged. Only `checked` is printed.
+
+13. Close the dialog. Click `Settings`, type `echo nope` over `Command` and click `Save`. Click `Tasks`, then `Generate`.
+    **Expect:** the page shows `command: echo nope`, an error starting `the LLM's reply was not usable: `, and a `Raw output` block holding `nope`. The four slices from step 11 are still listed.
+
+14. In the first terminal press Ctrl-C. In the second run `cd ~ && git -C $QA/layered status --porcelain && ls $QA/layered/tasks && echo clean`, then `rm -rf "$QA"`.
     **Expect:** `004-x.md`, `README.md` and `clean`, and nothing else.
