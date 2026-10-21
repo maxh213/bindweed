@@ -48,6 +48,7 @@ const UNVERIFIED_TAIL = ['== qa (09-qa) attempt 1', 'pipeline complete, NOT veri
 const REFUSED_TAIL = ['== qa (09-qa) attempt 1', 'pipeline complete', '', '## Config changes the agents asked for and were refused', 'Decide whether to make any of these yourself.'];
 const COMPLETE = 'pipeline complete\n\n';
 const SUMMARY_LINE = "   07-coder finished in 2.0 min: 'stopped treating pipeline complete as the last line'";
+const PERF_LINES = ['== qa (09-qa) attempt 1', 'pipeline complete', '', '## Performance changes', ...Array.from({ length: 25 }, (_, index) => `- degraded +1.0% \`bench ${index + 1} p50\``)];
 const STEP_TAIL = ['starting', '== coder (07-coder) attempt 2', SUMMARY_LINE, '== hardener (07-hardener) attempt 1'];
 
 function logged(lines: string[]): string {
@@ -86,7 +87,7 @@ const MARESTAIL: Record<string, Fixture> = {
   running: { tool: 'marestail', pid: 'live', at: '12:04', tasks: ['tasks/001-init.md', 'tasks/002-step.md', 'tasks/003-later.md'], build: async dir => {
     await files('README', '000-old', '001-init', '002-step', '003-later')(dir);
     await log(dir, '000-old', 'pipeline complete\n', '12:25');
-    await log(dir, '001-init', COMPLETE, '12:10');
+    await log(dir, '001-init', logged(PERF_LINES), '12:10');
     await log(dir, '002-step', logged(STEP_TAIL), '12:20');
     await log(dir, '003-later', `${SUMMARY_LINE}\n`, '12:15');
     await put(join(dir, '.marestail/runs/direct-001-20261021T1226.log'), 'x\n', '12:26');
@@ -102,6 +103,10 @@ const MARESTAIL: Record<string, Fixture> = {
   refused: { tool: 'marestail', pid: 'live', at: '12:21', tasks: ['tasks/001-a.md', 'tasks/002-b.md'], build: async dir => {
     await files('001-a', '002-b')(dir);
     await log(dir, '001-a', logged(REFUSED_TAIL), '12:10');
+  } },
+  perf: { tool: 'marestail', pid: 'live', at: '12:22', tasks: ['tasks/001-a.md', 'tasks/002-b.md'], build: async dir => {
+    await files('001-a', '002-b')(dir);
+    await log(dir, '001-a', logged(PERF_LINES), '12:10');
   } },
   fresh: { tool: 'marestail', pid: 'dead', at: '12:07', tasks: ['tasks/001-a.md'], build: files('001-a') },
   unverified: { tool: 'marestail', pid: 'live', at: '12:08', tasks: ['tasks/001-a.md'], build: async dir => {
@@ -339,6 +344,7 @@ describe('GET /api/runs', () => {
     ['dead', 'dead', 'task 001-task · 0 of 1 tasks', ['starting']],
     ['between', 'running', 'task 001-a · finished · 1 of 2 tasks', DONE_TAIL],
     ['refused', 'running', 'task 001-a · finished · 1 of 2 tasks', REFUSED_TAIL],
+    ['perf', 'running', 'task 001-a · finished · 1 of 2 tasks', PERF_LINES.slice(-20)],
     ['fresh', 'dead', 'no task started · 0 of 1 tasks', []],
     ['unverified', 'running', 'task 001-a · finished · 1 of 1 tasks', UNVERIFIED_TAIL],
     ['removed', 'worktree removed', 'worktree removed', []],
