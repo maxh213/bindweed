@@ -59,6 +59,7 @@ const MARESTAIL: Record<string, Fixture> = {
     await log(dir, '001-a', QA_DONE, '12:10');
     await log(dir, '002-b', QA_DONE, '12:20');
     await put(join(dir, SUMMARY), '001-a ok\n002-b ok\nall tasks complete 2026-10-21 12:30:00\n', '12:30');
+    await put(join(dir, '.marestail/runs/overnight-20261021T1230.log'), 'marestail output\n', '12:31');
   } },
   stopped: { tool: 'marestail', pid: 'dead', at: '12:02', tasks: ['tasks/001-w.md', 'tasks/002-x.md'], build: async dir => {
     await files('001-w', '002-x')(dir);
@@ -106,6 +107,7 @@ const CANNON: Record<string, Fixture> = {
   'sc-done': { tool: 'slop-cannon', pid: 'dead', at: '12:11', build: status('sc-status.json', JSON.stringify({ state: { phase: 'complete' }, agents: [], beads: { done: 5 }, prs: [] })) },
   'sc-err': { tool: 'slop-cannon', pid: 'dead', at: '12:12', build: status('sc-status.err', 'no slop-cannon state here\nsecond line\n') },
   'sc-slow': { tool: 'slop-cannon', pid: 'live', at: '12:13', build: status('sc-status.slow', '') },
+  'sc-pause': { tool: 'slop-cannon', pid: 'live', at: '12:13', build: status('sc-status.pause', JSON.stringify({ state: { phase: 'planning' }, agents: [{ alive: true }], beads: {}, prs: [{ url: 'https://example.test/pull/7' }] })) },
   'sc-junk': { tool: 'slop-cannon', pid: 'live', at: '12:14', build: status('sc-status.json', 'null') },
   'sc-list': { tool: 'slop-cannon', pid: 'live', at: '12:15', build: status('sc-status.json', '[]') },
   'sc-text': { tool: 'slop-cannon', pid: 'live', at: '12:15', build: status('sc-status.json', 'nope') },
@@ -202,6 +204,7 @@ beforeEach(async () => {
   await writeFile(join(bin, 'sc'), `#!/bin/sh
 d="$3"
 if [ -e "$d/sc-status.slow" ]; then sleep 15; fi
+if [ -e "$d/sc-status.pause" ]; then sleep 3; cat "$d/sc-status.pause"; exit 0; fi
 if [ -e "$d/sc-status.err" ]; then cat "$d/sc-status.err" >&2; exit 1; fi
 if [ -e "$d/sc-status.code" ]; then exit 3; fi
 cat "$d/sc-status.json"
@@ -250,6 +253,14 @@ describe('GET /api/runs', () => {
     expect(Date.now() - started).toBeLessThan(12000);
   }, 15000);
 
+  it('An sc that answers after a few seconds keeps its position', async () => {
+    const started = Date.now();
+    expect(await only('sc-pause')).toMatchObject({ state: 'running', position: 'planning · 1 agent · 1 PR', logTail: [] });
+    const waited = Date.now() - started;
+    expect(waited).toBeGreaterThan(2500);
+    expect(waited).toBeLessThan(12000);
+  }, 15000);
+
   it('One run carries every field, and slop-cannon PRs are listed', async () => {
     const sc = await entry('sc');
     await writeRuns([sc, await entry('running')]);
@@ -261,10 +272,18 @@ describe('GET /api/runs', () => {
   });
 
   it('Runs are ordered newest first and malformed elements are left out', async () => {
-    await writeRuns([await entry('done'), 7, { slug: 'x' }, await entry('dead'), await entry('removed')]);
-    const { body } = await call('/api/runs');
-    expect(body.runs.map(run => run.slug)).toEqual(['plan-dead', 'plan-done', 'plan-removed']);
-    expect(body.runs[2]).toMatchObject({ worktreeExists: false, prs: [] });
+    const whole = { tool: 'marestail', worktree: worktreeOf('done'), startedAt: '2026-10-21T11:00:00.000Z' };
+    await writeRuns([
+      await entry('done'), 7, { slug: 'x' }, await entry('dead'), await entry('removed'),
+      { slug: 'no-worktree', tool: 'marestail', startedAt: whole.startedAt },
+      { slug: 'no-started', tool: 'marestail', worktree: whole.worktree },
+      { ...whole, slug: 5 },
+      { ...whole, slug: 'other-tool', tool: 'other' },
+    ]);
+    const answer = await call('/api/runs');
+    expect(answer.status).toBe(200);
+    expect(answer.body.runs.map(run => run.slug)).toEqual(['plan-dead', 'plan-done', 'plan-removed']);
+    expect(answer.body.runs[2]).toMatchObject({ worktreeExists: false, prs: [] });
   });
 
   it('On a tie the later element comes first, and odd branch, pid and out read as null and no log', async () => {
