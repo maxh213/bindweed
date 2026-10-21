@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useActionState, useEffect, useId, useRef, useState, type ReactElement } from 'react';
+import { startTransition, useActionState, useEffect, useId, useRef, useState, type SubmitEvent, type ReactElement } from 'react';
 import { launchReason, type LaunchBody, type LaunchInfo, type LaunchResult } from '../domain/launch.ts';
 import type { PlanDoc } from '../domain/plan.ts';
 import { fetchLaunch, postLaunch } from './client.ts';
@@ -157,10 +157,11 @@ function useLaunchRun(props: Readonly<FormProps>) {
     await props.refresh();
     return { kind: 'answered', result: answer };
   }, IDLE);
-  const launch = (body: LaunchBody): void => {
+  const launch = (event: SubmitEvent, body: LaunchBody): void => {
+    event.preventDefault();
     if (held.current) return;
     held.current = true;
-    dispatch(body);
+    startTransition(() => dispatch(body));
   };
   return { run, pending, launch };
 }
@@ -172,7 +173,7 @@ function LaunchForm(props: Readonly<FormProps>) {
   const reason = launchReason(props.info, props.doc, tool);
   const edit = (value: LaunchBody): void => setDrafts(previous => ({ ...previous, [value.tool]: value }));
   return (
-    <form action={() => launch.launch(drafts[tool])}>
+    <form onSubmit={event => launch.launch(event, drafts[tool])}>
       <label>
         Tool{' '}
         <select aria-label="Tool" value={tool} onChange={event => setTool(toolOf(event.currentTarget.value))}>

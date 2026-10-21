@@ -193,8 +193,9 @@ describe('Launch dialog', () => {
     await type('Ammo', '');
     await type('Cartridge', '');
     outcome = { steps: STEPS, ...LINES, watch: `sc status --repo ${WORKTREE}`, pid: 42 };
+    refreshError = true;
     await click(button('Launch'));
-    await settled(() => expect(button('Copy command')).toBeDefined());
+    await settled(() => expect(within(dialog()).getByRole('list', { name: 'Steps' }).textContent).toBe('Worktree ✓Files ✓Commit ✓Start ✓Record ✓'));
     expect(posts).toEqual([{ tool: 'slop-cannon', safety: 'off', ammo: '', cartridge: '' }]);
     expect(field('Tool').value).toBe('slop-cannon');
     expect(field('Safety').value).toBe('off');
