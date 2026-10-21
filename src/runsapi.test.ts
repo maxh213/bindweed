@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promise
 import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { bindApp } from './serve.ts';
 
 type Fixture = { tool: 'marestail' | 'slop-cannon'; pid: 'live' | 'dead'; at: string; tasks?: string[]; build: (dir: string) => Promise<void> };
@@ -39,10 +39,17 @@ function log(dir: string, id: string, text: string, at: string): Promise<void> {
   return put(join(dir, '.marestail/runs', id, 'pipeline.log'), text, at);
 }
 
-const QA_DONE = '== qa (09-qa) attempt 1\npipeline complete\n';
+const H = 'coder got the same problems back 3 times in a row; the worker is not making progress, stopping for a human';
+const DONE_TAIL = ['== qa (09-qa) attempt 1', 'pipeline complete', ''];
+const HUMAN_TAIL = ['== coder (03-coder) attempt 2', 'gate failed', H, 'pipeline stopped at coder', ''];
+const BOOM_TAIL = ['== coder (03-coder) attempt 1', 'npm ERR! boom', 'pipeline stopped at coder', ''];
+const UNVERIFIED_TAIL = ['== qa (09-qa) attempt 1', 'pipeline complete, NOT verified by eye', ''];
+const REFUSED_TAIL = ['== qa (09-qa) attempt 1', 'pipeline complete', '', '## Config changes the agents asked for and were refused', 'Decide whether to make any of these yourself.'];
+const COMPLETE = 'pipeline complete\n\n';
 
-const HUMAN = '== coder (03-coder) attempt 2\ngate failed\nstopping for a human\n';
-const BOOM = '== coder (03-coder) attempt 1\nnpm ERR! boom\n';
+function logged(lines: string[]): string {
+  return `${lines.join('\n')}\n`;
+}
 
 function named(stoppedLog: string, newerLog: string) {
   return async (dir: string) => {
@@ -56,26 +63,26 @@ function named(stoppedLog: string, newerLog: string) {
 const MARESTAIL: Record<string, Fixture> = {
   done: { tool: 'marestail', pid: 'dead', at: '12:01', tasks: ['tasks/001-a.md', 'tasks/002-b.md'], build: async dir => {
     await files('001-a', '002-b')(dir);
-    await log(dir, '001-a', QA_DONE, '12:10');
-    await log(dir, '002-b', QA_DONE, '12:20');
+    await log(dir, '001-a', logged(DONE_TAIL), '12:10');
+    await log(dir, '002-b', logged(DONE_TAIL), '12:20');
     await put(join(dir, SUMMARY), '001-a ok\n002-b ok\nall tasks complete 2026-10-21 12:30:00\n', '12:30');
     await put(join(dir, '.marestail/runs/overnight-20261021T1230.log'), 'marestail output\n', '12:31');
   } },
   stopped: { tool: 'marestail', pid: 'dead', at: '12:02', tasks: ['tasks/001-w.md', 'tasks/002-x.md'], build: async dir => {
     await files('001-w', '002-x')(dir);
-    await log(dir, '001-w', 'pipeline complete\n', '12:10');
-    await log(dir, '002-x', '== coder (03-coder) attempt 2\ngate failed\nstopping for a human\n', '12:20');
+    await log(dir, '001-w', COMPLETE, '12:10');
+    await log(dir, '002-x', logged(HUMAN_TAIL), '12:20');
     await put(join(dir, SUMMARY), 'stopped: tasks/002-x.md exited 1\n', '12:30');
   } },
   failed: { tool: 'marestail', pid: 'dead', at: '12:03', tasks: ['tasks/001-f.md'], build: async dir => {
     await files('001-f')(dir);
-    await log(dir, '001-f', '== coder (03-coder) attempt 1\nnpm ERR! boom\n', '12:10');
+    await log(dir, '001-f', logged(BOOM_TAIL), '12:10');
     await put(join(dir, SUMMARY), 'stopped: tasks/001-f.md exited 2\n', '12:30');
   } },
   running: { tool: 'marestail', pid: 'live', at: '12:04', tasks: ['tasks/001-init.md', 'tasks/002-step.md', 'tasks/003-later.md'], build: async dir => {
     await files('README', '000-old', '001-init', '002-step', '003-later')(dir);
     await log(dir, '000-old', 'pipeline complete\n', '12:25');
-    await log(dir, '001-init', 'pipeline complete\n', '12:10');
+    await log(dir, '001-init', COMPLETE, '12:10');
     await log(dir, '002-step', 'starting\n== coder (07-coder) attempt 2\n== hardener (07-hardener) attempt 1\n', '12:20');
     await put(join(dir, '.marestail/runs/direct-001-20261021T1226.log'), 'x\n', '12:26');
   } },
@@ -85,15 +92,19 @@ const MARESTAIL: Record<string, Fixture> = {
   } },
   between: { tool: 'marestail', pid: 'live', at: '12:06', tasks: ['tasks/001-a.md', 'tasks/002-b.md'], build: async dir => {
     await files('001-a', '002-b')(dir);
-    await log(dir, '001-a', QA_DONE, '12:10');
+    await log(dir, '001-a', logged(DONE_TAIL), '12:10');
+  } },
+  refused: { tool: 'marestail', pid: 'live', at: '12:21', tasks: ['tasks/001-a.md', 'tasks/002-b.md'], build: async dir => {
+    await files('001-a', '002-b')(dir);
+    await log(dir, '001-a', logged(REFUSED_TAIL), '12:10');
   } },
   fresh: { tool: 'marestail', pid: 'dead', at: '12:07', tasks: ['tasks/001-a.md'], build: files('001-a') },
   unverified: { tool: 'marestail', pid: 'live', at: '12:08', tasks: ['tasks/001-a.md'], build: async dir => {
     await files('001-a')(dir);
-    await log(dir, '001-a', '== qa (09-qa) attempt 1\npipeline complete, NOT verified by eye\n', '12:10');
+    await log(dir, '001-a', logged(UNVERIFIED_TAIL), '12:10');
   } },
-  'stopped-older': { tool: 'marestail', pid: 'dead', at: '12:02', tasks: ['tasks/001-w.md', 'tasks/002-x.md'], build: named(HUMAN, BOOM) },
-  'failed-older': { tool: 'marestail', pid: 'dead', at: '12:02', tasks: ['tasks/001-w.md', 'tasks/002-x.md'], build: named(BOOM, HUMAN) },
+  'stopped-older': { tool: 'marestail', pid: 'dead', at: '12:02', tasks: ['tasks/001-w.md', 'tasks/002-x.md'], build: named(logged(HUMAN_TAIL), logged(BOOM_TAIL)) },
+  'failed-older': { tool: 'marestail', pid: 'dead', at: '12:02', tasks: ['tasks/001-w.md', 'tasks/002-x.md'], build: named(logged(BOOM_TAIL), logged(HUMAN_TAIL)) },
   removed: { tool: 'marestail', pid: 'dead', at: '12:00', tasks: [], build: async dir => rm(dir, { recursive: true }) },
 };
 
@@ -191,6 +202,76 @@ async function only(name: string): Promise<Record<string, unknown>> {
 }
 
 const SC_LINES = Array.from({ length: 25 }, (_, index) => `[sc] line ${index + 1}`);
+const wait = globalThis.setTimeout;
+
+type RunAnswer = { status: number; body: { runs: Record<string, unknown>[] } };
+type Flight = { pending: Promise<RunAnswer>; settled: () => boolean };
+
+function realDelay(ms: number): Promise<void> {
+  return new Promise(resolve => { wait(resolve, ms); });
+}
+
+function alivePid(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function killPid(pid: number): void {
+  if (pid <= 0) return;
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch {
+    return;
+  }
+}
+
+async function appeared(path: string): Promise<boolean> {
+  return readFile(path, 'utf8').then(() => true, () => false);
+}
+
+async function until(ready: () => Promise<boolean>): Promise<void> {
+  for (let left = 100; left > 0; left -= 1) {
+    await vi.advanceTimersByTimeAsync(0);
+    if (await ready()) return;
+    await realDelay(20);
+  }
+  throw new Error('not ready');
+}
+
+async function readPid(name: string): Promise<number> {
+  const path = join(worktreeOf(name), 'sc.pid');
+  await until(() => appeared(path));
+  return Number(await readFile(path, 'utf8'));
+}
+
+async function stopSc(name: string): Promise<void> {
+  killPid(Number(await readFile(join(worktreeOf(name), 'sc.pid'), 'utf8').catch(() => '')));
+  await realDelay(50);
+}
+
+function track(pending: Promise<RunAnswer>): Flight {
+  let done = false;
+  return { pending: pending.then(result => { done = true; return result; }), settled: () => done };
+}
+
+function take(pending: Promise<RunAnswer>): Promise<RunAnswer> {
+  const failed = realDelay(2000).then(() => Promise.reject(new Error('still pending')));
+  return Promise.race([pending, failed]);
+}
+
+function installClock(): () => void {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  return () => { vi.useRealTimers(); };
+}
+
+async function release(name: string, restore: () => void): Promise<void> {
+  await stopSc(name);
+  restore();
+}
 
 beforeEach(async () => {
   live = [];
@@ -203,6 +284,13 @@ beforeEach(async () => {
   await mkdir(bin, { recursive: true });
   await writeFile(join(bin, 'sc'), `#!/bin/sh
 d="$3"
+echo $$ > "$d/sc.pid"
+trap 'echo done > "$d/sc.ended"' EXIT
+if [ -e "$d/sc-status.hold" ]; then
+  while [ ! -e "$d/sc-status.go" ]; do sleep 0.02; done
+  cat "$d/sc-status.json"
+  exit 0
+fi
 if [ -e "$d/sc-status.slow" ]; then sleep 15; fi
 if [ -e "$d/sc-status.pause" ]; then sleep 3; cat "$d/sc-status.pause"; exit 0; fi
 if [ -e "$d/sc-status.err" ]; then cat "$d/sc-status.err" >&2; exit 1; fi
@@ -221,16 +309,17 @@ afterEach(async () => {
 
 describe('GET /api/runs', () => {
   it.each([
-    ['done', 'done', 'all tasks complete · 2 of 2 tasks', ['== qa (09-qa) attempt 1', 'pipeline complete']],
-    ['stopped', 'stopped for a human', 'task 002-x · coder · attempt 2 · 1 of 2 tasks', ['== coder (03-coder) attempt 2', 'gate failed', 'stopping for a human']],
-    ['failed', 'failed', 'task 001-f · coder · attempt 1 · 0 of 1 tasks', ['== coder (03-coder) attempt 1', 'npm ERR! boom']],
-    ['stopped-older', 'stopped for a human', 'task 002-x · coder · attempt 1 · 0 of 2 tasks', ['== coder (03-coder) attempt 1', 'npm ERR! boom']],
-    ['failed-older', 'failed', 'task 002-x · coder · attempt 2 · 0 of 2 tasks', ['== coder (03-coder) attempt 2', 'gate failed', 'stopping for a human']],
+    ['done', 'done', 'all tasks complete · 2 of 2 tasks', DONE_TAIL],
+    ['stopped', 'stopped for a human', 'task 002-x · coder · attempt 2 · 1 of 2 tasks', HUMAN_TAIL],
+    ['failed', 'failed', 'task 001-f · coder · attempt 1 · 0 of 1 tasks', BOOM_TAIL],
+    ['stopped-older', 'stopped for a human', 'task 002-x · coder · attempt 1 · 0 of 2 tasks', BOOM_TAIL],
+    ['failed-older', 'failed', 'task 002-x · coder · attempt 2 · 0 of 2 tasks', HUMAN_TAIL],
     ['running', 'running', 'task 002-step · hardener · attempt 1 · 1 of 3 tasks', ['starting', '== coder (07-coder) attempt 2', '== hardener (07-hardener) attempt 1']],
     ['dead', 'dead', 'task 001-task · 0 of 1 tasks', ['starting']],
-    ['between', 'running', 'task 001-a · finished · 1 of 2 tasks', ['== qa (09-qa) attempt 1', 'pipeline complete']],
+    ['between', 'running', 'task 001-a · finished · 1 of 2 tasks', DONE_TAIL],
+    ['refused', 'running', 'task 001-a · finished · 1 of 2 tasks', REFUSED_TAIL],
     ['fresh', 'dead', 'no task started · 0 of 1 tasks', []],
-    ['unverified', 'running', 'task 001-a · finished · 1 of 1 tasks', ['== qa (09-qa) attempt 1', 'pipeline complete, NOT verified by eye']],
+    ['unverified', 'running', 'task 001-a · finished · 1 of 1 tasks', UNVERIFIED_TAIL],
     ['removed', 'worktree removed', 'worktree removed', []],
     ['sc', 'running', 'running · 4 agents · 7 open · 3 done · 2 PRs', SC_LINES.slice(5)],
     ['sc-one', 'running', 'planning · 1 agent · 1 PR', []],
@@ -259,6 +348,55 @@ describe('GET /api/runs', () => {
     const waited = Date.now() - started;
     expect(waited).toBeGreaterThan(2500);
     expect(waited).toBeLessThan(12000);
+  }, 15000);
+
+  it('A silent sc stays pending until 10 seconds, then is killed', async () => {
+    const started = Date.now();
+    const before = await writeRuns([await entry('sc-slow')]);
+    const restore = installClock();
+    try {
+      const flight = track(call('/api/runs'));
+      const pid = await readPid('sc-slow');
+      await vi.advanceTimersByTimeAsync(9999);
+      await realDelay(80);
+      expect(flight.settled()).toBe(false);
+      expect(alivePid(pid)).toBe(true);
+      await vi.advanceTimersByTimeAsync(1);
+      await until(() => Promise.resolve(!alivePid(pid)));
+      const answer = await take(flight.pending);
+      expect(answer.status).toBe(200);
+      expect(answer.body.runs[0]).toMatchObject({ state: 'running', position: 'sc status failed: timed out after 10s · pid alive' });
+      expect(await appeared(join(worktreeOf('sc-slow'), 'sc.ended'))).toBe(false);
+      expect(Date.now() - started).toBeLessThan(12000);
+      expect(await runsText()).toBe(before);
+    } finally {
+      await release('sc-slow', restore);
+    }
+  }, 15000);
+
+  it('An sc that answers just before 10 seconds keeps its position', async () => {
+    const started = Date.now();
+    const before = await writeRuns([await entry('sc-one')]);
+    await put(join(worktreeOf('sc-one'), 'sc-status.hold'), '');
+    const restore = installClock();
+    try {
+      const flight = track(call('/api/runs'));
+      const pid = await readPid('sc-one');
+      await vi.advanceTimersByTimeAsync(9999);
+      await realDelay(80);
+      expect(flight.settled()).toBe(false);
+      expect(alivePid(pid)).toBe(true);
+      await put(join(worktreeOf('sc-one'), 'sc-status.go'), '');
+      const answer = await take(flight.pending);
+      expect(answer.status).toBe(200);
+      expect(answer.body.runs[0]).toMatchObject({ state: 'running', position: 'planning · 1 agent · 1 PR' });
+      expect(await appeared(join(worktreeOf('sc-one'), 'sc.ended'))).toBe(true);
+      expect(alivePid(pid)).toBe(false);
+      expect(Date.now() - started).toBeLessThan(12000);
+      expect(await runsText()).toBe(before);
+    } finally {
+      await release('sc-one', restore);
+    }
   }, 15000);
 
   it('One run carries every field, and slop-cannon PRs are listed', async () => {

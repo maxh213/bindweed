@@ -22,10 +22,6 @@ function tailOf(lines: string[]): string[] {
   return lines.slice(-TAIL);
 }
 
-function lastOf(lines: string[]): string {
-  return lines.at(-1) ?? '';
-}
-
 function completes(line: string): boolean {
   return line.startsWith('pipeline complete');
 }
@@ -41,7 +37,7 @@ function verdictOf(line: string): Verdict | undefined {
 }
 
 function failedOrStopped(lines: string[]): RunState {
-  return lastOf(lines).includes('stopping for a human') ? 'stopped for a human' : 'failed';
+  return lines.some(line => line.includes('stopping for a human')) ? 'stopped for a human' : 'failed';
 }
 
 async function stateOf(summary: string[], alive: boolean, stoppedLines: MarestailFacts['stoppedLines']): Promise<RunState> {
@@ -90,7 +86,7 @@ function rolePart(log: TaskLog): string | undefined {
 }
 
 function currentPart(log: TaskLog): string {
-  if (completes(lastOf(log.lines))) return `task ${log.id} · finished`;
+  if (log.lines.some(completes)) return `task ${log.id} · finished`;
   const role = rolePart(log);
   return role === undefined ? `task ${log.id}` : `task ${log.id} · ${role}`;
 }

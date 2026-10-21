@@ -84,6 +84,18 @@ function titles(): string[] {
   return Array.from(document.querySelectorAll('.run-title')).map(el => el.textContent ?? '');
 }
 
+function loadSheet(): void {
+  const style = document.createElement('style');
+  style.textContent = process.getBuiltinModule('node:fs').readFileSync(new URL('./app.css', import.meta.url), 'utf8');
+  document.head.appendChild(style);
+}
+
+function painted(pill: Element): string {
+  const style = window.getComputedStyle(pill);
+  const kind = pill.className.split(' ').find(name => name.startsWith('pill-')) ?? '';
+  return `${kind} ${style.color} ${style.backgroundColor}`;
+}
+
 async function click(element: Element): Promise<void> {
   await act(async () => { fireEvent.click(element); });
 }
@@ -158,12 +170,19 @@ describe('Runs panel', () => {
     expect(runCalls).toBe(1);
   });
 
-  it('The pills have their state colours and white text', () => {
-    const css = process.getBuiltinModule('node:fs').readFileSync(new URL('./app.css', import.meta.url), 'utf8').replaceAll(/\s+/g, ' ');
-    expect(css).toContain('.pill { padding: 0.1rem 0.6rem; border-radius: 999px; color: #ffffff;');
-    for (const [name, colour] of [['running', '#2563eb'], ['stopped', '#d97706'], ['failed', '#dc2626'], ['done', '#16a34a'], ['dead', '#6b7280'], ['removed', '#9ca3af']]) {
-      expect(css).toContain(`.pill-${name} { background: ${colour}; }`);
-    }
+  it('The pills have their state colours and white text', async () => {
+    loadSheet();
+    await open('#runs');
+    expect(Array.from(document.querySelectorAll('.pill')).map(painted)).toEqual([
+      'pill-dead rgb(255, 255, 255) rgb(107, 114, 128)',
+      'pill-running rgb(255, 255, 255) rgb(37, 99, 235)',
+      'pill-dead rgb(255, 255, 255) rgb(107, 114, 128)',
+      'pill-running rgb(255, 255, 255) rgb(37, 99, 235)',
+      'pill-failed rgb(255, 255, 255) rgb(220, 38, 38)',
+      'pill-stopped rgb(255, 255, 255) rgb(217, 119, 6)',
+      'pill-done rgb(255, 255, 255) rgb(22, 163, 74)',
+      'pill-removed rgb(255, 255, 255) rgb(156, 163, 175)',
+    ]);
   });
 
   it('A plan file bindweed cannot load gives a plain title', async () => {
