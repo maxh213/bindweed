@@ -92,14 +92,17 @@ Feature: say what you dislike and review the proposed reshaping on the canvas
       smaller text of each unordered pair, sorted by code unit and joined with
       " | ". A node line is "node <id> <kind> <name>" plus " files <n>" when
       the node has files, then " ca <ca> ce <ce> i <i> a <a> d <d>", then
-      " zone <zone>" when it has a zone, then " crap <crap> coverage <coverage>
-      mutants <mutants>" for each of those fields the node has, then
-      " cycle <true|false>". An edge line is "edge <from> -> <to> runtime <n>
+      " zone <zone>" when it has a zone, then " crap <crap>", " coverage
+      <coverage>" and " mutants <mutants>", in that order, for each of those
+      fields the planned graph gives the node: crap is "–" or the number as
+      String() writes it, coverage is the graph's two-decimal text. Only these
+      three are added; the graph's crapMax and its "coverage" and "mutation"
+      flags ("on", "stale", "off") are not. Then " cycle <true|false>". An edge line is "edge <from> -> <to> runtime <n>
       type <n>", then " heritage <n>" when heritage is greater than 0, then
       " cycle <true|false>", then " text <cycleText>" when the edge has one.
       Tests and external packages are off. Redo is not applied.
     - ## The plan's edits so far, then "none", or one line per edit with its
-      sentence and then one line of JSON.stringify of the edits
+      sentence, then one line JSON.stringify(edits) of the whole array
     - ## Edit JSON, then these lines, word for word:
       {"kind":"move-file","file":"<path>","to":"<dir>"}
       {"kind":"cut-edge","from":"<box>","to":"<box>","files":[["<file>","<file>"]]}
@@ -198,6 +201,52 @@ Feature: say what you dislike and review the proposed reshaping on the canvas
         node src/ports/b.ts file b.ts ca 1 ce 2 i 0.67 a 0.00 d 0.33 cycle false
         cycles none
         """
+
+    Scenario: Health from the reports and every saved edit are in the prompt
+      Given the plan "Gate" has the package and the move
+      And "/tmp/qa/layered/src/domain/rule.ts" holds "export function rule(n: number): number {\n  if (n > 0) return 1;\n  return 0;\n}\n"
+      And then "/tmp/qa/layered/.marestail/ts-coverage/coverage-final.json" holds {"src/app/a.ts":{"statementMap":{"0":{"start":{"line":4}}},"s":{"0":1}},"src/domain/rule.ts":{"statementMap":{"0":{"start":{"line":2}},"1":{"start":{"line":3}}},"s":{"0":1,"1":0}}}
+      And "/tmp/qa/layered/reports/mutation/mutation.json" holds {"files":{"src/app/a.ts":{"mutants":[{"status":"Survived"},{"status":"Killed"},{"status":"NoCoverage"}]},"src/domain/rule.ts":{"mutants":[{"status":"Survived"}]}}}
+      And both reports are newer than every source file and I send "POST /api/rescan" with the token
+      When I send "POST /api/plans/gate/propose" with the token and {"text":"the ui knows about the scanner","at":"src"}
+      Then the status is 200
+      And /tmp/qa/log/1.prompt contains this block, followed by a blank line and "## The plan's edits so far":
+        """
+        ## Planned graph
+        ### src
+        node src/app package app files 1 ca 1 ce 1 i 0.50 a 0.00 d 0.50 zone healthy coverage 1.00 mutants 2 cycle true
+        node src/ports package ports files 1 ca 1 ce 1 i 0.50 a 0.00 d 0.50 zone healthy crap – mutants 0 cycle true
+        node src/infra package infra files 1 ca 2 ce 1 i 0.33 a 0.00 d 0.67 zone pain crap – mutants 0 cycle false
+        node src/domain package domain files 2 ca 2 ce 0 i 0.00 a 0.00 d 1.00 zone pain crap 2.5 coverage 0.50 mutants 1 cycle false
+        edge src/app -> src/domain runtime 0 type 1 cycle false
+        edge src/app -> src/infra runtime 1 type 0 cycle false
+        edge src/app -> src/ports runtime 1 type 0 cycle true text app → ports → app
+        edge src/infra -> src/domain runtime 1 type 0 cycle false
+        edge src/ports -> src/app runtime 1 type 0 cycle true text ports → app → ports
+        edge src/ports -> src/infra runtime 1 type 0 cycle false
+        cycles app → ports → app
+        ### src/app
+        node src/app/a.ts file a.ts ca 1 ce 3 i 0.75 a 0.00 d 0.25 coverage 1.00 mutants 2 cycle false
+        cycles none
+        ### src/domain
+        node src/domain/model.ts file model.ts ca 2 ce 0 i 0.00 a 0.00 d 1.00 crap – mutants 0 cycle false
+        node src/domain/rule.ts file rule.ts ca 0 ce 0 i – a 0.00 d – crap 2.5 coverage 0.50 mutants 1 cycle false
+        cycles none
+        ### src/infra
+        node src/infra/db.ts file db.ts ca 2 ce 1 i 0.33 a 0.00 d 0.67 crap – mutants 0 cycle false
+        cycles none
+        ### src/ports
+        node src/ports/b.ts file b.ts ca 1 ce 2 i 0.67 a 0.00 d 0.33 crap – mutants 0 cycle false
+        cycles none
+        """
+      And it contains this block, followed by a blank line and "## Edit JSON":
+        """
+        ## The plan's edits so far
+        Create package src/ports
+        Move src/app/b.ts to src/ports
+        [{"kind":"create-package","path":"src/ports"},{"kind":"move-file","file":"src/app/b.ts","to":"src/ports"}]
+        """
+      And it does not contain "crapMax", "coverage on" or "mutation on"
 
     Scenario: Review uses the same check and writes nothing
       Given the plan "Gate" has no edits
@@ -410,8 +459,11 @@ Feature: say what you dislike and review the proposed reshaping on the canvas
     the open list becomes that turn's undecided edits. Earlier undecided
     indexes stay undecided in the chat and are not shown. On load, the open
     list is the latest turn's undecided edits, checked. Conversation starts
-    aria-expanded "false"; activating it sets aria-expanded "true" and shows,
-    per turn in order, "They said: <text>", "Summary: <summary>" and one line
+    aria-expanded "false"; activating it sets aria-expanded "true" and shows
+    the lines of the prompt's "## Conversation so far" section, one element per
+    line whose text content is that line, leading spaces kept: per turn in
+    order, "They said: <first line of text>", each further line of the text
+    after two spaces, "Summary: <summary>" and one line
     "<index> <accepted|rejected|open>: <sentence>" per edit.
 
     Scenario: Propose, accept the cut, undo it, and reject the rest
@@ -491,6 +543,27 @@ Feature: say what you dislike and review the proposed reshaping on the canvas
       And the proposals region lists "Move src/app/b.ts to src/ports" with "Accept Move src/app/b.ts to src/ports" and "Reject Move src/app/b.ts to src/ports"
       When I click "Accept Move src/app/b.ts to src/ports"
       Then "GET /api/plans/gate" has edits [the package, the move] and the decisions are {"1":"accepted","2":"accepted"}
+
+    Scenario: Conversation shows a two-line text as the prompt does
+      Given the plan "Gate" has the package cut
+      And "PUT /api/plans/gate/chat" stored the two turns of "The prompt quotes the plan's edits and every earlier turn"
+      When I open "http://127.0.0.1:5000/?token={token}#at=src&plan=gate"
+      Then the proposals region shows "Split app." and "dropped: {"kind":"fold","file":"src/app/a.ts"} — not an edit"
+      When I click "Conversation"
+      Then it shows these lines, one element each, in order, with leading spaces kept:
+        """
+        They said: the ui knows about the scanner
+        Summary: Pull scanning out of the ui so app has one job.
+        0 accepted: src/app must not import src/domain (1 import)
+        1 rejected: Create package src/ports
+        2 rejected: Move src/app/b.ts to src/ports
+        3 rejected: Move src/no-such.ts to src/ports
+        They said: split it
+          by job
+        Summary: Split app.
+        0 rejected: src/domain should use src/app
+        1 open: {"kind":"fold","file":"src/app/a.ts"}
+        """
 
     Scenario: A reply element that is not an edit is shown by its JSON
       Given the plan "Gate" has no edits
