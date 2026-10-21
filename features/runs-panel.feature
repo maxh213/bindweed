@@ -16,6 +16,9 @@ Feature: a Runs panel shows where every launched run stands
   startedAt "2026-10-21THH:MM:00.000Z". Under "/tmp/qa/runs/wt-<name>", "log
   <id>" is ".marestail/runs/<id>/pipeline.log" and "summary" is
   ".marestail/runs/overnight-20261021T1230.md", mtime at 12:30.
+  "<file> is a plan named X" means <file> is {"version":1,"name":X,
+  "slug":<its slug>,"createdAt":"2026-10-21T12:00:00.000Z","baseCommit":
+  <the fixture's 40-hex HEAD>,"edits":[],"redo":[]}, a plan bindweed loads.
 
   The marestail worktrees, tool "marestail":
   | name       | files                                                                                                                                  | tasks | pid  | startedAt |
@@ -42,7 +45,8 @@ Feature: a Runs panel shows where every launched run stands
   | sc-done  | sc-status.json {"state":{"phase":"complete"},"agents":[],"beads":{"done":5},"prs":[]}                                                                                                                | no file    | dead | 12:11 |
   | sc-err   | sc-status.err "no slop-cannon state here\nsecond line\n"                                                                                                                                               | no file    | dead | 12:12 |
   | sc-slow  | sc-status.slow                                                                                                                                                                                         | no file    | live | 12:13 |
-  | sc-junk  | sc-status.json "nope"                                                                                                                                                                                  | no file    | live | 12:14 |
+  | sc-junk  | sc-status.json "null"                                                                                                                                                                                  | no file    | live | 12:14 |
+  | sc-text  | sc-status.json "nope"                                                                                                                                                                                  | no file    | live | 12:15 |
 
   Background:
     Given bindweed's ui was built with "npm run build"
@@ -57,9 +61,11 @@ Feature: a Runs panel shows where every launched run stands
     "slop-cannon". Runs are newest "startedAt" first; on a tie the later
     element comes first. Each run is exactly {"slug","planName","planExists",
     "tool","branch","worktree","worktreeExists","pid","startedAt","state",
-    "position","prs","logTail"}. "planName" is the string "name" of
-    ".bindweed/plans/<slug>.json" and "planExists" true, or the slug and
-    false when that file is missing or has no string name. "branch" and "pid"
+    "position","prs","logTail"}. When ".bindweed/plans/<slug>.json" is a
+    plan bindweed loads (the same check as GET /api/plans and
+    GET /api/plans/<slug>/contract), "planName" is its "name" and
+    "planExists" true; otherwise, missing, not JSON or not a valid plan,
+    "planName" is the slug and "planExists" false. "branch" and "pid"
     are the entry's string branch and numeric pid, else null. A pid is alive
     as in features/launch-the-run.feature. "prs" is [] except for sc.
     "logTail" is the last 20 lines of its file, without newlines, [] when the
@@ -97,14 +103,15 @@ Feature: a Runs panel shows where every launched run stands
     10-second timeout. From its JSON: phase is "state.phase"; agents is the
     number of "agents" elements with "alive" true; beads are the entries of
     the "beads" object, in its key order; "prs" is the "url" of each "prs"
-    element. A missing field counts as "", 0 or empty. State: "done" when
+    element. A missing or wrongly typed field counts as "", 0 or empty. State: "done" when
     phase is "done" or "complete", else "running" when the pid is alive, else
     "dead". Position: "<phase> · <agents> agent(s) · <n> <bead state>… · <n>
     PR(s)", singular only for exactly 1, with no bead parts when beads is
     empty. When sc fails, state follows the pid and position is "sc status
     failed: <reason> · pid alive" or "… · pid gone". <reason> is the first
     line of stderr, "exited <code>" when stderr is empty, "timed out after
-    10s", "not JSON", or "sc is not on PATH". logTail is the entry's "out" file.
+    10s", "not JSON" (stdout is not a JSON object: also null, [] or "x"),
+    or "sc is not on PATH". logTail is the entry's "out" file.
 
     Scenario Outline: Each run reports its state and position
       Given runs.json holds only entry <name>
@@ -129,10 +136,12 @@ Feature: a Runs panel shows where every launched run stands
         | sc-err  | dead                | sc status failed: no slop-cannon state here · pid gone | []                                                                          |
         | sc-slow | running             | sc status failed: timed out after 10s · pid alive   | []                                                                             |
         | sc-junk | running             | sc status failed: not JSON · pid alive              | []                                                                             |
+        | sc-text | running             | sc status failed: not JSON · pid alive              | []                                                                             |
 
     Scenario: One run carries every field, and slop-cannon PRs are listed
       Given runs.json holds entry sc then entry running
       And ".bindweed/plans/plan-sc.json" is a plan named "Plan SC"
+      And ".bindweed/plans/plan-running.json" is {"name":"Bad"}
       When I send "GET /api/runs" with the token
       Then run 0 is {"slug":"plan-sc","planName":"Plan SC","planExists":true,"tool":"slop-cannon","branch":"bindweed/plan-sc","worktree":"/tmp/qa/runs/wt-sc","worktreeExists":true,"pid":<its pid>,"startedAt":"2026-10-21T12:09:00.000Z","state":"running","position":"running · 4 agents · 7 open · 3 done · 2 PRs","prs":["https://example.test/pull/41","https://example.test/pull/42"],"logTail":<lines 6 to 25>}
       And run 1 has slug "plan-running", planName "plan-running", planExists false and prs []
@@ -246,6 +255,12 @@ Feature: a Runs panel shows where every launched run stands
       And each card's pill and position are those of the outline above, and its pill has that state's class and background
       And the "plan-sc" card has links "https://example.test/pull/41" and "https://example.test/pull/42"
       And only "plan-removed" has a "Forget" button
+
+    Scenario: A plan file bindweed cannot load gives a plain title
+      Given runs.json is [entry dead]
+      And ".bindweed/plans/plan-dead.json" is {"name":"Bad"}
+      When I open bindweed at "#runs"
+      Then the card's title is the plain text "plan-dead", with no link
 
     Scenario: A card's log tail, copy and plan link
       Given runs.json is [entry running]

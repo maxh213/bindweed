@@ -1,6 +1,6 @@
 # QA: a Runs panel shows where every launched run stands
 
-For a person with two terminals and a desktop browser with developer tools on the machine that runs bindweed (Node 22.18 or newer, git, and a clipboard tool: `pbpaste`, `wl-paste -n` or `xclip -selection clipboard -o`). Fake worktrees, no real agent. The fixtures are the ones in `features/runs-panel.feature`, minus `between`, `fresh`, `sc-one`, `sc-done`, `sc-slow` and `sc-junk`. The QA role, not the coder, writes the end-to-end test. The coder writes no file under `qa/`.
+For a person with two terminals and a desktop browser with developer tools on the machine that runs bindweed (Node 22.18 or newer, git, and a clipboard tool: `pbpaste`, `wl-paste -n` or `xclip -selection clipboard -o`). Fake worktrees, no real agent. The fixtures are the ones in `features/runs-panel.feature`, minus `between`, `fresh`, `sc-one`, `sc-done`, `sc-slow`, `sc-junk` and `sc-text`. The QA role, not the coder, writes the end-to-end test. The coder writes no file under `qa/`.
 
 ## Setup
 
@@ -54,8 +54,11 @@ printf '[%s,%s,%s,%s,%s,%s,%s,%s]' "$(entry removed marestail $DEAD 12:00 ',"tas
   "$(entry stopped marestail $DEAD 12:02 "$(t 001-w 002-x)")" "$(entry failed marestail $DEAD 12:03 "$(t 001-f)")" \
   "$(entry running marestail $LIVE1 12:04 "$(t 001-init 002-step 003-later)")" "$(entry dead marestail $DEAD 12:05 '')" \
   "$(entry sc-err slop-cannon $DEAD 12:12 ',"tasks":[]')" "$(entry sc slop-cannon $LIVE2 12:09 ',"tasks":[]')" > "$QA/layered/.bindweed/runs.json"
-printf '{"version":1,"name":"Plan Running","slug":"plan-running","createdAt":"2026-10-21T12:00:00.000Z","baseCommit":"HEAD","edits":[],"redo":[]}\n' > "$QA/layered/.bindweed/plans/plan-running.json"
-printf '{"version":1,"name":"Plan SC","slug":"plan-sc","createdAt":"2026-10-21T12:00:00.000Z","baseCommit":"HEAD","edits":[],"redo":[]}\n' > "$QA/layered/.bindweed/plans/plan-sc.json"
+HEAD=$(git -C "$QA/layered" rev-parse HEAD)
+plan() { printf '{"version":1,"name":"%s","slug":"%s","createdAt":"2026-10-21T12:00:00.000Z","baseCommit":"%s","edits":[],"redo":[]}\n' "$1" "$2" "$HEAD" > "$QA/layered/.bindweed/plans/$2.json"; }
+plan "Plan Running" plan-running
+plan "Plan SC" plan-sc
+printf '{"name":"Bad"}\n' > "$QA/layered/.bindweed/plans/plan-dead.json"
 echo "export BW=$BW QA=$QA R=$R LIVE1=$LIVE1 LIVE2=$LIVE2"
 ```
 
@@ -67,7 +70,7 @@ Paste the printed `export` line into the second terminal.
    **Expect:** the tab bar is `Files`, `Architecture`, `Runs`, and `Runs` carries a badge `2`. Exactly one `GET /api/runs` was made on load, and no more follow while Architecture is shown.
 
 2. Click `Runs`.
-   **Expect:** the hash is `#runs`, a `GET /api/runs` is made at once, then one every 5 seconds. Eight cards, newest start first (`plan-sc-err` at 12:12 is above `Plan SC` at 12:09), in this layout. `<elapsed>` is the time since that start, as `42s`, `7m`, `3h 5m` or `2d 3h`. Only `Plan SC` and `Plan Running` are links. Every `Log tail` is closed.
+   **Expect:** the hash is `#runs`, a `GET /api/runs` is made at once, then one every 5 seconds. Eight cards, newest start first (`plan-sc-err` at 12:12 is above `Plan SC` at 12:09), in this layout. `<elapsed>` is the time since that start, as `42s`, `7m`, `3h 5m` or `2d 3h`. Only `Plan SC` and `Plan Running` are links; `plan-dead` is plain text, as its plan file `{"name":"Bad"}` is not a plan bindweed loads. Every `Log tail` is closed.
 
 ```
 [Files]  [Architecture]  [Runs 2]
