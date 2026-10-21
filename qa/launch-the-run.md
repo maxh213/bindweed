@@ -1,6 +1,6 @@
 # QA: launch a plan as a run in its own worktree
 
-For a person with two terminals and a desktop browser on the machine that runs bindweed (Node 22.18 or newer, git, curl, and a clipboard tool: `pbpaste`, `wl-paste -n` or `xclip -selection clipboard -o`). The tree is the checked-in `qa/fixtures/layered`. No real agent runs. The fakes below are the ones in `features/launch-the-run.feature`, and they sleep 30 seconds, so the "still alive" check has to be pasted straight away. The QA role, not the coder, writes the end-to-end test. The coder writes no file under `qa/`.
+For a person with two terminals and a desktop browser on the machine that runs bindweed (Node 22.18 or newer, git, curl, and a clipboard tool: `pbpaste`, `wl-paste -n` or `xclip -selection clipboard -o`). The tree is the checked-in `qa/fixtures/layered`. No real agent runs. The fakes below match `features/launch-the-run.feature`, except `overnight.sh` and `sc` sleep 900 seconds here, not 30. That departs from the task's 30 seconds on purpose, so step 8 still finds the run alive. The QA role, not the coder, writes the end-to-end test. The coder writes no file under `qa/`.
 
 Launch never commits in the repository being browsed. `.bindweed/` is gitignored, so `git status --porcelain` stays empty. The tick is `✓` (U+2713). The em dash in the task bodies is `—` (U+2014). Where JSON is expected, key order may differ.
 
@@ -21,19 +21,22 @@ if [ "\$1" = install ]; then
   if [ -e "$QA/log/fail-install-quiet" ]; then exit 1; fi
   if [ -e "$QA/log/install.wait" ]; then while [ ! -e "$QA/log/install.go" ]; do sleep 0.1; done; fi
   printf 'installed=1\n' > marestail.toml
+  printf 'qa tasks\n' > tasks/README.md
+  printf 'qa-ignore\n' >> .gitignore
 fi
 exit 0
 EOF
 cat > "$QA/fakes/tools/overnight.sh" << EOF
 #!/bin/sh
 node -e 'const fs=require("fs"); const e=process.env; fs.writeFileSync("$QA/log/overnight.json", JSON.stringify({argv:process.argv.slice(1), cwd:process.cwd(), model:e.MODEL??null, scope:e.SCOPE??null, focus:e.FOCUS??null, stop:e.STOP_AT??null, claudecode:e.CLAUDECODE??null, entrypoint:e.CLAUDE_CODE_ENTRYPOINT??null, configDir:e.CLAUDE_CONFIG_DIR??null, pathHead:(e.PATH||"").split(":")[0]})+"\\n")' -- "\$@"
-sleep 30
+if [ -e "$QA/log/overnight.quick" ]; then exit 3; fi
+sleep 900
 EOF
 cat > "$QA/fakes/bin/sc" << EOF
 #!/bin/sh
 node -e 'const fs=require("fs"); fs.writeFileSync("$QA/log/sc.json", JSON.stringify({argv:process.argv.slice(1), cwd:process.cwd()})+"\\n")' -- "\$@"
 printf 'started\n'
-sleep 30
+sleep 900
 EOF
 cat > "$QA/fakes/bin/systemd-inhibit" << 'EOF'
 #!/bin/sh
@@ -116,7 +119,7 @@ marestail watch               Copy command
 
    `<QA>` is the expanded `$QA`. The three pastes are that path, `bindweed/gate` and `marestail watch`, with nothing added.
 
-8. Immediately, in the second terminal, paste:
+8. In the second terminal, paste:
 
 ```sh
 PID=$(node -e 'const r=require(process.argv[1]); console.log(r[r.length-1].pid)' "$QA/layered/.bindweed/runs.json")
@@ -125,7 +128,7 @@ kill -0 "$PID" && echo alive
 ```
 
    In the first terminal press Ctrl-C. In the second run `kill -0 "$PID" && echo still-alive`. Start bindweed again with the step 1 `PATH` and `CLAUDE` variables. Open the new address with `#at=src&plan=gate` and the new token, and click `Launch`.
-   **Expect:** both `alive` and `still-alive` print. The dialog shows `a run for this plan is still alive`, its `Launch` is disabled, and the same path, `bindweed/gate` and `marestail watch` are shown. If `still-alive` does not print, the 30 seconds had already elapsed; stop and say so rather than treating a dead run as a pass.
+   **Expect:** both `alive` and `still-alive` print. The dialog shows `a run for this plan is still alive`, its `Launch` is disabled, and the same path, `bindweed/gate` and `marestail watch` are shown.
 
 9. In the second terminal paste:
 
@@ -136,17 +139,21 @@ cmp -s "$QA/preview.cjs" "$QA/layered-bw-gate/.dependency-cruiser.cjs" && echo c
 echo "--- overnight ---"
 node -e 'const o=require(process.argv[1]); console.log(o.argv.join(" ")); console.log([o.model,o.scope,o.focus,o.stop,o.claudecode,o.pathHead].join(" | "))' "$QA/log/overnight.json"
 echo "--- script ---"
-grep -c 'systemd-inhibit --what=idle --who=bindweed --why="bindweed gate"' "$QA/layered-bw-gate"/.marestail/runs/launch-*.sh
+grep -c "systemd-inhibit --what=idle --who=bindweed --why='bindweed gate'" "$QA/layered-bw-gate"/.marestail/runs/launch-*.sh
 grep -c "$QA/fakes/tools/overnight.sh" "$QA/layered-bw-gate"/.marestail/runs/launch-*.sh
 echo "--- toml ---"
 cat "$QA/layered-bw-gate/marestail.toml"
+echo "--- readme ---"
+cat "$QA/layered-bw-gate/tasks/README.md"
+echo "--- ignore ---"
+cat "$QA/layered-bw-gate/.gitignore"
 echo "--- browsed ---"
 git -C "$QA/layered" status --porcelain && echo porcelain-empty
 test ! -e "$QA/layered/.dependency-cruiser.cjs" && echo cruiser-not-here
 cat "$QA/log/marestail.log"
 ```
 
-   **Expect:** the subject is `bindweed: Gate`, then a blank line, then `src/app must not import src/domain (1 import)`, `Plan: gate` and `Base: ` plus 40 hex characters. The paths are `.dependency-cruiser.cjs`, `marestail.toml`, `tasks/005-add-core.md`, `tasks/006-move-b.md` and `tasks/007-cut-app-domain.md`. `cruiser-matches` prints. The overnight line is `tasks/005-add-core.md tasks/006-move-b.md tasks/007-cut-app-domain.md`, then `dandelion/route-best | hard | src/app/a.ts src/domain/model.ts | qa | null | $QA/fakes/bin`. Both greps print `1`. The toml cat prints `installed=1`. `porcelain-empty` and `cruiser-not-here` print. The log is the line `install .`.
+   **Expect:** the subject is `bindweed: Gate`, then a blank line, then `src/app must not import src/domain (1 import)`, `Plan: gate` and `Base: ` plus 40 hex characters. The paths, in this order, are `.dependency-cruiser.cjs`, `.gitignore`, `marestail.toml`, `tasks/005-add-core.md`, `tasks/006-move-b.md`, `tasks/007-cut-app-domain.md` and `tasks/README.md`. `cruiser-matches` prints. The overnight line is `tasks/005-add-core.md tasks/006-move-b.md tasks/007-cut-app-domain.md`, then `dandelion/route-best | hard | src/app/a.ts src/domain/model.ts | qa | null | $QA/fakes/bin`. Both greps print `1`. The toml cat prints `installed=1`. The readme cat prints `qa tasks`. The ignore cat prints `qa-ignore`. `porcelain-empty` and `cruiser-not-here` print. The log is the line `install .`.
 
 10. Kill the run and the branch it left, then launch into a branch that already exists. Paste:
 

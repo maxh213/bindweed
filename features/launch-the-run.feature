@@ -10,6 +10,7 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
   the one in features/flesh-out-into-tasks-and-brief.feature. Its sentence is
   "src/app must not import src/domain (1 import)". The em dash in a task body
   is U+2014. A note "X" is {"kind":"note","target":{"node":"src/domain"},"text":"X"}.
+  In a quoted step, \" is one double quote.
 
   "The three tasks" are, in order, {"file":"005-add-core.md","title":"Add the core package","body":"# 005 — Add the core package\n\nCreate src/core.\n"},
   {"file":"006-move-b.md","title":"Move b into infra","body":"# 006 — Move b into infra\n\nMove src/app/b.ts to src/infra.\n"}
@@ -29,9 +30,12 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
   "/tmp/qa/log/fail-install-quiet" exists, it exits 1 and prints nothing.
   When "/tmp/qa/log/install.wait" exists, that install waits until
   "/tmp/qa/log/install.go" exists. Otherwise an install writes
-  "installed=1\n" as "marestail.toml" in its working directory and exits 0.
-  Any other invocation exits 0. "overnight.sh" writes
-  "/tmp/qa/log/overnight.json" and sleeps 30 seconds. The JSON holds "argv"
+  "installed=1\n" as "marestail.toml", writes "qa tasks\n" as
+  "tasks/README.md", appends "qa-ignore\n" to ".gitignore" (creating it
+  when it is absent), and exits 0. Any other invocation exits 0.
+  "overnight.sh" writes "/tmp/qa/log/overnight.json". When
+  "/tmp/qa/log/overnight.quick" exists it then exits 3 and does not sleep.
+  Otherwise it sleeps 30 seconds. The JSON holds "argv"
   (its arguments), "cwd", "model", "scope", "focus", "stop", "claudecode",
   "entrypoint", "configDir" and "pathHead": the environment values MODEL,
   SCOPE, FOCUS, STOP_AT, CLAUDECODE, CLAUDE_CODE_ENTRYPOINT and
@@ -44,6 +48,11 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
   launch" is that POST with {"tool":"slop-cannon","safety":"on","ammo":"","cartridge":""}.
   Each scenario starts from the Background again, which deletes
   "/tmp/qa/layered-bw-gate" when it is present, and kills any pid it launched.
+  "The nosystemd directory" is "/tmp/qa/fakes/nosystemd", holding only
+  symlinks "node", "git", "bash", "setsid", "sh" and "sleep" to the absolute
+  paths those commands had before the restart, plus executable copies of the
+  fake "marestail" and the fake "sc", and no "systemd-inhibit". Restarting
+  bindweed on it sets PATH to exactly that directory.
 
   In a table, "(empty)" is the empty string and a written \n is a newline.
   "<baseCommit>" is that plan's baseCommit. "The marestail body" is
@@ -77,8 +86,11 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
     non-object element, a pid that is not a number, and a dead pid are not
     alive. Another slug does not count. When the last such alive object also
     has string "worktree" and "tool" "marestail" or "slop-cannon", the body
-    also has "worktree", "branch" and "watch": "marestail watch", or
-    "sc status --repo <worktree>". Otherwise those three keys are absent.
+    also has "worktree" (that string) and "watch": "marestail watch", or
+    "sc status --repo <worktree>". "branch" is that object's "branch" when
+    it is a string, and it is never computed. When "branch" is missing or
+    not a string, the body has no "branch" key and still has "worktree" and
+    "watch". Otherwise "worktree", "branch" and "watch" are all absent.
     "focus" is the plan's focus string. A slug that fails ^[a-z0-9][a-z0-9-]*$
     or names no plan answers 404 {"error":"no such plan"}. Another method, or
     another path segment, answers 404 {"error":"not found"}.
@@ -113,8 +125,14 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
     answers 409 {"error":"already running"} and does not start a second run.
     That lock is the launch only: a running generate or propose does not block
     a launch, and a launch does not block them. A launch that reaches the
-    steps answers 200, including when a step stops the rest. "The steps are
-    all ok" means those five, each {"ok":true}.
+    steps answers 200, including when a step stops the rest. The body has
+    "steps" and no other key, plus "worktree" and "branch" when Worktree is
+    ok, plus "watch" and "pid" when Start is ok. An ok step is exactly
+    {"name":"<name>","ok":true} and has no "error" key. The step that stops
+    the rest is exactly {"name":"<name>","ok":false,"error":"<text>"} and is
+    the last element. "The steps are all ok" means "steps" is those five ok
+    steps, in order, and the body's keys are exactly "steps", "worktree",
+    "branch", "watch" and "pid". "pid" is the number the start line prints.
 
     Scenario Outline: Focus joins the current files and the planned paths
       Given the plan "Gate" has the only edits <edits>
@@ -131,6 +149,11 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
         | [{"kind":"fate","file":"src/app/b.ts","fate":"fold","into":"src/infra/db.ts"}] | src/app/b.ts src/infra/db.ts |
         | [{"kind":"add-edge","from":"src/domain","to":"src/app"}] | src/app/a.ts src/app/b.ts src/domain/model.ts |
         | [{"kind":"move-file","file":"src/missing.ts","to":"src/infra"}] | (empty) |
+
+    Scenario: A live entry without a branch string does not invent one
+      Given the launch plan and runs.json is [{"slug":"gate","tool":"marestail","worktree":"/tmp/qa/layered-bw-gate","pid":<n>}] where kill -0 of n succeeds, and that object has no "branch" key
+      When I send "GET /api/plans/gate/launch" with the token
+      Then "alive" is true and "worktree" is "/tmp/qa/layered-bw-gate" and "watch" is "marestail watch" and the body has no "branch" key
 
     Scenario Outline: Launch stays disabled and the reason is the first that applies
       Given the plan "Gate" has <plan> and bindweed's PATH <path> and runs.json <runs>
@@ -185,39 +208,66 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
     file. Marestail then runs "marestail install ." in the worktree when
     "marestail.toml" is absent. A non-zero exit stops Files with the first
     stderr line, or "marestail install exited with code N" when stderr is
-    empty. Saying "the Files error is X" means the steps are Worktree
-    {"ok":true} and Files {"name":"Files","ok":false,"error":X}, and no later
-    step. Slop-cannon skips the task files and the install.
+    empty. Saying "the Files error is X" means the body has exactly the
+    keys "steps", "worktree" and "branch", "steps" is
+    {"name":"Worktree","ok":true} then {"name":"Files","ok":false,"error":X},
+    and there is no later step. Slop-cannon skips the task files and the install.
     Commit, in the worktree, as the repository's git user.name and user.email,
     with commit.gpgsign false for this commit only. The message is
     "bindweed: <plan name>", a blank line, every edit's change-list sentence
     in order (stale ones too, not redo), then "Plan: <slug>" and
     "Base: <baseCommit>". No sentences leaves those two lines as the body.
-    "git add" names only the task files just written, the cruiser file when
-    this launch wrote it, and "marestail.toml" when this launch's install
-    created it. When this launch writes no file, git add is skipped and the
-    commit is made with --allow-empty and the same message. When git config
+    The commit adds the task files just written and the cruiser file when
+    this launch wrote it. When "marestail install ." ran, it also adds every
+    path "git status --porcelain -uall" lists in the worktree after the
+    install that it did not list before the install. Plain porcelain is not
+    enough: it hides a new file in an already untracked directory behind one
+    directory line. The path is the text after the status, and a line that
+    contains " -> " contributes both paths. When nothing is to be added,
+    git add is skipped and the commit is made with --allow-empty and the same
+    message. After a commit that succeeds, "git status --porcelain" in the
+    worktree is empty. When git config
     --get user.name is unset or empty the step stops with "Author identity
     unknown" and does not commit; user.email is checked second, with that same
     error. Any other non-zero exit stops with git's stderr. The browsed
     repository's git config is left as it was.
     Start. The stamp is the local time "YYYYMMDDTHHMM". Marestail writes
-    "<worktree>/.marestail/runs/launch-<stamp>.sh" and runs it with setsid,
-    stdin from /dev/null, and stdout and stderr to "launch-<stamp>.out" beside
-    it. The script puts the directory of the first "marestail" on PATH first
-    on its own PATH, unsets CLAUDECODE, CLAUDE_CODE_ENTRYPOINT and
+    "<worktree>/.marestail/runs/launch-<stamp>.sh" and runs it with setsid
+    and no --fork, stdin from /dev/null, and stdout and stderr to
+    "launch-<stamp>.out" beside it. The spawned pid is the script. Bindweed
+    collects that process's exit while it is still serving, so a script that
+    has exited is not a zombie and kill -0 of its pid fails. When
+    "<worktree>/.marestail" exists and is not a directory, Start is
+    {"name":"Start","ok":false,"error":"could not create <worktree>/.marestail/runs"},
+    there is no Record step, nothing is started, and runs.json is unchanged.
+    The script puts the directory of the first "marestail" on PATH first on
+    its own PATH, unsets CLAUDECODE, CLAUDE_CODE_ENTRYPOINT and
     CLAUDE_CONFIG_DIR, cds into the worktree, echoes
     "start pid=<pid> model=<model> scope=<scope or none> focus=<focus> stop=<stopAt>",
-    runs the overnight command, and echoes "exit <code> <UTC YYYY-MM-DDTHH:MM:SSZ>".
+    runs the overnight command, then echoes
+    "exit <code> <UTC YYYY-MM-DDTHH:MM:SSZ>" even when that command's status
+    is not 0, and then exits. Every value bindweed writes into the script is
+    single-quoted. A single quote inside a value is written as the four
+    characters '\'' . Those values are the directory prepended to PATH, the
+    worktree path, model, scope when present, focus, stopAt, the --why text,
+    the overnight path, and each task path. The script does not double-quote
+    them, so a space, "$", a backtick and either quote reach overnight.sh
+    unchanged, and the printed start line contains those same characters.
     "<marestail dir>" is the directory of the real path of that marestail.
-    The overnight command is "MODEL=<model> SCOPE=<scope> FOCUS=\"<focus>\" STOP_AT=<stopAt> systemd-inhibit --what=idle --who=bindweed --why=\"bindweed <slug>\" bash <marestail dir>/../tools/overnight.sh" and the task paths in plan order. The script writes that bash path as its normalized absolute path. The directory put first on PATH is the directory of the first "marestail" on PATH, not the real path's directory.
-    Blank scope omits SCOPE. When systemd-inhibit is not on PATH at launch,
-    the same command omits systemd-inhibit and its three arguments. The
-    recorded pid is the script pid, the one the start line prints, and it
-    stays alive while overnight.sh sleeps. Slop-cannon runs
+    The overnight command sets MODEL, SCOPE, FOCUS and STOP_AT to those
+    values, then runs "systemd-inhibit --what=idle --who=bindweed" with
+    --why the text "bindweed <slug>", then bash and the overnight path, then
+    the task paths in plan order. The script writes that bash path as its
+    normalized absolute path, inside single quotes. The directory put first
+    on PATH is the directory of the first "marestail" on PATH, not the real
+    path's directory. Blank scope omits SCOPE. When systemd-inhibit is not
+    on PATH at launch, the same command omits systemd-inhibit and its three
+    arguments. The recorded pid is the script pid, the one the start line
+    prints, and it stays alive while overnight.sh sleeps. Slop-cannon runs
     "sc --repo <worktree> --headless --safety <on|off>" plus "--ammo <ammo>"
     when ammo is not blank, plus "--cartridge <cartridge>" when cartridge is
-    not blank, plus "-m <brief>", detached the same way, with the served root
+    not blank, plus "-m <brief>", detached the same way and exec'd with that
+    argument vector, not through a shell, with the served root
     as its working directory, output to
     "<root>/.bindweed/runs/<slug>-<stamp>.out". The brief is one argument.
     Record appends {"slug","tool","worktree","branch","pid","startedAt","out","settings"}
@@ -235,16 +285,17 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
       Then "focus" is "src/app/a.ts src/domain/model.ts"
       When I save the "text" of "POST /api/plans/gate/contract" for the saved rule names as "/tmp/qa/preview.cjs"
       And I send a marestail launch with the token
-      Then the status is 200 and the steps are "Worktree", "Files", "Commit", "Start" and "Record", each {"ok":true}
+      Then the status is 200 and the steps are all ok
       And "worktree" is "/tmp/qa/layered-bw-gate", "branch" is "bindweed/gate" and "watch" is "marestail watch"
       And the new commit's parent is the browsed HEAD, its author and committer are "qa" and "qa@example.test", and it is not signed
       And its message is "bindweed: Gate", a blank line, "src/app must not import src/domain (1 import)", "Plan: gate" and "Base: " plus the plan's baseCommit
-      And the paths it adds are exactly ".dependency-cruiser.cjs", "marestail.toml", "tasks/005-add-core.md", "tasks/006-move-b.md" and "tasks/007-cut-app-domain.md"
-      And each task file equals its body, "marestail.toml" is "installed=1\n" and ".dependency-cruiser.cjs" equals "/tmp/qa/preview.cjs"
+      And the paths it adds are exactly, in this order, ".dependency-cruiser.cjs", ".gitignore", "marestail.toml", "tasks/005-add-core.md", "tasks/006-move-b.md", "tasks/007-cut-app-domain.md" and "tasks/README.md"
+      And each task file equals its body, "marestail.toml" is "installed=1\n", "tasks/README.md" is "qa tasks\n", ".gitignore" is "qa-ignore\n" and ".dependency-cruiser.cjs" equals "/tmp/qa/preview.cjs"
+      And "git status --porcelain" in the worktree is empty
       And "/tmp/qa/log/marestail.log" is the line "install ."
       And within 5 seconds "/tmp/qa/log/overnight.json" has "argv" ["tasks/005-add-core.md","tasks/006-move-b.md","tasks/007-cut-app-domain.md"], "cwd" the worktree, "model" "dandelion/route-best", "scope" "hard", "focus" "src/app/a.ts src/domain/model.ts", "stop" "qa", "pathHead" "/tmp/qa/fakes/bin" and "claudecode", "entrypoint" and "configDir" null
       And the launch script's first line of output is "start pid=<that pid> model=dandelion/route-best scope=hard focus=src/app/a.ts src/domain/model.ts stop=qa"
-      And the script contains "systemd-inhibit --what=idle --who=bindweed --why=\"bindweed gate\"" and "/tmp/qa/fakes/tools/overnight.sh"
+      And the script contains "systemd-inhibit --what=idle --who=bindweed", "--why='bindweed gate'" and "'/tmp/qa/fakes/tools/overnight.sh'"
       And "/tmp/qa/layered/.bindweed/runs.json" is one entry for "gate", tool "marestail", that worktree, branch and pid, "out" the launch ".out", and settings {"model":"dandelion/route-best","scope":"hard","focus":"src/app/a.ts src/domain/model.ts","stopAt":"qa"}
       And the plan file's bytes are unchanged and "/tmp/qa/layered/.dependency-cruiser.cjs" does not exist
       And "git rev-parse HEAD" in "/tmp/qa/layered" is unchanged and "git status --porcelain" there is empty
@@ -262,10 +313,33 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
       And the runs.json settings are {"model":"other","scope":"","focus":"src/only.ts","stopAt":"coder"}
 
     Scenario: Without systemd-inhibit the overnight command still runs
-      Given the launch plan and no executable "systemd-inhibit" on bindweed's PATH
+      Given the launch plan
+      And bindweed is restarted on the nosystemd directory
       When I send a marestail launch with the token
       Then the steps are all ok and the launch script does not contain "systemd-inhibit"
       And "/tmp/qa/log/overnight.json" has "argv" the three task paths and "model" "dandelion/route-best"
+
+    Scenario: Typed values reach overnight.sh unchanged
+      Given the launch plan
+      When I send "POST /api/plans/gate/launch" with the token and {"tool":"marestail","model":"a b","scope":"hard","focus":"src/$HOME \"x\" 'y'","stopAt":"qa"}
+      Then the steps are all ok
+      And "/tmp/qa/log/overnight.json" has "model" "a b", "scope" "hard", "focus" "src/$HOME \"x\" 'y'" and "stop" "qa"
+      And the first line of the launch ".out" is "start pid=<pid> model=a b scope=hard focus=src/$HOME \"x\" 'y' stop=qa" where <pid> is the body's "pid"
+      And the launch script contains "MODEL='a b'", "SCOPE='hard'", "STOP_AT='qa'", "cd '/tmp/qa/layered-bw-gate'" and "'/tmp/qa/fakes/tools/overnight.sh'"
+      And the launch script contains the text of this line:
+        """
+        FOCUS='src/$HOME "x" '\''y'\'''
+        """
+
+    Scenario: A run that exits by itself is not left alive
+      Given the launch plan and "/tmp/qa/log/overnight.quick" exists
+      When I send a marestail launch with the token
+      Then the steps are all ok
+      And within 5 seconds the launch ".out" file's last line is "exit 3 " plus a UTC timestamp "YYYY-MM-DDTHH:MM:SSZ", and kill -0 of the body's pid fails
+      When I send "GET /api/plans/gate/launch" with the token
+      Then "alive" is false and the body has no "worktree" key
+      When I send a marestail launch with the token
+      Then the status is 200 and the body is {"steps":[{"name":"Worktree","ok":false,"error":"a branch named 'bindweed/gate' already exists"}]}
 
     Scenario: The overnight script is the real marestail's sibling, and PATH gets the directory that was found
       Given "marestail" on PATH is a symlink to "/tmp/qa/fakes/real/marestail", a copy of the fake, and "overnight.sh" is still "/tmp/qa/fakes/tools/overnight.sh"
@@ -325,14 +399,14 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
     Scenario: An existing branch stops at Worktree and changes nothing
       Given the launch plan and the branch "bindweed/gate" already exists
       When I send a marestail launch with the token
-      Then the status is 200 and the only step is {"name":"Worktree","ok":false,"error":"a branch named 'bindweed/gate' already exists"}
+      Then the status is 200 and the body is {"steps":[{"name":"Worktree","ok":false,"error":"a branch named 'bindweed/gate' already exists"}]}
       And "/tmp/qa/layered-bw-gate" does not exist and "git worktree list" in "/tmp/qa/layered" has only the browsed repository
       And "/tmp/qa/log/marestail.log" does not exist and "git status --porcelain" in "/tmp/qa/layered" is empty
 
     Scenario: An existing directory stops at Worktree and does not create the branch
       Given the launch plan and an empty directory at "/tmp/qa/layered-bw-gate"
       When I send a marestail launch with the token
-      Then the only step is {"name":"Worktree","ok":false,"error":"/tmp/qa/layered-bw-gate already exists"}
+      Then the status is 200 and the body is {"steps":[{"name":"Worktree","ok":false,"error":"/tmp/qa/layered-bw-gate already exists"}]}
       And "git branch" in "/tmp/qa/layered" has no "bindweed/gate" and that directory is still empty
       And "git status --porcelain" in "/tmp/qa/layered" is empty
 
@@ -340,7 +414,7 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
       Given the launch plan
       And "/tmp/qa/layered/.dependency-cruiser.cjs" contains exactly "const base = [];\nmodule.exports = { forbidden: [...base] };\n" and is committed
       When I send a marestail launch with the token
-      Then the steps are {"name":"Worktree","ok":true} and {"name":"Files","ok":false,"error":"bindweed can't merge into this .dependency-cruiser.cjs: forbidden is not a plain array"}
+      Then the status is 200 and the body is {"steps":[{"name":"Worktree","ok":true},{"name":"Files","ok":false,"error":"bindweed can't merge into this .dependency-cruiser.cjs: forbidden is not a plain array"}],"worktree":"/tmp/qa/layered-bw-gate","branch":"bindweed/gate"}
       And the worktree's HEAD equals the browsed HEAD and its cruiser file still holds those two lines
       And the worktree contains the three task files and has no commit of its own
       And "/tmp/qa/layered/.bindweed/runs.json" does not exist and "/tmp/qa/log/overnight.json" does not exist
@@ -360,8 +434,17 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
     Scenario: No git identity stops at Commit
       Given the launch plan, the repository has no user.name, and bindweed has GIT_CONFIG_GLOBAL=/dev/null and GIT_CONFIG_SYSTEM=/dev/null
       When I send a marestail launch with the token
-      Then the steps show Worktree and Files ok and Commit {"ok":false,"error":"Author identity unknown"}
+      Then the status is 200 and the body is {"steps":[{"name":"Worktree","ok":true},{"name":"Files","ok":true},{"name":"Commit","ok":false,"error":"Author identity unknown"}],"worktree":"/tmp/qa/layered-bw-gate","branch":"bindweed/gate"}
       And the worktree's HEAD equals the browsed HEAD
+
+    Scenario: A file named .marestail stops Start and records nothing
+      Given ".marestail" holding "x\n" is committed in the fixture
+      And the launch plan
+      When I send a marestail launch with the token
+      Then the status is 200 and the body is {"steps":[{"name":"Worktree","ok":true},{"name":"Files","ok":true},{"name":"Commit","ok":true},{"name":"Start","ok":false,"error":"could not create /tmp/qa/layered-bw-gate/.marestail/runs"}],"worktree":"/tmp/qa/layered-bw-gate","branch":"bindweed/gate"}
+      And the worktree's ".marestail" is still the file "x\n" and ".marestail/runs" does not exist
+      And the worktree has one commit of its own and "/tmp/qa/layered/.bindweed/runs.json" does not exist
+      And "/tmp/qa/log/overnight.json" does not exist and "git status --porcelain" in "/tmp/qa/layered" is empty
 
     Scenario: A second launch waits, and a recorded live pid blocks the next one
       Given the launch plan and "/tmp/qa/log/install.wait" exists
@@ -377,8 +460,10 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
     Scenario: A runs.json that is not a list is left as it was
       Given the launch plan and "/tmp/qa/layered/.bindweed/runs.json" holds "not json\n"
       When I send a marestail launch with the token
-      Then Record is {"name":"Record","ok":false,"error":"runs.json is not a list"} and the earlier four steps are ok
-      And that file is still "not json\n" and the recorded command's pid is alive
+      Then the status is 200 and the body has exactly the keys "steps", "worktree", "branch", "watch" and "pid"
+      And "steps" is [{"name":"Worktree","ok":true},{"name":"Files","ok":true},{"name":"Commit","ok":true},{"name":"Start","ok":true},{"name":"Record","ok":false,"error":"runs.json is not a list"}]
+      And "worktree" is "/tmp/qa/layered-bw-gate", "branch" is "bindweed/gate", "watch" is "marestail watch" and kill -0 of "pid" succeeds
+      And that file is still "not json\n"
 
     Scenario: A later launch appends and another plan's pid does not block
       Given "/tmp/qa/layered/.bindweed/runs.json" holds one entry for slug "other" whose pid is 1
@@ -465,9 +550,11 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
     the one that stopped. Later steps are absent. The dialog uses that same
     first-reason order, from the open plan and from GET. A 409 shows its
     "error" as text and no Steps list. What was typed survives switching
-    tools. "Copy worktree" and "Copy branch" are shown when GET included a
-    worktree, or when this answer's Worktree step is ok. "Copy command" is
-    shown when GET included a watch, or when this answer's Start step is ok.
+    tools. "Copy worktree" is shown when GET included a worktree, or when
+    this answer's Worktree step is ok. "Copy branch" is shown only when that
+    same source has a string "branch", so a missing "branch" leaves it out.
+    "Copy command" is shown when GET included a watch, or when this answer's
+    Start step is ok.
     Each copy button copies that text and nothing more.
 
     Scenario: The dialog launches marestail and copies the worktree, the branch and the watch command
