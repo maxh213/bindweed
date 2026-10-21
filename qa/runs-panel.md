@@ -1,6 +1,6 @@
 # QA: a Runs panel shows where every launched run stands
 
-For a person with two terminals and a desktop browser with developer tools on the machine that runs bindweed (Node 22.18 or newer, git, and a clipboard tool: `pbpaste`, `wl-paste -n` or `xclip -selection clipboard -o`). Fake worktrees, no real agent. The fixtures are the ones in `features/runs-panel.feature`, minus `between`, `fresh`, `sc-one`, `sc-done`, `sc-slow`, `sc-junk` and `sc-text`. The QA role, not the coder, writes the end-to-end test. The coder writes no file under `qa/`.
+For a person with two terminals and a desktop browser with developer tools on the machine that runs bindweed (Node 22.18 or newer, git, and a clipboard tool: `pbpaste`, `wl-paste -n` or `xclip -selection clipboard -o`). Fake worktrees, no real agent. The fixtures are the ones in `features/runs-panel.feature`, minus `between`, `refused`, `fresh`, `stopped-older`, `failed-older`, `sc-one`, `sc-done`, `sc-slow`, `sc-junk`, `sc-text` and `sc-list`. The QA role, not the coder, writes the end-to-end test. The coder writes no file under `qa/`.
 
 ## Setup
 
@@ -25,16 +25,18 @@ git init -q && git config user.name qa && git config user.email qa@example.test
 git add -A && git -c commit.gpgsign=false commit -qm fixture
 log() { mkdir -p "$R/wt-$1/.marestail/runs/$2" "$R/wt-$1/tasks"; printf "$3" > "$R/wt-$1/.marestail/runs/$2/pipeline.log"; touch -t "20261021$4" "$R/wt-$1/.marestail/runs/$2/pipeline.log"; }
 sum() { printf "$2" > "$R/wt-$1/.marestail/runs/overnight-20261021T1230.md"; touch -t 202610211230 "$R/wt-$1/.marestail/runs/overnight-20261021T1230.md"; }
-log done 001-a '== qa (09-qa) attempt 1\npipeline complete\n' 1210
-log done 002-b '== qa (09-qa) attempt 1\npipeline complete\n' 1220
+log done 001-a '== qa (09-qa) attempt 1\npipeline complete\n\n' 1210
+log done 002-b '== qa (09-qa) attempt 1\npipeline complete\n\n' 1220
 sum done '001-a ok\n002-b ok\nall tasks complete 2026-10-21 12:30:00\n'
-log stopped 001-w 'pipeline complete\n' 1210
-log stopped 002-x '== coder (03-coder) attempt 2\ngate failed\nstopping for a human\n' 1220
+printf 'marestail output\n' > "$R/wt-done/.marestail/runs/overnight-20261021T1230.log"
+touch -t 202610211231 "$R/wt-done/.marestail/runs/overnight-20261021T1230.log"
+log stopped 001-w 'pipeline complete\n\n' 1210
+log stopped 002-x '== coder (03-coder) attempt 2\ngate failed\ncoder got the same problems back 3 times in a row; the worker is not making progress, stopping for a human\npipeline stopped at coder\n\n' 1220
 sum stopped 'stopped: tasks/002-x.md exited 1\n'
-log failed 001-f '== coder (03-coder) attempt 1\nnpm ERR! boom\n' 1210
+log failed 001-f '== coder (03-coder) attempt 1\nnpm ERR! boom\npipeline stopped at coder\n\n' 1210
 sum failed 'stopped: tasks/001-f.md exited 2\n'
 log running 000-old 'pipeline complete\n' 1225
-log running 001-init 'pipeline complete\n' 1210
+log running 001-init 'pipeline complete\n\n' 1210
 printf 'x\n' > "$R/wt-running/.marestail/runs/direct-001-20261021T1226.log"; touch -t 202610211226 "$R/wt-running/.marestail/runs/direct-001-20261021T1226.log"
 log running 002-step 'starting\n== coder (07-coder) attempt 2\n== hardener (07-hardener) attempt 1\n' 1220
 log dead 001-task 'starting\n' 1210
@@ -107,31 +109,47 @@ worktree removed
 ```
 
 3. In the developer tools console run `[...document.querySelectorAll('.pill')].map(p => p.className + ' ' + getComputedStyle(p).backgroundColor + ' ' + getComputedStyle(p).color).join('\n')`.
-   **Expect:** eight lines, in card order: `pill pill-dead rgb(107, 114, 128)`, `pill pill-running rgb(37, 99, 235)`, `pill pill-dead rgb(107, 114, 128)`, `pill pill-running rgb(37, 99, 235)`, `pill pill-failed rgb(220, 38, 38)`, `pill pill-stopped rgb(217, 119, 6)`, `pill pill-done rgb(22, 163, 74)`, `pill pill-removed rgb(156, 163, 175)`, each followed by `rgb(255, 255, 255)`.
+   **Expect:** eight lines, in card order: `pill pill-dead rgb(107, 114, 128)`, `pill pill-running rgb(37, 99, 235)`, `pill pill-dead rgb(107, 114, 128)`, `pill pill-running rgb(37, 99, 235)`, `pill pill-failed rgb(220, 38, 38)`, `pill pill-stopped rgb(217, 119, 6)`, `pill pill-done rgb(22, 163, 74)`, `pill pill-removed rgb(156, 163, 175)`, each followed by `rgb(255, 255, 255)`. These are computed colours, not the stylesheet text.
+   Then run `document.head.insertAdjacentHTML('beforeend','<style id="pill-override">.pill { color: #000000; } .pill-running { background: #000000; }</style>')` and run the same expression.
+   **Expect:** it does not match those eight lines. The running pill's background is `rgb(0, 0, 0)` and every pill's text is `rgb(0, 0, 0)`. Run `document.getElementById('pill-override').remove()` and run the expression again.
+   **Expect:** the eight lines are back.
 
-4. Open `Log tail` on `Plan SC`, `Plan Running`, `plan-stopped`, `plan-failed`, `plan-dead`, `plan-sc-err` and `plan-removed`.
-   **Expect:** `Plan SC` shows `[sc] line 6` to `[sc] line 25`, 20 lines. `Plan Running` shows `starting`, `== coder (07-coder) attempt 2`, `== hardener (07-hardener) attempt 1`. `plan-stopped` ends `stopping for a human`. `plan-failed` ends `npm ERR! boom`. `plan-dead` shows `starting`. `plan-sc-err` and `plan-removed` are empty.
+4. Open `Log tail` on `Plan SC`, `Plan Running`, `plan-done`, `plan-stopped`, `plan-failed`, `plan-dead`, `plan-sc-err` and `plan-removed`.
+   **Expect:** `Plan SC` shows `[sc] line 6` to `[sc] line 25`, 20 lines. `Plan Running` shows `starting`, `== coder (07-coder) attempt 2`, `== hardener (07-hardener) attempt 1`. `plan-done` shows `== qa (09-qa) attempt 1`, `pipeline complete`, then a blank line. `plan-stopped` shows `== coder (03-coder) attempt 2`, `gate failed`, `coder got the same problems back 3 times in a row; the worker is not making progress, stopping for a human`, `pipeline stopped at coder`, then a blank line. `plan-failed` shows `== coder (03-coder) attempt 1`, `npm ERR! boom`, `pipeline stopped at coder`, then a blank line. `plan-dead` shows `starting`. `plan-sc-err` and `plan-removed` are empty.
 
-5. Click `Copy worktree` on `Plan Running` and paste the clipboard in the second terminal.
+5. In the second terminal run `cp "$R/wt-running/.marestail/runs/002-step/pipeline.log" "$QA/step.log"` and `printf '== qa (09-qa) attempt 1\npipeline complete\n\n' > "$R/wt-running/.marestail/runs/002-step/pipeline.log"`. Within 5 seconds open its `Log tail`.
+   **Expect:** the pill stays `running`, the position is `task 002-step · finished · 2 of 3 tasks`, and the tail is `== qa (09-qa) attempt 1`, `pipeline complete`, then a blank line.
+   Run `printf '## Config changes the agents asked for and were refused\nDecide whether to make any of these yourself.\n' >> "$R/wt-running/.marestail/runs/002-step/pipeline.log"`.
+   **Expect:** after the next refresh the pill, `finished` and `2 of 3 tasks` are unchanged, and the tail also shows `## Config changes the agents asked for and were refused` and `Decide whether to make any of these yourself.`
+   Run `cp "$QA/step.log" "$R/wt-running/.marestail/runs/002-step/pipeline.log"`.
+   **Expect:** after the next refresh the position is `task 002-step · hardener · attempt 1 · 1 of 3 tasks`.
+
+6. Click `Copy worktree` on `Plan Running` and paste the clipboard in the second terminal.
    **Expect:** exactly `<R>/wt-running`.
 
-6. Click `Plan Running`.
+7. Click `Plan Running`.
    **Expect:** the hash is `#at=src&plan=plan-running` and Architecture shows plan `Plan Running`. No `GET /api/runs` for 15 seconds.
 
-7. Click `Runs`. Switch the browser to another tab for 15 seconds, then back.
+8. Click `Runs`. Switch the browser to another tab for 15 seconds, then back.
    **Expect:** one `GET /api/runs` at once on clicking `Runs`, none while the other tab is shown, one at once on return, then every 5 seconds.
 
-8. Right after a `GET /api/runs` appears, run `mkdir "$R/wt-removed"` in the second terminal and click `Forget` on `plan-removed` within 5 seconds. If the card turned `dead` first, run `rmdir "$R/wt-removed"`, wait for the card to show `worktree removed` again, and retry.
+9. Right after a `GET /api/runs` appears, run `mkdir "$R/wt-removed"` in the second terminal and click `Forget` on `plan-removed` within 5 seconds. If the card turned `dead` first, run `rmdir "$R/wt-removed"`, wait for the card to show `worktree removed` again, and retry.
    **Expect:** the card stays and shows `Forget failed: worktree still exists`.
 
-9. Run `rmdir "$R/wt-removed"`. After the next refresh click `Forget` on `plan-removed`.
+10. Run `rmdir "$R/wt-removed"`. After the next refresh click `Forget` on `plan-removed`.
    **Expect:** the card disappears at once. `node -e 'console.log(require(process.argv[1]).map(x => x.slug).join(" "))' "$QA/layered/.bindweed/runs.json"` prints `plan-done plan-stopped plan-failed plan-running plan-dead plan-sc-err plan-sc`.
 
-10. Run `kill "$LIVE1" "$LIVE2"`.
+11. Save the fake sc with `cp "$QA/fakes/bin/sc" "$QA/sc.saved"` and run `sed -i '2i sleep 9' "$QA/fakes/bin/sc"`. Wait for the refresh that starts after that edit.
+    **Expect:** after about 9 seconds `Plan SC` is still `running` with `running · 4 agents · 7 open · 3 done · 2 PRs` and its two pull-request links. It does not say timed out.
+    Restore the script with `cp "$QA/sc.saved" "$QA/fakes/bin/sc"`, run `touch "$R/wt-sc/sc-status.slow"`, and wait for the next refresh.
+    **Expect:** within 12 seconds of that request `Plan SC` stays `running` and its position is `sc status failed: timed out after 10s · pid alive`. Run `rm "$R/wt-sc/sc-status.slow"`.
+    **Expect:** the next refresh restores `running · 4 agents · 7 open · 3 done · 2 PRs` and the two links. The exact 9999 ms and 10000 ms boundary is the feature's controlled-clock scenarios; this step is the same cutoff as a person can see.
+
+12. Run `kill "$LIVE1" "$LIVE2"`.
     **Expect:** within 5 seconds `Plan SC` and `Plan Running` turn `dead`, and the `Runs` tab has no badge.
 
-11. Run `printf '[]' > "$QA/layered/.bindweed/runs.json"`.
+13. Run `printf '[]' > "$QA/layered/.bindweed/runs.json"`.
     **Expect:** within 5 seconds the panel says `No runs launched from this repository yet.`
 
-12. In the first terminal press Ctrl-C, then run `rm -rf "$QA"; echo clean`.
+14. In the first terminal press Ctrl-C, then run `rm -rf "$QA"; echo clean`.
     **Expect:** `clean`.

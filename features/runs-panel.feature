@@ -22,14 +22,17 @@ Feature: a Runs panel shows where every launched run stands
 
   The marestail worktrees, tool "marestail":
   | name       | files                                                                                                                                  | tasks | pid  | startedAt |
-  | done       | tasks/001-a.md, tasks/002-b.md; log 001-a and log 002-b "== qa (09-qa) attempt 1\npipeline complete\n" at 12:10 and 12:20; summary "001-a ok\n002-b ok\nall tasks complete 2026-10-21 12:30:00\n" | ["tasks/001-a.md","tasks/002-b.md"] | dead | 12:01 |
-  | stopped    | tasks/001-w.md, tasks/002-x.md; log 001-w "pipeline complete\n" at 12:10; log 002-x "== coder (03-coder) attempt 2\ngate failed\nstopping for a human\n" at 12:20; summary "stopped: tasks/002-x.md exited 1\n" | ["tasks/001-w.md","tasks/002-x.md"] | dead | 12:02 |
-  | failed     | tasks/001-f.md; log 001-f "== coder (03-coder) attempt 1\nnpm ERR! boom\n" at 12:10; summary "stopped: tasks/001-f.md exited 2\n" | ["tasks/001-f.md"] | dead | 12:03 |
-  | running    | tasks/README.md, tasks/000-old.md, tasks/001-init.md, tasks/002-step.md, tasks/003-later.md; log 000-old "pipeline complete\n" at 12:25; log 001-init "pipeline complete\n" at 12:10; log 002-step "starting\n== coder (07-coder) attempt 2\n== hardener (07-hardener) attempt 1\n" at 12:20; ".marestail/runs/direct-001-20261021T1226.log" "x\n" at 12:26 | ["tasks/001-init.md","tasks/002-step.md","tasks/003-later.md"] | live | 12:04 |
+  | done       | tasks/001-a.md, tasks/002-b.md; log 001-a and log 002-b "== qa (09-qa) attempt 1\npipeline complete\n\n" at 12:10 and 12:20; summary "001-a ok\n002-b ok\nall tasks complete 2026-10-21 12:30:00\n"; ".marestail/runs/overnight-20261021T1230.log" "marestail output\n" at 12:31 | ["tasks/001-a.md","tasks/002-b.md"] | dead | 12:01 |
+  | stopped    | tasks/001-w.md, tasks/002-x.md; log 001-w "pipeline complete\n\n" at 12:10; log 002-x "== coder (03-coder) attempt 2\ngate failed\ncoder got the same problems back 3 times in a row; the worker is not making progress, stopping for a human\npipeline stopped at coder\n\n" at 12:20; summary "stopped: tasks/002-x.md exited 1\n" | ["tasks/001-w.md","tasks/002-x.md"] | dead | 12:02 |
+  | failed     | tasks/001-f.md; log 001-f "== coder (03-coder) attempt 1\nnpm ERR! boom\npipeline stopped at coder\n\n" at 12:10; summary "stopped: tasks/001-f.md exited 2\n" | ["tasks/001-f.md"] | dead | 12:03 |
+  | stopped-older | tasks/001-w.md, tasks/002-x.md; log 001-w "== coder (03-coder) attempt 2\ngate failed\ncoder got the same problems back 3 times in a row; the worker is not making progress, stopping for a human\npipeline stopped at coder\n\n" at 12:10; log 002-x "== coder (03-coder) attempt 1\nnpm ERR! boom\npipeline stopped at coder\n\n" at 12:20; summary "stopped: tasks/001-w.md exited 1\n" | ["tasks/001-w.md","tasks/002-x.md"] | dead | 12:22 |
+  | failed-older | tasks/001-w.md, tasks/002-x.md; log 001-w "== coder (03-coder) attempt 1\nnpm ERR! boom\npipeline stopped at coder\n\n" at 12:10; log 002-x "== coder (03-coder) attempt 2\ngate failed\ncoder got the same problems back 3 times in a row; the worker is not making progress, stopping for a human\npipeline stopped at coder\n\n" at 12:20; summary "stopped: tasks/001-w.md exited 1\n" | ["tasks/001-w.md","tasks/002-x.md"] | dead | 12:23 |
+  | running    | tasks/README.md, tasks/000-old.md, tasks/001-init.md, tasks/002-step.md, tasks/003-later.md; log 000-old "pipeline complete\n" at 12:25; log 001-init "pipeline complete\n\n" at 12:10; log 002-step "starting\n== coder (07-coder) attempt 2\n== hardener (07-hardener) attempt 1\n" at 12:20; ".marestail/runs/direct-001-20261021T1226.log" "x\n" at 12:26 | ["tasks/001-init.md","tasks/002-step.md","tasks/003-later.md"] | live | 12:04 |
   | dead       | tasks/README.md, tasks/001-task.md; log 001-task "starting\n" at 12:10                                                                  | none  | dead | 12:05 |
-  | between    | tasks/001-a.md, tasks/002-b.md; log 001-a "== qa (09-qa) attempt 1\npipeline complete\n" at 12:10                                      | ["tasks/001-a.md","tasks/002-b.md"] | live | 12:06 |
+  | between    | tasks/001-a.md, tasks/002-b.md; log 001-a "== qa (09-qa) attempt 1\npipeline complete\n\n" at 12:10                                      | ["tasks/001-a.md","tasks/002-b.md"] | live | 12:06 |
+  | refused    | tasks/001-a.md, tasks/002-b.md; log 001-a "== qa (09-qa) attempt 1\npipeline complete\n\n## Config changes the agents asked for and were refused\nDecide whether to make any of these yourself.\n" at 12:10 | ["tasks/001-a.md","tasks/002-b.md"] | live | 12:21 |
   | fresh      | tasks/001-a.md and no ".marestail" directory                                                                                           | ["tasks/001-a.md"] | dead | 12:07 |
-  | unverified | tasks/001-a.md; log 001-a "== qa (09-qa) attempt 1\npipeline complete, NOT verified by eye\n" at 12:10                                 | ["tasks/001-a.md"] | live | 12:08 |
+  | unverified | tasks/001-a.md; log 001-a "== qa (09-qa) attempt 1\npipeline complete, NOT verified by eye\n\n" at 12:10                                 | ["tasks/001-a.md"] | live | 12:08 |
   | removed    | no directory at all                                                                                                                    | []    | dead | 12:00 |
 
   The slop-cannon worktrees, tool "slop-cannon". The fake "sc" in
@@ -47,6 +50,7 @@ Feature: a Runs panel shows where every launched run stands
   | sc-slow  | sc-status.slow                                                                                                                                                                                         | no file    | live | 12:13 |
   | sc-junk  | sc-status.json "null"                                                                                                                                                                                  | no file    | live | 12:14 |
   | sc-text  | sc-status.json "nope"                                                                                                                                                                                  | no file    | live | 12:15 |
+  | sc-list  | sc-status.json "[]"                                                                                                                                                                                    | no file    | live | 12:16 |
 
   Background:
     Given bindweed's ui was built with "npm run build"
@@ -77,30 +81,41 @@ Feature: a Runs panel shows where every launched run stands
     Marestail. The run's tasks are the entry's "tasks" when it is a list of
     strings (launch records it), else the worktree's "tasks/*.md" files
     except "tasks/README.md". A task "tasks/<id>.md" logs to
-    ".marestail/runs/<id>/pipeline.log"; other files in ".marestail/runs" and
-    logs of tasks not in the run are ignored. A task is done when its log has
-    a line starting "pipeline complete" (real logs may end "pipeline
-    complete, NOT verified by eye"). The current task is the run's task whose
-    log has the newest mtime. The summary is the newest-mtime
-    ".marestail/runs/overnight-*.md"; its verdict is its last line that
-    starts "all tasks complete" (overnight.sh appends the date) or starts
-    "stopped: <path> exited <code>". State: "done" on "all tasks complete";
-    on "stopped:", "stopped for a human" when the last line of <path>'s log
-    contains "stopping for a human", else "failed"; with no verdict,
-    "running" when the pid is alive, else "dead". A log's last line ignores
-    the final newline. The role and attempt are the first word and the
-    number after "attempt" of the current log's last line starting "== ".
-    Position is the first of these that applies, with <done> and <total> the
-    task counts and "tasks" always plural:
+    ".marestail/runs/<id>/pipeline.log"; other files in ".marestail/runs",
+    including a newer "overnight-*.log", and logs of tasks not in the run
+    are ignored. A task is done when any line of its log starts "pipeline
+    complete", including "pipeline complete, NOT verified by eye", even when
+    a blank line or a proposals section follows. "pipeline stopped at <step>"
+    does not. The current task is the run's task whose log has the newest
+    mtime. The summary is the newest-mtime ".marestail/runs/overnight-*.md"
+    only; its verdict is its last line that starts "all tasks complete"
+    (overnight.sh appends the date) or starts "stopped: <path> exited
+    <code>". State: "done" on "all tasks complete"; on "stopped:", "stopped
+    for a human" when any line of <path>'s log contains "stopping for a
+    human", else "failed". <path> is the task named in that summary line,
+    even when a newer task's log is current. With no verdict, "running" when
+    the pid is alive, else "dead". A file's lines drop only one trailing
+    newline and then split on newline, so "x\n\n" is ["x",""] and a blank
+    line stays "". The role and attempt are the first word and the number
+    after "attempt" of the current log's last line starting "== ". Position
+    is the first of these that applies, with <done> and <total> the task
+    counts and "tasks" always plural:
     - state done: "all tasks complete · <done> of <total> tasks"
     - no current task: "no task started · <done> of <total> tasks"
-    - the current log's last line starts "pipeline complete": "task <id> · finished · <done> of <total> tasks"
+    - the current log has a line starting "pipeline complete": "task <id> · finished · <done> of <total> tasks"
     - the current log has an "== " line: "task <id> · <role> · attempt <n> · <done> of <total> tasks"
     - otherwise: "task <id> · <done> of <total> tasks"
-    logTail is the current task's log.
+    logTail is the current task's log, blank lines included. Finished is
+    chosen before the role form, so a role line before "pipeline complete"
+    does not win.
 
     Slop-cannon. bindweed runs "sc status --repo <worktree> --json" with a
-    10-second timeout. From its JSON: phase is "state.phase"; agents is the
+    10-second timeout, 10000 ms from sc's start. A test may control that
+    clock. At 9999 ms a still-running sc has not been killed and GET
+    /api/runs has not answered. At 10000 ms that sc is killed and the reason
+    is "timed out after 10s". An sc that prints valid JSON and exits at 9999
+    ms is not killed and keeps its normal position. The HTTP answer still
+    arrives within 12 seconds. From its JSON: phase is "state.phase"; agents is the
     number of "agents" elements with "alive" true; beads are the entries of
     the "beads" object, in its key order; "prs" is the "url" of each "prs"
     element. A missing or wrongly typed field counts as "", 0 or empty. State: "done" when
@@ -121,14 +136,17 @@ Feature: a Runs panel shows where every launched run stands
 
       Examples:
         | name    | state               | position                                            | tail                                                                           |
-        | done    | done                | all tasks complete · 2 of 2 tasks                   | ["== qa (09-qa) attempt 1","pipeline complete"]                                |
-        | stopped | stopped for a human | task 002-x · coder · attempt 2 · 1 of 2 tasks       | ["== coder (03-coder) attempt 2","gate failed","stopping for a human"]         |
-        | failed  | failed              | task 001-f · coder · attempt 1 · 0 of 1 tasks       | ["== coder (03-coder) attempt 1","npm ERR! boom"]                              |
+        | done    | done                | all tasks complete · 2 of 2 tasks                   | ["== qa (09-qa) attempt 1","pipeline complete",""]                             |
+        | stopped | stopped for a human | task 002-x · coder · attempt 2 · 1 of 2 tasks       | ["== coder (03-coder) attempt 2","gate failed","coder got the same problems back 3 times in a row; the worker is not making progress, stopping for a human","pipeline stopped at coder",""] |
+        | failed  | failed              | task 001-f · coder · attempt 1 · 0 of 1 tasks       | ["== coder (03-coder) attempt 1","npm ERR! boom","pipeline stopped at coder",""] |
+        | stopped-older | stopped for a human | task 002-x · coder · attempt 1 · 0 of 2 tasks | ["== coder (03-coder) attempt 1","npm ERR! boom","pipeline stopped at coder",""] |
+        | failed-older | failed             | task 002-x · coder · attempt 2 · 0 of 2 tasks       | ["== coder (03-coder) attempt 2","gate failed","coder got the same problems back 3 times in a row; the worker is not making progress, stopping for a human","pipeline stopped at coder",""] |
         | running | running             | task 002-step · hardener · attempt 1 · 1 of 3 tasks | ["starting","== coder (07-coder) attempt 2","== hardener (07-hardener) attempt 1"] |
         | dead    | dead                | task 001-task · 0 of 1 tasks                        | ["starting"]                                                                   |
-        | between | running             | task 001-a · finished · 1 of 2 tasks                | ["== qa (09-qa) attempt 1","pipeline complete"]                                |
+        | between | running             | task 001-a · finished · 1 of 2 tasks                | ["== qa (09-qa) attempt 1","pipeline complete",""]                             |
+        | refused | running             | task 001-a · finished · 1 of 2 tasks                | ["== qa (09-qa) attempt 1","pipeline complete","","## Config changes the agents asked for and were refused","Decide whether to make any of these yourself."] |
         | fresh   | dead                | no task started · 0 of 1 tasks                      | []                                                                             |
-        | unverified | running          | task 001-a · finished · 1 of 1 tasks                | ["== qa (09-qa) attempt 1","pipeline complete, NOT verified by eye"]           |
+        | unverified | running          | task 001-a · finished · 1 of 1 tasks                | ["== qa (09-qa) attempt 1","pipeline complete, NOT verified by eye",""]        |
         | removed | worktree removed    | worktree removed                                    | []                                                                             |
         | sc      | running             | running · 4 agents · 7 open · 3 done · 2 PRs        | "[sc] line 6" to "[sc] line 25"                                                |
         | sc-one  | running             | planning · 1 agent · 1 PR                           | []                                                                             |
@@ -137,6 +155,7 @@ Feature: a Runs panel shows where every launched run stands
         | sc-slow | running             | sc status failed: timed out after 10s · pid alive   | []                                                                             |
         | sc-junk | running             | sc status failed: not JSON · pid alive              | []                                                                             |
         | sc-text | running             | sc status failed: not JSON · pid alive              | []                                                                             |
+        | sc-list | running             | sc status failed: not JSON · pid alive              | []                                                                             |
 
     Scenario: One run carries every field, and slop-cannon PRs are listed
       Given runs.json holds entry sc then entry running
@@ -155,6 +174,26 @@ Feature: a Runs panel shows where every launched run stands
       Given runs.json holds only entry sc-slow
       When I send "GET /api/runs" with the token
       Then it answers 200 within 12 seconds
+      And run 0 has state "running" and position "sc status failed: timed out after 10s · pid alive"
+
+    Scenario: A silent sc stays pending until 10 seconds, then is killed
+      Given runs.json holds only entry sc-slow
+      And time is a clock the test controls, starting when sc starts
+      When 9999 ms have passed
+      Then GET /api/runs has not answered and sc has not been killed
+      When 10000 ms have passed
+      Then sc has been killed and the status is 200
+      And run 0 has state "running" and position "sc status failed: timed out after 10s · pid alive"
+      And the answer arrived within 12 seconds and runs.json's bytes are unchanged
+
+    Scenario: An sc that answers just before 10 seconds keeps its position
+      Given runs.json holds only entry sc-one
+      And the fake sc prints its JSON and exits at 9999 ms from its start, and not before
+      And time is a clock the test controls
+      When I send "GET /api/runs" with the token
+      Then the status is 200 within 12 seconds
+      And run 0 has state "running" and position "planning · 1 agent · 1 PR"
+      And sc has not been killed
 
     Scenario: sc missing from PATH is reported on the card
       Given runs.json holds only entry sc-one
@@ -233,14 +272,18 @@ Feature: a Runs panel shows where every launched run stands
     its text the URL; and a closed "Log tail" disclosure holding logTail.
     Elapsed is now minus startedAt, on every refresh and in every state:
     "<s>s" under a minute, "<m>m" under an hour, "<h>h <m>m" under a day,
-    else "<d>d <h>h". The pill has class "pill" and one of these, white text:
-    | state               | class        | background |
-    | running             | pill-running | #2563eb    |
-    | stopped for a human | pill-stopped | #d97706    |
-    | failed              | pill-failed  | #dc2626    |
-    | done                | pill-done    | #16a34a    |
-    | dead                | pill-dead    | #6b7280    |
-    | worktree removed    | pill-removed | #9ca3af    |
+    else "<d>d <h>h". The pill has class "pill" and one of these. Its rendered
+    computed color is rgb(255, 255, 255) and its computed background is that
+    state's row. Matching the stylesheet source is not enough: a later rule
+    ".pill { color: #000000 }" or ".pill-running { background: #000000 }"
+    changes the computed colour and fails.
+    | state               | class        | background | computed background |
+    | running             | pill-running | #2563eb    | rgb(37, 99, 235)    |
+    | stopped for a human | pill-stopped | #d97706    | rgb(217, 119, 6)    |
+    | failed              | pill-failed  | #dc2626    | rgb(220, 38, 38)    |
+    | done                | pill-done    | #16a34a    | rgb(22, 163, 74)    |
+    | dead                | pill-dead    | #6b7280    | rgb(107, 114, 128)  |
+    | worktree removed    | pill-removed | #9ca3af    | rgb(156, 163, 175)  |
     Only "worktree removed" cards have a "Forget" button. A 200 removes the
     card at once. Any other answer keeps the card and shows "Forget failed:
     <error>" on it. With no runs the panel says "No runs launched from this
@@ -252,7 +295,7 @@ Feature: a Runs panel shows where every launched run stands
       When I open bindweed at "#runs"
       Then the Runs tab is selected and its badge is "2"
       And the cards' titles are "plan-sc-err", "plan-sc", "plan-dead", "Plan Running", "plan-failed", "plan-stopped", "plan-done", "plan-removed"
-      And each card's pill and position are those of the outline above, and its pill has that state's class and background
+      And each card's pill and position are those of the outline above, and each pill's computed color is rgb(255, 255, 255) and its computed background is that state's computed background
       And the "plan-sc" card has links "https://example.test/pull/41" and "https://example.test/pull/42"
       And only "plan-removed" has a "Forget" button
 
