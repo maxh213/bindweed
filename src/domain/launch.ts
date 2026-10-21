@@ -1,4 +1,4 @@
-import { byStrings, noExtraKeys, pathAfter, recordOf, within, type PlanDoc, type PlanEdit } from './plan.ts';
+import { byStrings, noExtraKeys, pathAfter, pathsOf, recordOf, within, type PlanDoc, type PlanEdit } from './plan.ts';
 
 export type LaunchBody =
   | { tool: 'marestail'; model: string; scope: string; focus: string; stopAt: string }
@@ -53,33 +53,6 @@ function briefReason(brief: PlanDoc['brief']): string | null {
   return (brief ?? '').trim() === '' ? 'this plan has no brief' : null;
 }
 
-function fatePaths(edit: Extract<PlanEdit, { kind: 'fate' }>): string[] {
-  return edit.fate === 'fold' ? [edit.file, edit.into] : [edit.file];
-}
-
-function reshapePaths(edit: Exclude<PlanEdit, { kind: 'cut-edge' | 'note' | 'fate' | 'move-file' | 'add-edge' | 'create-package' }>): string[] {
-  if (edit.kind === 'merge-packages') return edit.packages;
-  if (edit.kind === 'split-package') return [edit.package];
-  return [edit.from];
-}
-
-function placedPaths(edit: Exclude<PlanEdit, { kind: 'cut-edge' | 'note' | 'fate' }>): string[] {
-  if (edit.kind === 'create-package') return [];
-  if (edit.kind === 'move-file') return [edit.file];
-  return edit.kind === 'add-edge' ? [edit.from, edit.to] : reshapePaths(edit);
-}
-
-function notePaths(target: Extract<PlanEdit, { kind: 'note' }>['target']): string[] {
-  return 'node' in target ? [target.node] : target.edge;
-}
-
-function editPaths(edit: PlanEdit): string[] {
-  if (edit.kind === 'cut-edge') return edit.files.flat();
-  if (edit.kind === 'fate') return fatePaths(edit);
-  if (edit.kind === 'note') return notePaths(edit.target);
-  return placedPaths(edit);
-}
-
 function deletes(edit: PlanEdit, path: string): boolean {
   return edit.kind === 'fate' && edit.fate === 'delete' && edit.file === path;
 }
@@ -97,7 +70,7 @@ function plannedPath(file: string, active: PlanEdit[]): string | null {
 }
 
 export function launchFocus(files: string[], edits: PlanEdit[], stale: (string | null)[]): string {
-  const named = edits.flatMap(editPaths);
+  const named = edits.flatMap(pathsOf);
   const current = files.filter(file => named.some(path => within(path, file)));
   const active = edits.filter((_edit, index) => stale[index] === null);
   const planned = current.map(file => plannedPath(file, active)).filter(path => path !== null);

@@ -1,5 +1,5 @@
 import { chatLines, oneParagraph, type ChatTurn } from './chat.ts';
-import { byStrings, everyRead, listOfAtLeast, pendingRound, recordOf, sentenceOf, stringsFrom, within, type FateEdit, type NoteTarget, type PlanDoc, type PlanEdit, type Question, type Round } from './plan.ts';
+import { byStrings, everyRead, listOfAtLeast, pathsOf, pendingRound, recordOf, sentenceOf, stringsFrom, within, type PlanDoc, type PlanEdit, type Question, type Round } from './plan.ts';
 import type { PlanWarning, ScanResult } from './scan.ts';
 import { LAST_TASK_NUMBER, numberedTasks, type Slice } from './tasks.ts';
 
@@ -80,40 +80,12 @@ export function turnFor(ask: GenerateAsk, interview: Round[] = []): Turn | undef
   return ask.step === 'answer' ? answerTurn(interview, ask.answers) : writeTurn(interview, ask.answers);
 }
 
-function fatePaths(edit: FateEdit): string[] {
-  return edit.fate === 'fold' ? [edit.file, edit.into] : [edit.file];
-}
-
-function notePaths(target: NoteTarget): string[] {
-  return 'node' in target ? [target.node] : [...target.edge];
-}
-
-type Reshaping = Exclude<PlanEdit, { kind: 'cut-edge' | 'add-edge' | 'note' | 'move-file' | 'fate' | 'create-package' }>;
-
-function reshapedPaths(edit: Reshaping): string[] {
-  if (edit.kind === 'merge-packages') return edit.packages;
-  if (edit.kind === 'split-package') return [edit.package];
-  return [edit.from];
-}
-
-function placedPaths(edit: Exclude<PlanEdit, { kind: 'cut-edge' | 'add-edge' | 'note' }>): string[] {
-  if (edit.kind === 'move-file') return [edit.file];
-  if (edit.kind === 'fate') return fatePaths(edit);
-  return edit.kind === 'create-package' ? [] : reshapedPaths(edit);
-}
-
-function editPaths(edit: PlanEdit): string[] {
-  if (edit.kind === 'cut-edge') return edit.files.flat();
-  if (edit.kind === 'add-edge') return [edit.from, edit.to];
-  return edit.kind === 'note' ? notePaths(edit.target) : placedPaths(edit);
-}
-
 function sortedUnique(items: string[]): string[] {
   return [...new Set(items)].sort(byStrings);
 }
 
 function touchedFiles(edits: PlanEdit[], files: string[]): string[] {
-  const paths = edits.flatMap(editPaths);
+  const paths = edits.flatMap(pathsOf);
   return sortedUnique(files.filter(file => paths.some(path => within(path, file))));
 }
 

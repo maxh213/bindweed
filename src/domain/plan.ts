@@ -723,6 +723,34 @@ export function addEdgeIndex(edits: PlanEdit[], stale: (string | null)[], from: 
   return edits.findIndex((edit, index) => drawsArrow(edit, index, ask));
 }
 
+function fatePaths(edit: FateEdit): string[] {
+  return edit.fate === 'fold' ? [edit.file, edit.into] : [edit.file];
+}
+
+function notePaths(target: NoteTarget): string[] {
+  return 'node' in target ? [target.node] : [...target.edge];
+}
+
+type Reshaping = Exclude<PlanEdit, { kind: 'cut-edge' | 'add-edge' | 'note' | 'move-file' | 'fate' | 'create-package' }>;
+
+function reshapedPaths(edit: Reshaping): string[] {
+  if (edit.kind === 'merge-packages') return edit.packages;
+  if (edit.kind === 'split-package') return [edit.package];
+  return [edit.from];
+}
+
+function placedPaths(edit: Exclude<PlanEdit, { kind: 'cut-edge' | 'add-edge' | 'note' }>): string[] {
+  if (edit.kind === 'move-file') return [edit.file];
+  if (edit.kind === 'fate') return fatePaths(edit);
+  return edit.kind === 'create-package' ? [] : reshapedPaths(edit);
+}
+
+export function pathsOf(edit: PlanEdit): string[] {
+  if (edit.kind === 'cut-edge') return edit.files.flat();
+  if (edit.kind === 'add-edge') return [edit.from, edit.to];
+  return edit.kind === 'note' ? notePaths(edit.target) : placedPaths(edit);
+}
+
 function cutSentence(from: string, to: string, count: number): string {
   return `${from} must not import ${to} (${count} ${count === 1 ? 'import' : 'imports'})`;
 }

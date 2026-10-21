@@ -174,7 +174,7 @@ module.exports = {
       severity: 'error',
       comment: 'The canvas is handed a view and draws it; it does not fetch, own page state, edit a plan or open panels',
       from: { path: '^src/ui/ArchCanvas\\.tsx$' },
-      to: { path: ['^src/ui/(client|view|App|DetailPanel|HealthControls|plansession|PlanBar|planroster|ContractPanel|asksession|ask)\\.tsx?$', '^src/domain/(tree|scan|plan|chat|planned)\\.ts$', '^src/plans\\.ts$', 'node_modules/@tanstack'] }
+      to: { path: ['^src/ui/(client|view|App|DetailPanel|HealthControls|plansession|PlanBar|planroster|ContractPanel|asksession|ask|LaunchDialog)\\.tsx?$', '^src/domain/(tree|scan|plan|chat|planned|launch)\\.ts$', '^src/(plans|launch)\\.ts$', 'node_modules/@tanstack'] }
     },
     {
       name: 'arch-view-does-not-import-xyflow',
@@ -370,14 +370,14 @@ module.exports = {
       severity: 'error',
       comment: 'A view is built from a scan the server has already planned',
       from: { path: '^src/domain/graph\\.ts$' },
-      to: { path: '^src/domain/(plan|chat|planned|contract|prompt|tasks)\\.ts$' }
+      to: { path: '^src/domain/(plan|chat|planned|contract|prompt|tasks|launch)\\.ts$' }
     },
     {
       name: 'the-scanner-does-not-know-plans',
       severity: 'error',
       comment: 'Scanning a repository does not read or apply a plan',
       from: { path: '^src/(scan\\.ts|scanning/)' },
-      to: { path: '^src/(domain/(plan|chat|planned|contract|prompt|tasks)|plans|cruiser|linediff|generate|llm)\\.ts$' }
+      to: { path: '^src/(domain/(plan|chat|planned|contract|prompt|tasks|launch)|plans|cruiser|linediff|generate|llm|launch)\\.ts$' }
     },
     {
       name: 'plan-picture-imports-the-view-and-the-document',
@@ -459,16 +459,16 @@ module.exports = {
     {
       name: 'the-page-mounts-the-plan-session',
       severity: 'error',
-      comment: 'The architecture page mounts the session. It does not reach into edits, the picture, the gestures, the roster or the chrome',
+      comment: 'The architecture page mounts the session. It does not reach into edits, the picture, the gestures, the roster, the chrome or a launch',
       from: { path: '^src/ui/ArchView\\.tsx$' },
-      to: { path: ['^src/domain/(plan|chat|contract)\\.ts$', '^src/ui/(PlanBar|planpicture|plangesture|planroster|ContractPanel|asksession|ask|proposalpicture)\\.tsx?$'] }
+      to: { path: ['^src/domain/(plan|chat|contract|launch)\\.ts$', '^src/launch\\.ts$', '^src/ui/(PlanBar|planpicture|plangesture|planroster|ContractPanel|asksession|ask|proposalpicture|LaunchDialog)\\.tsx?$'] }
     },
     {
       name: 'the-session-does-not-draw-or-apply',
       severity: 'error',
-      comment: 'The session edits a plan and builds its picture. The canvas draws. The server applies the scan and reads plan files',
+      comment: 'The session edits a plan, builds its picture and opens the launch dialog. The canvas draws. The server applies the scan, reads plan files and runs the launch',
       from: { path: '^src/ui/plansession\\.tsx$' },
-      to: { path: ['^src/ui/(ArchCanvas|ArchView|view|ask|proposalpicture)\\.tsx?$', '^src/domain/(planned|contract|layout|scan|prompt|tasks|chat)\\.ts$', '^src/plans\\.ts$', '^src/serve\\.ts$', 'node_modules/@xyflow'] }
+      to: { path: ['^src/ui/(ArchCanvas|ArchView|view|ask|proposalpicture)\\.tsx?$', '^src/domain/(planned|contract|layout|scan|prompt|tasks|chat|launch)\\.ts$', '^src/(plans|launch|serve)\\.ts$', 'node_modules/@xyflow'] }
     },
     {
       name: 'only-serve-imports-generation',
@@ -637,6 +637,62 @@ module.exports = {
       comment: 'The plan session hands the renderer to the Tasks panel and the Ask module renders its own run. Nothing else reaches in',
       from: { pathNot: '^src/ui/(plansession|asksession|RunFeedback)\\.tsx$|\\.test\\.tsx?$' },
       to: { path: '^src/ui/RunFeedback\\.tsx$' }
+    },
+    {
+      name: 'launch-policy-reads-the-document-only',
+      severity: 'error',
+      comment: 'A launch body, a refusal and the focus string are pure readings of a plan document',
+      from: { path: '^src/domain/launch\\.ts$' },
+      to: { path: '^src/', pathNot: '^src/domain/plan\\.ts$' }
+    },
+    {
+      name: 'only-the-launch-edges-read-the-policy',
+      severity: 'error',
+      comment: 'Serve refuses and builds the focus string. The dialog shows the same refusal. The procedure and the client only name the types. Nothing else reaches in',
+      from: { pathNot: '^src/(serve\\.ts|launch\\.ts|ui/(LaunchDialog\\.tsx|client\\.ts)|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/domain/launch\\.ts$' }
+    },
+    {
+      name: 'the-procedure-only-names-the-launch-policy',
+      severity: 'error',
+      comment: 'The worktree procedure speaks LaunchBody and LaunchResult. Refusal, the body and the focus string stay in the domain',
+      from: { path: '^src/launch\\.ts$' },
+      to: { path: '^src/domain/launch\\.ts$', dependencyTypesNot: ['type-only'] }
+    },
+    {
+      name: 'the-client-only-names-the-launch-body',
+      severity: 'error',
+      comment: 'The browser client posts a LaunchBody. It does not decide a refusal or a focus string',
+      from: { path: '^src/ui/client\\.ts$' },
+      to: { path: '^src/domain/launch\\.ts$', dependencyTypesNot: ['type-only'] }
+    },
+    {
+      name: 'only-serve-runs-a-launch',
+      severity: 'error',
+      comment: 'Worktrees, the commit, the detached script and runs.json are one procedure. Only serve composes it among production files',
+      from: { pathNot: '^src/(serve\\.ts|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/launch\\.ts$' }
+    },
+    {
+      name: 'launch-procedure-reads-the-document-and-the-policy',
+      severity: 'error',
+      comment: 'The procedure asks git, the filesystem and the two tools. It does not scan, merge a cruiser file or speak HTTP. The merge is handed in',
+      from: { path: '^src/launch\\.ts$' },
+      to: { path: '^src/', pathNot: '^src/domain/(plan|launch)\\.ts$' }
+    },
+    {
+      name: 'only-the-session-mounts-the-launch-dialog',
+      severity: 'error',
+      comment: 'The session opens the dialog. It does not post, refuse or build a focus string',
+      from: { pathNot: '^src/ui/(plansession\\.tsx|LaunchDialog\\.tsx|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/ui/LaunchDialog\\.tsx$' }
+    },
+    {
+      name: 'the-launch-dialog-asks-the-server',
+      severity: 'error',
+      comment: 'The dialog shows the shared refusal and posts through the client. It does not spawn, scan or draw',
+      from: { path: '^src/ui/LaunchDialog\\.tsx$' },
+      to: { path: ['^src/', 'node_modules/(@xyflow|zod)'], pathNot: '^src/(domain/(plan|launch)|ui/client)\\.ts$' }
     }
   ],
   options: {
