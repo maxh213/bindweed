@@ -203,20 +203,29 @@ async function centers(page: Page): Promise<Record<string, BoxRect>> {
   });
 }
 
+type PxBox = { x: number; y: number; width: number; height: number };
+
+async function laidOut(target: Locator): Promise<PxBox> {
+  let rect: PxBox | null = null;
+  await expect.poll(async () => {
+    rect = await target.boundingBox({ timeout: 250 }).catch(() => null);
+    return rect;
+  }).not.toBeNull();
+  return rect as PxBox;
+}
+
 async function namePoint(page: Page, name: string): Promise<{ x: number; y: number }> {
-  const rect = await box(page, name).locator('.box-name').boundingBox();
-  expect(rect).not.toBeNull();
-  return { x: rect!.x + rect!.width / 2, y: rect!.y + rect!.height / 2 };
+  const rect = await laidOut(box(page, name).locator('.box-name'));
+  return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
 }
 
 async function paneLimits(page: Page): Promise<{ left: number; top: number; right: number; bottom: number }> {
-  const rect = await page.locator('.react-flow__pane').boundingBox();
-  expect(rect).not.toBeNull();
+  const rect = await laidOut(page.locator('.react-flow__pane'));
   return {
-    left: rect!.x + 36,
-    top: rect!.y + 36,
-    right: rect!.x + rect!.width - 36,
-    bottom: rect!.y + rect!.height - 36,
+    left: rect.x + 36,
+    top: rect.y + 36,
+    right: rect.x + rect.width - 36,
+    bottom: rect.y + rect.height - 36,
   };
 }
 
@@ -290,9 +299,11 @@ async function doubleClickBox(page: Page, name: string): Promise<void> {
   throw new Error(`double-click did not leave ${before}`);
 }
 
-async function boxText(page: Page, name: string): Promise<string> {
-  const text = await box(page, name).innerText();
-  return text.replace(/\s+/g, ' ').trim();
+async function expectBoxContains(page: Page, name: string, fragment: string): Promise<void> {
+  await expect.poll(async () => {
+    const text = await box(page, name).innerText({ timeout: 250 }).catch(() => '');
+    return text.replace(/\s+/g, ' ').trim();
+  }).toContain(fragment);
 }
 
 async function waitForBoxes(page: Page, names: string[]): Promise<void> {
@@ -311,10 +322,8 @@ async function expectSideBySide(page: Page, left: string, right: string): Promis
   expect(placed[left].x).toBeLessThan(placed[right].x);
 }
 
-async function mustBox(page: Page, name: string): Promise<{ x: number; y: number; width: number; height: number }> {
-  const rect = await box(page, name).boundingBox();
-  expect(rect).not.toBeNull();
-  return rect as { x: number; y: number; width: number; height: number };
+async function mustBox(page: Page, name: string): Promise<PxBox> {
+  return laidOut(box(page, name));
 }
 
 async function dragBy(page: Page, name: string, dx: number, dy: number): Promise<void> {
@@ -564,9 +573,9 @@ test('qa: plan moves and edges', async ({ page }) => {
       await expect(page.locator('aside[aria-label="changes"]')).toHaveCount(0);
       await expect(page.locator('.box-row')).toHaveCount(0);
 
-      expect(await boxText(page, 'app')).toContain('3 files');
-      expect(await boxText(page, 'infra')).toContain('2 files');
-      expect(await boxText(page, 'domain')).toContain('2 files');
+      await expectBoxContains(page, 'app', '3 files');
+      await expectBoxContains(page, 'infra', '2 files');
+      await expectBoxContains(page, 'domain', '2 files');
       await expect(box(page, 'domain')).toHaveAttribute('data-abstract', 'true');
       expect(await box(page, 'domain').evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(GREEN_BG);
 
@@ -664,7 +673,7 @@ test('qa: plan moves and edges', async ({ page }) => {
       await expect(page).toHaveURL(`${ORIGIN}/#at=&plan=split-app`);
       await waitForBoxes(page, ['src', 'save.ts']);
       await expect(box(page, 'save.ts')).toHaveAttribute('data-selected', 'true');
-      expect(await boxText(page, 'src')).toContain('6 files');
+      await expectBoxContains(page, 'src', '6 files');
 
       const planRes = await requestHttp(`${ORIGIN}/api/plans/split-app`, { headers: bearer(token) });
       const planDoc = JSON.parse(planRes.body) as { edits: { kind: string; file: string; to: string }[] };
@@ -691,10 +700,10 @@ test('qa: plan moves and edges', async ({ page }) => {
       await dragRowToBox(page, 'src/app/save.ts', 'infra');
       await expect(changes.locator('.change-sentence')).toHaveText(['Move src/app/save.ts to src/infra']);
 
-      expect(await boxText(page, 'infra')).toContain('3 files');
+      await expectBoxContains(page, 'infra', '3 files');
       await expect(box(page, 'infra').locator('.box-row')).toHaveText(['db.ts', 'repo.ts', 'save.ts']);
 
-      expect(await boxText(page, 'app')).toContain('2 files');
+      await expectBoxContains(page, 'app', '2 files');
       await expect(box(page, 'app').locator('.box-row:not([data-ghost="true"])')).toHaveText(['a.ts', 'b.ts']);
       await expect(box(page, 'app').locator('.box-row[data-ghost="true"]')).toHaveText(['save.ts']);
 
@@ -1018,7 +1027,7 @@ test('qa: plan moves and edges', async ({ page }) => {
       await expectAbove(page, 'infra', 'domain');
       await expect(box(page, 'app')).toHaveAttribute('data-cycle', 'false');
       await expect(box(page, 'infra')).toHaveAttribute('data-cycle', 'false');
-      expect(await boxText(page, 'app')).toContain('3 files');
+      await expectBoxContains(page, 'app', '3 files');
       await expect(box(page, 'app').locator('.box-row', { hasText: 'save.ts' })).toBeVisible();
       await expect(box(page, 'infra').locator('.box-row[data-ghost="true"]')).toHaveText(['save.ts']);
 
@@ -1141,7 +1150,7 @@ test('qa: plan moves and edges', async ({ page }) => {
 
       await expect(page.getByRole('combobox', { name: 'Plan' })).toHaveValue('');
       await expect(page).toHaveURL(`${ORIGIN}/#at=src`);
-      expect(await boxText(page, 'app')).toContain('3 files');
+      await expectBoxContains(page, 'app', '3 files');
       await expect(page.locator('.box-row')).toHaveCount(0);
 
       const res = await requestHttp(`${ORIGIN}/api/plans/split-app`, { headers: bearer(token) });
