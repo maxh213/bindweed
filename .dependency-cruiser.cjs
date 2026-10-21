@@ -174,7 +174,7 @@ module.exports = {
       severity: 'error',
       comment: 'The canvas is handed a view and draws it; it does not fetch, own page state, edit a plan or open panels',
       from: { path: '^src/ui/ArchCanvas\\.tsx$' },
-      to: { path: ['^src/ui/(client|view|App|DetailPanel|HealthControls|plansession|PlanBar|planroster|ContractPanel)\\.tsx?$', '^src/domain/(tree|scan|plan|planned)\\.ts$', '^src/plans\\.ts$', 'node_modules/@tanstack'] }
+      to: { path: ['^src/ui/(client|view|App|DetailPanel|HealthControls|plansession|PlanBar|planroster|ContractPanel|asksession|ask)\\.tsx?$', '^src/domain/(tree|scan|plan|chat|planned)\\.ts$', '^src/plans\\.ts$', 'node_modules/@tanstack'] }
     },
     {
       name: 'arch-view-does-not-import-xyflow',
@@ -361,30 +361,30 @@ module.exports = {
     {
       name: 'plan-store-reads-the-document-only',
       severity: 'error',
-      comment: 'The store parses and writes plan documents; it does not apply them or know the view',
+      comment: 'The store parses and writes plan and chat documents; it does not apply them or know the view',
       from: { path: '^src/plans\\.ts$' },
-      to: { path: '^src/', pathNot: '^src/domain/plan\\.ts$' }
+      to: { path: '^src/', pathNot: '^src/domain/(plan|chat)\\.ts$' }
     },
     {
       name: 'the-view-does-not-apply-a-plan',
       severity: 'error',
       comment: 'A view is built from a scan the server has already planned',
       from: { path: '^src/domain/graph\\.ts$' },
-      to: { path: '^src/domain/(plan|planned|contract|prompt|tasks)\\.ts$' }
+      to: { path: '^src/domain/(plan|chat|planned|contract|prompt|tasks)\\.ts$' }
     },
     {
       name: 'the-scanner-does-not-know-plans',
       severity: 'error',
       comment: 'Scanning a repository does not read or apply a plan',
       from: { path: '^src/(scan\\.ts|scanning/)' },
-      to: { path: '^src/(domain/(plan|planned|contract|prompt|tasks)|plans|cruiser|linediff|generate|llm)\\.ts$' }
+      to: { path: '^src/(domain/(plan|chat|planned|contract|prompt|tasks)|plans|cruiser|linediff|generate|llm)\\.ts$' }
     },
     {
       name: 'plan-picture-imports-the-view-and-the-document',
       severity: 'error',
-      comment: 'The picture is a pure function of the plan document, the graph view and layout placement',
+      comment: 'The picture is a pure function of the plan document, the graph view and layout placement. It names the proposal ink type and nothing more of it',
       from: { path: '^src/ui/planpicture\\.ts$' },
-      to: { path: '^src/', pathNot: '^src/(domain/(plan|graph|layout)|ui/draw)\\.ts$' }
+      to: { path: '^src/', pathNot: '^src/(domain/(plan|graph|layout)|ui/(draw|proposalpicture))\\.ts$' }
     },
     {
       name: 'plan-picture-is-framework-free',
@@ -461,14 +461,14 @@ module.exports = {
       severity: 'error',
       comment: 'The architecture page mounts the session. It does not reach into edits, the picture, the gestures, the roster or the chrome',
       from: { path: '^src/ui/ArchView\\.tsx$' },
-      to: { path: ['^src/domain/(plan|contract)\\.ts$', '^src/ui/(PlanBar|planpicture|plangesture|planroster|ContractPanel)\\.tsx?$'] }
+      to: { path: ['^src/domain/(plan|chat|contract)\\.ts$', '^src/ui/(PlanBar|planpicture|plangesture|planroster|ContractPanel|asksession|ask|proposalpicture)\\.tsx?$'] }
     },
     {
       name: 'the-session-does-not-draw-or-apply',
       severity: 'error',
       comment: 'The session edits a plan and builds its picture. The canvas draws. The server applies the scan and reads plan files',
       from: { path: '^src/ui/plansession\\.tsx$' },
-      to: { path: ['^src/ui/(ArchCanvas|ArchView|view)\\.tsx?$', '^src/domain/(planned|contract|layout|scan|prompt|tasks)\\.ts$', '^src/plans\\.ts$', '^src/serve\\.ts$', 'node_modules/@xyflow'] }
+      to: { path: ['^src/ui/(ArchCanvas|ArchView|view|ask|proposalpicture)\\.tsx?$', '^src/domain/(planned|contract|layout|scan|prompt|tasks|chat)\\.ts$', '^src/plans\\.ts$', '^src/serve\\.ts$', 'node_modules/@xyflow'] }
     },
     {
       name: 'only-serve-imports-generation',
@@ -508,9 +508,9 @@ module.exports = {
     {
       name: 'the-prompt-reads-the-document-the-scan-and-the-task-list',
       severity: 'error',
-      comment: 'Writing the prompt and reading the reply is pure. It reads the plan, the scan record and task numbering, nothing else',
+      comment: 'Writing the prompt and reading the reply is pure. It reads the plan, the conversation, the scan record and task numbering, nothing else',
       from: { path: '^src/domain/prompt\\.ts$' },
-      to: { path: '^src/', pathNot: '^src/domain/(plan|scan|tasks)\\.ts$' }
+      to: { path: '^src/', pathNot: '^src/domain/(plan|chat|scan|tasks)\\.ts$' }
     },
     {
       name: 'the-task-list-reads-the-document-only',
@@ -553,6 +553,90 @@ module.exports = {
       comment: 'The Settings dialog reads and writes the LLM config through the client only',
       from: { path: '^src/ui/SettingsDialog\\.tsx$' },
       to: { path: ['^src/', 'node_modules/(@xyflow|zod)'], pathNot: '^src/ui/client\\.ts$' }
+    },
+    {
+      name: 'chat-reads-the-document-only',
+      severity: 'error',
+      comment: 'The conversation is its own document: turns, decisions, the lines the prompt and the page quote, and the propose and review bodies. It reads edits and sentences from the plan document and nothing else',
+      from: { path: '^src/domain/chat\\.ts$' },
+      to: { path: '^src/', pathNot: '^src/domain/plan\\.ts$' }
+    },
+    {
+      name: 'only-the-conversation-reads-the-chat',
+      severity: 'error',
+      comment: 'The store, the server, the prompt, the client and the Ask module know the chat. The plan document, the view, the canvas and the session do not',
+      from: { pathNot: '^src/(serve\\.ts|plans\\.ts|domain/(chat|prompt)\\.ts|ui/(client|ask)\\.ts|ui/asksession\\.tsx|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/domain/chat\\.ts$' }
+    },
+    {
+      name: 'only-the-session-mounts-the-ask',
+      severity: 'error',
+      comment: 'The Ask module is one entry point, useAsk. The session mounts it and hands it the change list to place',
+      from: { pathNot: '^src/ui/(plansession|asksession)\\.tsx$|\\.test\\.tsx?$' },
+      to: { path: '^src/ui/asksession\\.tsx$' }
+    },
+    {
+      name: 'the-ask-asks-the-server',
+      severity: 'error',
+      comment: 'The Ask module proposes, reviews and stores the chat through the client and draws its ink with the proposal picture. It does not edit the plan itself, draw the canvas, parse JSON or open other panels',
+      from: { path: '^src/ui/asksession\\.tsx$' },
+      to: { path: ['^src/', 'node_modules/(@xyflow|zod)'], pathNot: '^src/(domain/(plan|chat|graph)\\.ts|ui/(ask|client|proposalpicture)\\.ts|ui/RunFeedback\\.tsx)$' }
+    },
+    {
+      name: 'ask-rules-are-private',
+      severity: 'error',
+      comment: 'Which proposals are open, dropped or drawable is decided inside the Ask module',
+      from: { pathNot: '^src/ui/(asksession\\.tsx|ask\\.ts)$|\\.test\\.tsx?$' },
+      to: { path: '^src/ui/ask\\.ts$' }
+    },
+    {
+      name: 'ask-rules-are-pure',
+      severity: 'error',
+      comment: 'The open-row rules read the plan and chat documents and nothing else',
+      from: { path: '^src/ui/ask\\.ts$' },
+      to: { path: ['^src/', 'node_modules'], pathNot: '^src/domain/(plan|chat)\\.ts$' }
+    },
+    {
+      name: 'proposal-picture-imports-the-view-and-the-document',
+      severity: 'error',
+      comment: 'Where proposal ghosts sit and which proposal owns a mark is a pure function of the open edits, the planned and proposed views and layout placement',
+      from: { path: '^src/ui/proposalpicture\\.ts$' },
+      to: { path: '^src/', pathNot: '^src/domain/(plan|graph|layout)\\.ts$' }
+    },
+    {
+      name: 'proposal-picture-is-framework-free',
+      severity: 'error',
+      comment: 'The proposal picture does not fetch, draw or depend on a UI framework',
+      from: { path: '^src/ui/proposalpicture\\.ts$' },
+      to: { path: 'node_modules' }
+    },
+    {
+      name: 'only-the-ask-builds-the-proposal-picture',
+      severity: 'error',
+      comment: 'The Ask module builds the proposal ink. The canvas draws it and the plan picture carries its type',
+      from: { pathNot: '^src/ui/(asksession\\.tsx|ArchCanvas\\.tsx|planpicture\\.ts|proposalpicture\\.ts)$|\\.test\\.tsx?$' },
+      to: { path: '^src/ui/proposalpicture\\.ts$' }
+    },
+    {
+      name: 'the-canvas-and-the-plan-picture-only-name-the-proposal-ink',
+      severity: 'error',
+      comment: 'The canvas and the plan picture use the proposal ink types; they never call the proposal picture',
+      from: { path: '^src/ui/(ArchCanvas\\.tsx|planpicture\\.ts)$' },
+      to: { path: '^src/ui/proposalpicture\\.ts$', dependencyTypesNot: ['type-only'] }
+    },
+    {
+      name: 'run-feedback-is-presentational',
+      severity: 'error',
+      comment: 'Raw output, the ran line and the backend note render what they are handed',
+      from: { path: '^src/ui/RunFeedback\\.tsx$' },
+      to: { path: ['^src/', 'node_modules/(@tanstack|@xyflow|zod)'] }
+    },
+    {
+      name: 'only-the-sessions-render-run-feedback',
+      severity: 'error',
+      comment: 'The plan session hands the renderer to the Tasks panel and the Ask module renders its own run. Nothing else reaches in',
+      from: { pathNot: '^src/ui/(plansession|asksession|RunFeedback)\\.tsx$|\\.test\\.tsx?$' },
+      to: { path: '^src/ui/RunFeedback\\.tsx$' }
     }
   ],
   options: {

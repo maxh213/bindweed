@@ -1,25 +1,12 @@
 import { useQuery, useQueryClient, useQueries } from '@tanstack/react-query';
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from 'react';
 import type { GraphNode, GraphView } from '../domain/graph.ts';
-import { byStrings, chatLines, decide, parsePlanEdit, rejectOpen, undecided, type ChatTurn, type PlanDoc, type PlanEdit } from '../domain/plan.ts';
+import { chatLines, decide, rejectOpen, undecided, type ChatTurn } from '../domain/chat.ts';
+import { byStrings, parsePlanEdit, type PlanDoc, type PlanEdit } from '../domain/plan.ts';
 import { RunFeedback } from './RunFeedback.tsx';
-import {
-  askTextOk,
-  bumpTicket,
-  chatStamp,
-  keptDrop,
-  latestTurn,
-  openEdits,
-  reviewIfCurrent,
-  withTurn,
-  zipRows,
-  type ForcedDrop,
-  type OpenEdit,
-  type OpenRow,
-} from './ask.ts';
+import { askTextOk, bumpTicket, openList, reviewIfCurrent, withTurn, type HeldDrop, type OpenRow } from './ask.ts';
 import { fetchChat, fetchGraph, postCancel, postPropose, postReview, putChat, type ProposeAnswer } from './client.ts';
-
-type ProposalChild = { id: string; planned: GraphView | null; proposed: GraphView | null };
+import { proposalInk, type ProposalChild, type ProposalInk, type ProposalInput } from './proposalpicture.ts';
 
 type AskRun =
   | { kind: 'idle' }
@@ -27,19 +14,12 @@ type AskRun =
   | { kind: 'failed'; error: string; raw?: string; ran?: string; note?: string }
   | { kind: 'done'; ran: string; note?: string };
 
-type AskPicture = {
-  proposal: GraphView | null;
-  children: ProposalChild[];
-  edits: OpenEdit[];
-  hover: number | null;
-};
-
 export type AskModel = {
-  picture: AskPicture;
+  ink: ProposalInk;
   running: boolean;
   onTasks: (running: boolean) => void;
   recheck: () => void;
-  column: ReactNode;
+  column: (changes: ReactNode) => ReactNode;
 };
 
 type AskProps = {
@@ -49,10 +29,11 @@ type AskProps = {
   at: string;
   tests: boolean;
   external: boolean;
+  shown: ProposalInput['shown'];
   nodes: GraphNode[];
+  pins: ProposalInput['pins'];
   commit: (edit: PlanEdit) => Promise<PlanDoc | { error: string }>;
   onError: (message: string) => void;
-  changes: ReactNode;
 };
 
 function chatTurns(data: ChatTurn[] | { error: string } | undefined): ChatTurn[] {
@@ -270,20 +251,16 @@ export function useAsk(props: AskProps): AskModel {
     enabled: slug !== null,
   });
   const turns = chatTurns(chatQuery.data);
-  const turn = latestTurn(turns);
   const [text, setText] = useState('');
   const [hint, setHint] = useState<string | null>(null);
   const [run, setRun] = useState<AskRun>({ kind: 'idle' });
   const [hover, setHover] = useState<number | null>(null);
-  const [drop, setDrop] = useState<{ stamp: string; forced: ForcedDrop } | null>(null);
+  const [drop, setDrop] = useState<HeldDrop | null>(null);
   const [stale, setStale] = useState<(string | null)[]>([]);
   const [open, setOpen] = useState(false);
   const [tasksRunning, setTasksRunning] = useState(false);
-  const stamp = chatStamp(turns);
-  const forced = keptDrop(drop, stamp);
   const [seconds, restartTicker] = useTicker(run.kind === 'running');
-  const rows = zipRows(turn, stale, forced);
-  const edits = openEdits(rows);
+  const { turn, stamp, rows, edits } = openList(turns, stale, drop);
   const proposals = proposalsParam(edits.map(item => item.edit));
   const proposalQuery = useQuery({
     queryKey: ['graph', 'proposal', props.token, props.at, props.tests, props.external, slug, proposals] as const,
@@ -294,7 +271,7 @@ export function useAsk(props: AskProps): AskModel {
   const childResults = useQueries({
     queries: childQueries(props, proposals, proposal),
   });
-  const picture: AskPicture = { proposal, children: childPairs(childResults), edits, hover };
+  const ink = proposalInk({ shown: props.shown, planned: props.nodes, pins: props.pins, proposal, children: childPairs(childResults), edits, hover });
   const replace = async (next: ChatTurn[]): Promise<ChatTurn[] | { error: string }> => {
     const saved = await putChat(props.token, String(slug), next, props.fetcher);
     if ('error' in saved) return saved;
@@ -369,7 +346,7 @@ export function useAsk(props: AskProps): AskModel {
     await recheck(current);
   };
   const refresh = useEffectEvent(() => {
-    void recheck(latestTurn(turns));
+    void recheck(turn);
   });
   useEffect(() => {
     const timer = setTimeout(refresh, 0);
@@ -398,13 +375,13 @@ export function useAsk(props: AskProps): AskModel {
   };
   const summary = turn === null ? '' : turn.summary;
   return {
-    picture,
+    ink,
     running: run.kind === 'running',
     onTasks: setTasksRunning,
     recheck: () => {
-      void recheck(latestTurn(turns));
+      void recheck(turn);
     },
-    column: (
+    column: changes => (
       <AskColumn
         slug={slug}
         summary={summary}
@@ -416,7 +393,7 @@ export function useAsk(props: AskProps): AskModel {
         hint={hint}
         run={run}
         seconds={seconds}
-        changes={props.changes}
+        changes={changes}
         onHover={setHover}
         onAccept={index => void accept(index, turn as ChatTurn)}
         onReject={index => void remember(decide(turn as ChatTurn, index, 'rejected'))}

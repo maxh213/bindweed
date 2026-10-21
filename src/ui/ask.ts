@@ -1,12 +1,17 @@
-import { editSentence, parsePlanEdit, undecided, type ChatTurn, type PlanEdit } from '../domain/plan.ts';
+import { editSentence, undecided, type ChatTurn } from '../domain/chat.ts';
+import { parsePlanEdit, type PlanEdit } from '../domain/plan.ts';
 
-export type ForcedDrop = { index: number; reason: string };
+type ForcedDrop = { index: number; reason: string };
+
+export type HeldDrop = { stamp: string; forced: ForcedDrop };
 
 export type OpenRow = { index: number; raw: unknown; stale: string | null; sentence: string };
 
-export type OpenEdit = { index: number; edit: PlanEdit };
+type OpenEdit = { index: number; edit: PlanEdit };
 
-export function latestTurn(turns: ChatTurn[]): ChatTurn | null {
+export type OpenList = { turn: ChatTurn | null; stamp: string; rows: OpenRow[]; edits: OpenEdit[] };
+
+function latestTurn(turns: ChatTurn[]): ChatTurn | null {
   return turns.at(-1) ?? null;
 }
 
@@ -18,14 +23,9 @@ export function withTurn(turns: ChatTurn[], turn: ChatTurn): ChatTurn[] {
   return [...turns.slice(0, -1), turn];
 }
 
-export function chatStamp(turns: ChatTurn[]): string {
+function chatStamp(turns: ChatTurn[]): string {
   const last = turns.at(-1);
   return last === undefined ? '' : `${turns.length}:${last.at}`;
-}
-
-export function invoke(fn: (() => void) | null): void {
-  if (fn === null) return;
-  fn();
 }
 
 export function bumpTicket(tickets: { current: number }): number {
@@ -44,7 +44,7 @@ export function reviewIfCurrent(
   apply(result.stale);
 }
 
-export function keptDrop(drop: { stamp: string; forced: ForcedDrop } | null, stamp: string): ForcedDrop | null {
+function keptDrop(drop: HeldDrop | null, stamp: string): ForcedDrop | null {
   if (drop === null) return null;
   if (drop.stamp !== stamp) return null;
   return drop.forced;
@@ -60,7 +60,7 @@ function rowAt(turn: ChatTurn, index: number, stale: string | null, forced: Forc
   return { index, raw, stale: shownReason(stale, forced, index), sentence: editSentence(raw) };
 }
 
-export function zipRows(turn: ChatTurn | null, stale: (string | null)[], forced: ForcedDrop | null): OpenRow[] {
+function zipRows(turn: ChatTurn | null, stale: (string | null)[], forced: ForcedDrop | null): OpenRow[] {
   if (turn === null) return [];
   return undecided(turn).map((index, place) => rowAt(turn, index, stale[place] ?? null, forced));
 }
@@ -70,7 +70,7 @@ function applicable(row: OpenRow): PlanEdit | undefined {
   return parsePlanEdit(row.raw);
 }
 
-export function openEdits(rows: OpenRow[]): OpenEdit[] {
+function openEdits(rows: OpenRow[]): OpenEdit[] {
   const edits: OpenEdit[] = [];
   for (const row of rows) {
     const edit = applicable(row);
@@ -79,7 +79,9 @@ export function openEdits(rows: OpenRow[]): OpenEdit[] {
   return edits;
 }
 
-export function rawAt(turn: ChatTurn | null, index: number): unknown {
-  if (turn === null) return undefined;
-  return turn.edits[index];
+export function openList(turns: ChatTurn[], stale: (string | null)[], drop: HeldDrop | null): OpenList {
+  const turn = latestTurn(turns);
+  const stamp = chatStamp(turns);
+  const rows = zipRows(turn, stale, keptDrop(drop, stamp));
+  return { turn, stamp, rows, edits: openEdits(rows) };
 }

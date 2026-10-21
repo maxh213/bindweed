@@ -8,7 +8,8 @@ import type { CruiserFile } from './cruiser.ts';
 import { contractRules } from './domain/contract.ts';
 import { cycleTexts, edgePairs, graphView, nodeDetail, type GraphFlags, type GraphNode, type GraphView } from './domain/graph.ts';
 import { emptyLayout, parseLayout, type LayoutDoc } from './domain/layout.ts';
-import { byStrings, contractNamesFrom, freshTurn, parseChat, parsePlan, parsePlanEdit, planNameFrom, PLAN_SLUG_PATTERN, proposeFrom, reviewFrom, slugOf, type ContractRule, type PlanDoc, type PlanEdit } from './domain/plan.ts';
+import { freshTurn, parseChat, proposeFrom, reviewFrom } from './domain/chat.ts';
+import { byStrings, contractNamesFrom, parsePlan, parsePlanEdit, planNameFrom, PLAN_SLUG_PATTERN, slugOf, type ContractRule, type PlanDoc, type PlanEdit } from './domain/plan.ts';
 import { applyPlan, plannedShape, planReport, reviewProposed, type PlanReport } from './domain/planned.ts';
 import type { ScanResult } from './domain/scan.ts';
 import { buildTree, filePathSet, type TreeRoot } from './domain/tree.ts';
@@ -631,8 +632,8 @@ function promptEdge(edge: GraphView['edges'][number]): PromptEdge {
   return { from: edge.from, to: edge.to, runtime: edge.runtime, type: edge.type, heritage: edge.heritage, cycle: edge.cycle, cycleText: edge.cycleText };
 }
 
-function promptOfView(view: GraphView, heading: string): PromptView {
-  return { heading, nodes: view.nodes.map(promptNode), edges: view.edges.map(promptEdge) };
+function promptOfView(view: GraphView, at: string): PromptView {
+  return { at, nodes: view.nodes.map(promptNode), edges: view.edges.map(promptEdge) };
 }
 
 function childIds(view: GraphView): string[] {
@@ -645,18 +646,14 @@ function viewed(scan: ScanResult, at: string, rootName: string, health: ReturnTy
 
 function childPrompt(scan: ScanResult, id: string, rootName: string, health: ReturnType<typeof healthOf>): PromptView {
   const child = viewed(scan, id, rootName, health);
-  if (child === null) return { heading: id, nodes: [], edges: [] };
+  if (child === null) return { at: id, nodes: [], edges: [] };
   return promptOfView(child, id);
-}
-
-function headingOf(at: string): string {
-  return at === '' ? '(root)' : at;
 }
 
 function promptViews(scan: ScanResult, at: string, rootName: string, health: ReturnType<typeof healthOf>): PromptView[] {
   const current = viewed(scan, at, rootName, health) as GraphView;
   const children = childIds(current).map(id => childPrompt(scan, id, rootName, health));
-  return [promptOfView(current, headingOf(at)), ...children];
+  return [promptOfView(current, at), ...children];
 }
 
 type ProposeAsk = { text: string; at: string };

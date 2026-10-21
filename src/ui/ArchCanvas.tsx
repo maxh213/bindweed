@@ -22,7 +22,8 @@ import { pointsUp, type PlacedBox } from '../domain/layout.ts';
 import { arrowColor, boxCenter, edgeLabel, edgeTitle, filesLabel, headOf, lineOf, plannedColor } from './draw.ts';
 import { badgeLevel, badgeText, type Level, type OverlayName } from './healthdraw.ts';
 import { FILE_DRAG_MIME } from './plangesture.ts';
-import type { CutMarkInk, GhostBoxInk, Planning, ProposalBox, ProposalLink, ProposalRow, RowInk } from './planpicture.ts';
+import type { CutMarkInk, GhostBoxInk, Planning, RowInk } from './planpicture.ts';
+import type { ProposalBox, ProposalLink, ProposalRow } from './proposalpicture.ts';
 
 export type MarkSel = { from: string; to: string; cut: boolean };
 

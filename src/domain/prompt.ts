@@ -1,4 +1,5 @@
-import { byStrings, chatLines, everyRead, listOfAtLeast, oneParagraph, pendingRound, recordOf, sentenceOf, stringsFrom, within, type ChatTurn, type FateEdit, type NoteTarget, type PlanDoc, type PlanEdit, type Question, type Round } from './plan.ts';
+import { chatLines, oneParagraph, type ChatTurn } from './chat.ts';
+import { byStrings, everyRead, listOfAtLeast, pendingRound, recordOf, sentenceOf, stringsFrom, within, type FateEdit, type NoteTarget, type PlanDoc, type PlanEdit, type Question, type Round } from './plan.ts';
 import type { PlanWarning, ScanResult } from './scan.ts';
 import { LAST_TASK_NUMBER, numberedTasks, type Slice } from './tasks.ts';
 
@@ -279,7 +280,7 @@ export type PromptEdge = {
   cycleText?: string;
 };
 
-export type PromptView = { heading: string; nodes: PromptNode[]; edges: PromptEdge[] };
+export type PromptView = { at: string; nodes: PromptNode[]; edges: PromptEdge[] };
 
 export type ProposeFacts = {
   name: string;
@@ -377,7 +378,7 @@ function cyclesLine(edges: PromptEdge[]): string {
 }
 
 function viewLines(view: PromptView): string[] {
-  return [`### ${view.heading}`, ...view.nodes.map(nodeLine), ...view.edges.map(edgeLine), cyclesLine(view.edges)];
+  return [`### ${currentView(view.at)}`, ...view.nodes.map(nodeLine), ...view.edges.map(edgeLine), cyclesLine(view.edges)];
 }
 
 function currentView(at: string): string {

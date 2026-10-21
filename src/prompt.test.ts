@@ -251,7 +251,7 @@ describe('proposePrompt', () => {
       ],
       views: [
         {
-          heading: '(root)',
+          at: '',
           nodes: [
             node({ id: 'src', kind: 'package', name: 'src', files: 4, zone: 'healthy', crap: '–', mutants: 0 }),
             node({ id: 'src/rule.ts', name: 'rule.ts', crap: 2.5, coverage: '0.50', mutants: 1, i: '–' }),
@@ -263,7 +263,7 @@ describe('proposePrompt', () => {
             edge({ from: 'src/c', to: 'src/d', runtime: 0, type: 1 }),
           ],
         },
-        { heading: 'src', nodes: [node({ id: 'src/app', kind: 'package', name: 'app', files: 2 })], edges: [] },
+        { at: 'src', nodes: [node({ id: 'src/app', kind: 'package', name: 'app', files: 2 })], edges: [] },
       ],
     }));
     expect(prompt.startsWith('You are proposing edits to the plan "Gate". The developer says what they dislike; you propose edits they will accept or reject. You change nothing yourself.')).toBe(true);
@@ -293,7 +293,7 @@ describe('proposePrompt', () => {
     expect(prompt).toContain('## Planned graph\nnone');
     expect(prompt).toContain('## The plan\'s edits so far\nnone');
     expect(prompt).toContain('## Conversation so far\nnone');
-    const quiet = proposePrompt(facts({ views: [{ heading: 'src', nodes: [], edges: [edge()] }] }));
+    const quiet = proposePrompt(facts({ views: [{ at: 'src', nodes: [], edges: [edge()] }] }));
     expect(quiet).toContain('### src\nedge src/a -> src/b runtime 1 type 0 cycle false\ncycles none');
   });
 });

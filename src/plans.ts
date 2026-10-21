@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { freeSlug, parseChat, parsePlan, summarisePlan, type ChatTurn, type PlanDoc, type PlanSummary } from './domain/plan.ts';
+import { parseChat, type ChatTurn } from './domain/chat.ts';
+import { freeSlug, parsePlan, summarisePlan, type PlanDoc, type PlanSummary } from './domain/plan.ts';
 
 function plansDir(root: string): string {
   return join(root, '.bindweed', 'plans');

@@ -5,7 +5,8 @@ import { JSDOM } from 'jsdom';
 import { z } from 'zod';
 import { cycleTexts, edgePairs, graphView, nodeDetail, type GraphView } from '../domain/graph.ts';
 import { emptyLayout, parseLayout, type LayoutDoc } from '../domain/layout.ts';
-import { freshTurn, freeSlug, parseChat, parsePlan, parsePlanEdit, planNameFrom, PLAN_SLUG_PATTERN, proposeFrom, reviewFrom, slugOf, summarisePlan, type ChatTurn, type PlanDoc, type PlanEdit } from '../domain/plan.ts';
+import { freshTurn, parseChat, proposeFrom, reviewFrom, type ChatTurn } from '../domain/chat.ts';
+import { freeSlug, parsePlan, parsePlanEdit, planNameFrom, PLAN_SLUG_PATTERN, slugOf, summarisePlan, type PlanDoc, type PlanEdit } from '../domain/plan.ts';
 import { applyPlan, planReport, reviewProposed } from '../domain/planned.ts';
 
 vi.mock('@xyflow/react', async () => {

@@ -2,7 +2,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { ChatTurn, PlanDoc } from './domain/plan.ts';
+import type { ChatTurn } from './domain/chat.ts';
+import type { PlanDoc } from './domain/plan.ts';
 import { freePlanSlug, listPlans, readChat, readPlan, removePlan, writeChat, writePlan } from './plans.ts';
 
 function docOf(slug: string, createdAt: string, name = 'Split app'): PlanDoc {

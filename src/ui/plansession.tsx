@@ -16,7 +16,6 @@ import {
 import { ContractPanel } from './ContractPanel.tsx';
 import { SettingsDialog } from './SettingsDialog.tsx';
 import { TasksPanel } from './TasksPanel.tsx';
-import { invoke } from './ask.ts';
 import { useAsk } from './asksession.tsx';
 import { RunFeedback } from './RunFeedback.tsx';
 import { deletePlan, fetchGraph, fetchPairs, fetchPlan, fetchPlans, postPlan, putPlan } from './client.ts';
@@ -36,7 +35,7 @@ import {
   SplitDialog,
 } from './PlanBar.tsx';
 import { FILE_DRAG_MIME, fieldTarget, keyActionOf, planDropTarget } from './plangesture.ts';
-import { arrowViewAt, entryTarget, planPicture, proposalInk, type Planning, type ShownGraph } from './planpicture.ts';
+import { arrowViewAt, entryTarget, planPicture, type Planning, type ShownGraph } from './planpicture.ts';
 import { planRoster } from './planroster.ts';
 import { declaredPaths, nameEdit, nameTaken, splitEdit, splitRows, type NameAsk, type Reshaped } from './reshape.ts';
 
@@ -417,7 +416,6 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
   const docRef = useRef<PlanDoc | null>(null);
   const versionRef = useRef(0);
   const tailRef = useRef<Promise<void>>(Promise.resolve());
-  const recheckRef = useRef<(() => void) | null>(null);
   const roster = planRoster(plansQuery.data, planQuery.data, slug, deleteTarget);
   const doc = roster.doc;
   const edits = editsOf(doc);
@@ -643,11 +641,24 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     if (file !== '') moveFile(file, at);
   };
 
+  const asking = useAsk({
+    token: props.token,
+    fetcher: props.fetcher,
+    slug,
+    at: props.at,
+    tests: props.tests,
+    external: props.external,
+    shown: props.shown,
+    nodes: props.nodes,
+    pins: props.pins,
+    commit: commitEdit,
+    onError: setNotice,
+  });
   const onUndo = (): void => {
-    void undoEdit().then(() => invoke(recheckRef.current));
+    void undoEdit().then(asking.recheck);
   };
   const onRedo = (): void => {
-    void redoEdit().then(() => invoke(recheckRef.current));
+    void redoEdit().then(asking.recheck);
   };
   const onDelete = useEffectEvent(deleteMarked);
   useEffect(() => {
@@ -663,36 +674,11 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     return () => window.removeEventListener('keydown', onKey);
   });
 
-  const asking = useAsk({
-    token: props.token,
-    fetcher: props.fetcher,
-    slug,
-    at: props.at,
-    tests: props.tests,
-    external: props.external,
-    nodes: props.nodes,
-    commit: commitEdit,
-    onError: setNotice,
-    changes: <PlanChanges slug={slug} doc={doc} entries={entries} onUndo={onUndo} onRedo={onRedo} onPick={pickEntry} onRemove={removeEdit} />,
-  });
-  useEffect(() => {
-    recheckRef.current = asking.recheck;
-  });
-  const proposal = proposalInk({
-    shown: props.shown,
-    planned: props.nodes,
-    pins: props.pins,
-    proposal: asking.picture.proposal,
-    children: asking.picture.children,
-    edits: asking.picture.edits,
-    hover: asking.picture.hover,
-  });
-
   const planning = ((): Planning | null => {
     if (slug === null) return null;
     return {
       ink: picture.ink,
-      proposal,
+      proposal: asking.ink,
       mergeReady: selectedPackages(props.nodes, props.selection).length >= 2,
       onDropFile: moveFile,
       onDrawEdge: drawEdge,
@@ -730,7 +716,7 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
       />
     ),
     notice: <PlanNotice slug={slug} text={notice} />,
-    changes: asking.column,
+    changes: asking.column(<PlanChanges slug={slug} doc={doc} entries={entries} onUndo={onUndo} onRedo={onRedo} onPick={pickEntry} onRemove={removeEdit} />),
     dialogs: (
       <>
         <ReshapeDialogs nameAsk={nameAsk} splitAsk={splitAsk} error={askError} onName={submitName} onSplit={submitSplit} onCancel={closeAsk} />

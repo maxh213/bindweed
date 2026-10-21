@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import type { GraphView, NodeDetail } from '../domain/graph.ts';
 import { emptyLayout, parseLayout, type LayoutDoc } from '../domain/layout.ts';
-import { parseChat, parseContract, parsePlan, type ChatTurn, type Contract, type PlanDoc, type PlanSummary } from '../domain/plan.ts';
+import { parseChat, type ChatTurn } from '../domain/chat.ts';
+import { parseContract, parsePlan, type Contract, type PlanDoc, type PlanSummary } from '../domain/plan.ts';
 import type { TreeEntry } from '../domain/tree.ts';
 
 const treeEntrySchema: z.ZodType<TreeEntry> = z.lazy(() =>
