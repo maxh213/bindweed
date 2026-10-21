@@ -55,8 +55,8 @@ Paste the printed `export` line into the second terminal. `PATH` for bindweed is
 
 ## Steps
 
-1. In the first terminal run `PATH="$QA/fakes/bin:$NODEBIN:/usr/bin:/bin" CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli CLAUDE_CONFIG_DIR=/tmp/qa/claude node $BW/src/cli.ts --port 5000`. Open the printed address with `#at=src` appended. In the second terminal set `TOKEN` to the printed token, and run `command -v marestail; command -v sc`.
-   **Expect:** `app` (2 files), `infra` and `domain`. The toolbar has a gear button named `Settings`. There is no `Launch` button. The two commands print `$QA/fakes/bin/marestail` and `$QA/fakes/bin/sc`.
+1. In the first terminal, the same shell that will start bindweed, run `PATH="$QA/fakes/bin:$NODEBIN:/usr/bin:/bin" command -v marestail` and `PATH="$QA/fakes/bin:$NODEBIN:/usr/bin:/bin" command -v sc`. Then run `PATH="$QA/fakes/bin:$NODEBIN:/usr/bin:/bin" CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli CLAUDE_CONFIG_DIR=/tmp/qa/claude node $BW/src/cli.ts --port 5000`. Open the printed address with `#at=src` appended. In the second terminal set `TOKEN` to the printed token. Do not run `command -v` there: that shell's `PATH` was never given the fakes.
+   **Expect:** the two commands print `$QA/fakes/bin/marestail` and `$QA/fakes/bin/sc`. The page shows `app` (2 files), `infra` and `domain`. The toolbar has a gear button named `Settings`. There is no `Launch` button.
 
 2. Create a plan named `Empty`. Click `Launch`.
    **Expect:** `Launch` is in the toolbar after `Tasks` and before the gear. The dialog is labelled `Launch` and looks like this, with `FOCUS` blank and the dialog's `Launch` disabled. The reason is text in the dialog, not only a tooltip:
@@ -103,9 +103,17 @@ curl -s -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -X
    **Expect:** `Close` and Escape leave no `$QA/layered-bw-gate`. The reopened dialog has `MODEL` `dandelion/route-best`, `SCOPE` `hard`, `FOCUS` `src/app/a.ts src/domain/model.ts` and `STOP_AT` `qa`. Back on `marestail`, `MODEL` is `mine` and `SCOPE` is `narrow`. On `slop-cannon` again, `Ammo` is `3` and `Cartridge` is blank. After `Close` and `Launch` the four fields are the defaults again, and the dialog's `Launch` starts the run.
 
 7. Look at the dialog, and click `Copy worktree`, `Copy branch` and `Copy command`, pasting each into the second terminal without running it.
-   **Expect:** five steps, `Worktree ✓`, `Files ✓`, `Commit ✓`, `Start ✓`, `Record ✓`. Then the path, the branch and the watch command:
+   **Expect:** the fields are still there and still editable. `Tool` is `marestail`. The dialog's `Launch` is disabled, and the reason `a run for this plan is still alive` is shown. Five steps, `Worktree ✓`, `Files ✓`, `Commit ✓`, `Start ✓`, `Record ✓`. Then the path, the branch and the watch command:
 
 ```
+Launch
+  Tool      marestail
+  MODEL     dandelion/route-best
+  SCOPE     hard
+  FOCUS     src/app/a.ts src/domain/model.ts
+  STOP_AT   qa
+  a run for this plan is still alive
+  Launch                          Close
 Steps
   Worktree ✓
   Files ✓
@@ -137,7 +145,7 @@ git -C "$QA/layered-bw-gate" log -1 --format='%s%n%n%b'
 git -C "$QA/layered-bw-gate" diff-tree --no-commit-id --name-only -r HEAD
 cmp -s "$QA/preview.cjs" "$QA/layered-bw-gate/.dependency-cruiser.cjs" && echo cruiser-matches
 echo "--- overnight ---"
-node -e 'const o=require(process.argv[1]); console.log(o.argv.join(" ")); console.log([o.model,o.scope,o.focus,o.stop,o.claudecode,o.pathHead].join(" | "))' "$QA/log/overnight.json"
+node -e 'const o=require(process.argv[1]); const show=v=>v===null?"null":String(v); console.log(o.argv.join(" ")); console.log([o.model,o.scope,o.focus,o.stop,o.claudecode,o.pathHead].map(show).join(" | "))' "$QA/log/overnight.json"
 echo "--- script ---"
 grep -c "systemd-inhibit --what=idle --who=bindweed --why='bindweed gate'" "$QA/layered-bw-gate"/.marestail/runs/launch-*.sh
 grep -c "$QA/fakes/tools/overnight.sh" "$QA/layered-bw-gate"/.marestail/runs/launch-*.sh
@@ -165,9 +173,21 @@ git -C "$QA/layered" branch bindweed/gate
 ```
 
    Click `Close`, then `Launch`, and click the dialog's `Launch`.
-   **Expect:** the dialog's `Launch` was enabled before the click. The only step is `Worktree a branch named 'bindweed/gate' already exists`, with no `✓` and no `Copy worktree`. `test ! -e $QA/layered-bw-gate && git -C $QA/layered status --porcelain && echo clean` prints `clean`.
+   **Expect:** the dialog's `Launch` was enabled before the click. The only step is `Worktree a branch named 'bindweed/gate' already exists`, with no `✓` and no `Copy worktree`. The form is still there: `Tool` is `marestail`, the four fields are the defaults, and the dialog's `Launch` is enabled again. `test ! -e $QA/layered-bw-gate && git -C $QA/layered status --porcelain && echo clean` prints `clean`.
 
-11. Paste `git -C "$QA/layered" branch -D bindweed/gate`. Choose `slop-cannon`, leave `Safety` on and `Ammo` and `Cartridge` blank, and click the dialog's `Launch`. Click `Copy command` and paste it.
+```
+Launch
+  Tool      marestail
+  MODEL     dandelion/route-best
+  SCOPE     hard
+  FOCUS     src/app/a.ts src/domain/model.ts
+  STOP_AT   qa
+  Launch                          Close
+Steps
+  Worktree a branch named 'bindweed/gate' already exists
+```
+
+11. Paste `git -C "$QA/layered" branch -D bindweed/gate`. Stay in that dialog. Choose `slop-cannon`, leave `Safety` on and `Ammo` and `Cartridge` blank, and click the dialog's `Launch`. Click `Copy command` and paste it.
    **Expect:** the five steps are ticked. The watch command, and the paste, is `sc status --repo $QA/layered-bw-gate`. In the second terminal, `node -e 'const o=require(process.argv[1]); console.log(o.cwd); console.log(o.argv.join(" "))' "$QA/log/sc.json"` prints `$QA/layered` and then `--repo $QA/layered-bw-gate --headless --safety on -m # Reshape layered` followed, after a blank line, by `Move b, then cut app from domain.` The worktree has no `tasks/005-add-core.md`. `git -C $QA/layered status --porcelain && echo clean` prints `clean`.
 
 12. In the second terminal take the last pid from `$QA/layered/.bindweed/runs.json` the same way as step 8 and run `kill -- -"$PID"`. Then `git -C "$QA/layered" worktree remove --force "$QA/layered-bw-gate"` and `git -C "$QA/layered" branch -D bindweed/gate`. In the first terminal press Ctrl-C. Run `git -C "$QA/layered" status --porcelain && git -C "$QA/layered" worktree list && echo clean`, then `cd ~ && rm -rf "$QA"`.

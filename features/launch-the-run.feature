@@ -18,7 +18,9 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
   "The brief" is "# Reshape layered\n\nMove b, then cut app from domain.\n".
   "The launch plan" is the plan "Gate", slug gate, whose only edit is the
   package cut, with these three tasks, this brief, and "contract" the rules
-  GET /api/plans/gate/contract returns for that edit. "The worktree" is
+  GET /api/plans/gate/contract returns for that edit. "The launch plan and
+  the note X" is that plan with the note appended after the package cut;
+  its tasks, brief and contract stay. "The worktree" is
   "/tmp/qa/layered-bw-gate". "The branch" is "bindweed/gate".
 
   Fakes, all executable, never a real agent. "/tmp/qa/fakes/bin" holds
@@ -124,8 +126,15 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
     missing or blank). A second POST for a launch that has not answered yet
     answers 409 {"error":"already running"} and does not start a second run.
     That lock is the launch only: a running generate or propose does not block
-    a launch, and a launch does not block them. A launch that reaches the
-    steps answers 200, including when a step stops the rest. The body has
+    a launch, and a launch does not block them. While a generate has not
+    answered, a marestail launch still returns 200 and the steps are all ok.
+    The note "SLEEP-NOW" is JSON in that generate prompt, and the 008 fake
+    then writes "/tmp/qa/log/sleep.pids" and does not answer.
+    While a launch has not answered and is held because
+    "/tmp/qa/log/install.wait" exists, "POST /api/plans/gate/generate" with
+    {"step":"ask"} still returns 200 and the questions, not 409. A launch
+    that reaches the steps answers 200, including when a step stops the rest.
+    The body has
     "steps" and no other key, plus "worktree" and "branch" when Worktree is
     ok, plus "watch" and "pid" when Start is ok. An ok step is exactly
     {"name":"<name>","ok":true} and has no "error" key. The step that stops
@@ -189,6 +198,25 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
       When I send "POST /api/plans/gate/launch" with the header "Host: evil.example:5000" and the token and {"tool":"marestail","model":"m","scope":"","focus":"","stopAt":"qa"}
       Then the status is 403 and the body is {"error":"bad host"}
       And "git status --porcelain" in "/tmp/qa/layered" is empty
+
+    Scenario: A generate that has not answered does not block a launch
+      Given the launch plan and the note "SLEEP-NOW"
+      And "/tmp/qa/layered/.bindweed/config.json" holds {"llm":{"backend":"command","command":"node <bindweed dir>/qa/fixtures/fake-llm.mjs /tmp/qa/log"}}
+      When I send "POST /api/plans/gate/generate" with the token and {"step":"ask"} and wait for /tmp/qa/log/sleep.pids
+      And I send a marestail launch with the token
+      Then the launch status is 200 and the steps are all ok
+      And within 5 seconds "/tmp/qa/log/overnight.json" exists and the generate POST has not answered
+      When I send "POST /api/plans/gate/cancel" with the token
+      Then the body is {"cancelled":true} and within 2 seconds neither pid in "/tmp/qa/log/sleep.pids" is alive
+
+    Scenario: A launch held during install does not block generate
+      Given the launch plan and "/tmp/qa/log/install.wait" exists
+      And "/tmp/qa/layered/.bindweed/config.json" holds {"llm":{"backend":"command","command":"node <bindweed dir>/qa/fixtures/fake-llm.mjs /tmp/qa/log"}}
+      When I send a marestail launch with the token and wait until the worktree exists
+      And I send "POST /api/plans/gate/generate" with the token and {"step":"ask"}
+      Then the status is 200 and "plan.interview" has one round whose first question is "Must a.ts keep exporting a?"
+      When "/tmp/qa/log/install.go" is created
+      Then the launch answers 200 and the steps are all ok
 
   Rule: a launch makes one commit next door and starts the run detached
     The worktree path is "<parent of the served root>/<directory name>-bw-<slug>"
@@ -270,9 +298,11 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
     argument vector, not through a shell, with the served root
     as its working directory, output to
     "<root>/.bindweed/runs/<slug>-<stamp>.out". The brief is one argument.
-    Record appends {"slug","tool","worktree","branch","pid","startedAt","out","settings"}
-    to "<root>/.bindweed/runs.json", creating a one-element array when the
-    file is missing. "startedAt" matches the plan createdAt pattern. Marestail
+    Record appends one object to "<root>/.bindweed/runs.json", creating a
+    one-element array when the file is missing. That object's keys are exactly
+    "slug", "tool", "worktree", "branch", "pid", "startedAt", "out" and
+    "settings". "startedAt" matches \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z,
+    the plan createdAt pattern. Marestail
     settings are {"model","scope","focus","stopAt"} with scope "" when blank.
     Slop-cannon settings are {"safety","ammo","cartridge"} with blanks kept.
     A file that is not a JSON array stops Record with "runs.json is not a list"
@@ -296,7 +326,9 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
       And within 5 seconds "/tmp/qa/log/overnight.json" has "argv" ["tasks/005-add-core.md","tasks/006-move-b.md","tasks/007-cut-app-domain.md"], "cwd" the worktree, "model" "dandelion/route-best", "scope" "hard", "focus" "src/app/a.ts src/domain/model.ts", "stop" "qa", "pathHead" "/tmp/qa/fakes/bin" and "claudecode", "entrypoint" and "configDir" null
       And the launch script's first line of output is "start pid=<that pid> model=dandelion/route-best scope=hard focus=src/app/a.ts src/domain/model.ts stop=qa"
       And the script contains "systemd-inhibit --what=idle --who=bindweed", "--why='bindweed gate'" and "'/tmp/qa/fakes/tools/overnight.sh'"
-      And "/tmp/qa/layered/.bindweed/runs.json" is one entry for "gate", tool "marestail", that worktree, branch and pid, "out" the launch ".out", and settings {"model":"dandelion/route-best","scope":"hard","focus":"src/app/a.ts src/domain/model.ts","stopAt":"qa"}
+      And "/tmp/qa/layered/.bindweed/runs.json" is a one-element array whose object's keys are exactly "slug", "tool", "worktree", "branch", "pid", "startedAt", "out" and "settings"
+      And "slug" is "gate", "tool" is "marestail", "worktree" is "/tmp/qa/layered-bw-gate", "branch" is "bindweed/gate", "pid" is the body's pid, "out" is the launch ".out" and "startedAt" matches \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z
+      And "settings" is {"model":"dandelion/route-best","scope":"hard","focus":"src/app/a.ts src/domain/model.ts","stopAt":"qa"}
       And the plan file's bytes are unchanged and "/tmp/qa/layered/.dependency-cruiser.cjs" does not exist
       And "git rev-parse HEAD" in "/tmp/qa/layered" is unchanged and "git status --porcelain" there is empty
       And "git config --get commit.gpgsign" in "/tmp/qa/layered" is still unset
@@ -521,6 +553,12 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
       Then the status is 200 and the body is []
       When I send "POST /api/plans/gate/review" with the token and {"edits":[]}
       Then the body is {"stale":[]}
+      When I send "GET /api/plans/gate" with the token
+      Then the status is 200 and "name" is "Gate" and "slug" is "gate" and "edits" is the package cut as its one edit and "redo" is [] and "tasks" is the three tasks and "brief" is the brief
+      And "contract.rules" equals the "rules" of "GET /api/plans/gate/contract" and the body has no "interview" key
+      When I send "PUT /api/plans/gate" with the token and that same document
+      Then the status is 200 and the body is that document
+      And "git status --porcelain" in "/tmp/qa/layered" is empty
       When I send "POST /api/plans/gate/cancel" with the token
       Then the body is {"cancelled":false}
       When I send "POST /api/plans/gate/generate" with the token and {"step":"ask"}
@@ -545,16 +583,20 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
     fills the fields from GET again. "Close" and Escape close it and launch
     nothing. The dialog's "Launch" is disabled, with the reason as text, when
     a reason applies. Otherwise it POSTs the visible fields. Until the answer,
-    that button is disabled. Then an ordered list "Steps" shows each returned
+    that button is disabled. The Tool select and every field stay in the
+    dialog and stay editable after the answer. Steps are added under them and
+    do not replace them. Then an ordered list "Steps" shows each returned
     step: "<name> ✓" when ok (✓ is U+2713), or "<name> <error>" with no ✓ for
-    the one that stopped. Later steps are absent. The dialog uses that same
-    first-reason order, from the open plan and from GET. A 409 shows its
-    "error" as text and no Steps list. What was typed survives switching
-    tools. "Copy worktree" is shown when GET included a worktree, or when
-    this answer's Worktree step is ok. "Copy branch" is shown only when that
-    same source has a string "branch", so a missing "branch" leaves it out.
-    "Copy command" is shown when GET included a watch, or when this answer's
-    Start step is ok.
+    the one that stopped. Later steps are absent. After the answer, Launch
+    follows the refusal reasons again, from the open plan and from GET,
+    including a run this answer just recorded. A failed step is not a reason,
+    so Launch is enabled when none applies. The dialog uses that same
+    first-reason order. A 409 shows its "error" as text and no Steps list.
+    What was typed survives switching tools and survives the answer. "Copy
+    worktree" is shown when GET included a worktree, or when this answer's
+    Worktree step is ok. "Copy branch" is shown only when that same source
+    has a string "branch", so a missing "branch" leaves it out. "Copy command"
+    is shown when GET included a watch, or when this answer's Start step is ok.
     Each copy button copies that text and nothing more.
 
     Scenario: The dialog launches marestail and copies the worktree, the branch and the watch command
@@ -568,6 +610,8 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
       Then the dialog is gone and the directory still does not exist
       When I click "Launch", then the dialog's "Launch"
       Then the steps read "Worktree ✓", "Files ✓", "Commit ✓", "Start ✓" and "Record ✓"
+      And "Tool" is still "marestail", "MODEL" is still "dandelion/route-best", "SCOPE" is still "hard", "FOCUS" is still "src/app/a.ts src/domain/model.ts" and "STOP_AT" is still "qa"
+      And the dialog's "Launch" is disabled and the dialog shows "a run for this plan is still alive"
       And the dialog shows "/tmp/qa/layered-bw-gate", "bindweed/gate" and "marestail watch"
       When I click "Copy worktree"
       Then the clipboard is "/tmp/qa/layered-bw-gate"
@@ -584,10 +628,12 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
       When I type "3" over "Ammo" and choose "marestail" in "Tool"
       Then "MODEL" is "mine", "SCOPE" is "narrow", "FOCUS" is "src/app/a.ts src/domain/model.ts" and "STOP_AT" is "qa"
       When I choose "slop-cannon" in "Tool"
-      Then "Ammo" is "3" and "Cartridge" is blank
+      Then "Safety" is "on", "Ammo" is "3" and "Cartridge" is blank
+      When I choose "off" in "Safety" and clear "Ammo"
+      Then "Safety" is "off" and "Ammo" and "Cartridge" are blank
       When I click the dialog's "Launch"
       Then the steps are all ✓ and the dialog shows "sc status --repo /tmp/qa/layered-bw-gate"
-      And "/tmp/qa/log/sc.json" has "argv" ["--repo","/tmp/qa/layered-bw-gate","--headless","--safety","on","--ammo","3","-m",the brief]
+      And "/tmp/qa/log/sc.json" has "argv" ["--repo","/tmp/qa/layered-bw-gate","--headless","--safety","off","-m",the brief]
       When I click "Copy command"
       Then the clipboard is "sc status --repo /tmp/qa/layered-bw-gate"
 
@@ -606,4 +652,11 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
       When I click the dialog's "Launch"
       Then the steps show "Worktree a branch named 'bindweed/gate' already exists" and no ✓
       And there is no "Copy worktree" button
+      And "Tool" is "marestail", "MODEL", "SCOPE", "FOCUS" and "STOP_AT" are still shown and editable, and the dialog's "Launch" is enabled
       And "/tmp/qa/layered-bw-gate" does not exist
+      When the branch "bindweed/gate" is deleted and I choose "slop-cannon" in "Tool"
+      Then "Safety" is "on", "Ammo" and "Cartridge" are blank, and the dialog's "Launch" is enabled
+      When I click the dialog's "Launch"
+      Then the steps read "Worktree ✓", "Files ✓", "Commit ✓", "Start ✓" and "Record ✓"
+      And the dialog shows "sc status --repo /tmp/qa/layered-bw-gate"
+      And "/tmp/qa/log/sc.json" has "argv" ["--repo","/tmp/qa/layered-bw-gate","--headless","--safety","on","-m",the brief]
