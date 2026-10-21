@@ -1,149 +1,301 @@
 Feature: a Runs panel shows where every launched run stands
-  A developer can open a Runs tab next to Files and Architecture to see every
-  run launched with bindweed: plan name, tool, branch, worktree path, started
-  and elapsed time, state pill, position line, and a collapsible log tail.
-  The badge counts running runs. Runs whose worktrees are gone show worktree
-  removed and offer a Forget button to clean up runs.json.
+  A developer opens the Runs tab beside Files and Architecture and sees every
+  run in ".bindweed/runs.json": plan, tool, branch, worktree, start and
+  elapsed time, a state pill, a position line and a log tail. The badge counts
+  running runs. The panel is read-only, except Forget on a removed worktree.
 
   The tree, token, {token}, Host header, JSON comparison and \n are the
   Background of features/plan-to-dependency-contract.feature. "bindweed" is
-  "node <bindweed dir>/src/cli.ts" on port 5000. "The worktree" is
-  "/tmp/qa/layered-bw-gate".
+  "node <bindweed dir>/src/cli.ts" on port 5000.
+
+  "A live pid" is the pid of a "sleep 900" the test spawned. "A dead pid" is
+  the pid of a "true" the test spawned and waited for. "Entry <name>" is the
+  runs.json object {"slug":"plan-<name>","tool":<tool>,"worktree":"/tmp/qa/runs/wt-<name>","branch":"bindweed/plan-<name>","pid":<pid>,"startedAt":<startedAt>,"out":"/tmp/qa/layered/.bindweed/runs/plan-<name>.out","settings":{}}.
+  "At HH:MM" is that time on 2026-10-21 UTC: an mtime set with touch, or a
+  startedAt "2026-10-21THH:MM:00.000Z". Under "/tmp/qa/runs/wt-<name>", "log
+  <id>" is ".marestail/runs/<id>/pipeline.log" and "summary" is
+  ".marestail/runs/overnight-20261021T1230.md", mtime at 12:30.
+
+  The marestail worktrees, tool "marestail":
+  | name    | files                                                                                                                                  | pid  | startedAt |
+  | done    | tasks/001-a.md, tasks/002-b.md; log 001-a and log 002-b "== qa (09-qa) attempt 1\npipeline complete\n" at 12:10 and 12:20; summary "001-a ok\n002-b ok\nall tasks complete\n" | dead | 12:01 |
+  | stopped | tasks/001-w.md, tasks/002-x.md; log 001-w "pipeline complete\n" at 12:10; log 002-x "== coder (03-coder) attempt 2\ngate failed\nstopping for a human\n" at 12:20; summary "stopped: tasks/002-x.md exited 1\n" | dead | 12:02 |
+  | failed  | tasks/001-f.md; log 001-f "== coder (03-coder) attempt 1\nnpm ERR! boom\n" at 12:10; summary "stopped: tasks/001-f.md exited 2\n" | dead | 12:03 |
+  | running | tasks/README.md, tasks/001-init.md, tasks/002-step.md, tasks/003-later.md; log 001-init "pipeline complete\n" at 12:10; log 002-step "starting\n== coder (07-coder) attempt 2\n== hardener (07-hardener) attempt 1\n" at 12:20 | live | 12:04 |
+  | dead    | tasks/001-task.md; log 001-task "starting\n" at 12:10                                                                                   | dead | 12:05 |
+  | between | tasks/001-a.md, tasks/002-b.md; log 001-a "pipeline complete\n" at 12:10                                                               | live | 12:06 |
+  | fresh   | tasks/001-a.md and no ".marestail" directory                                                                                           | dead | 12:07 |
+  | removed | no directory at all                                                                                                                    | dead | 12:00 |
+
+  The slop-cannon worktrees, tool "slop-cannon". The fake "sc" in
+  "/tmp/qa/fakes/bin", given "status --repo <dir> --json", sleeps 15 seconds
+  when "<dir>/sc-status.slow" exists, prints "<dir>/sc-status.err" to stderr
+  and exits 1 when that exists, and otherwise prints "<dir>/sc-status.json"
+  and exits 0. "The sc out" is "[sc] line 1\n" to "[sc] line 25\n" in that
+  entry's "out" file.
+  | name     | files                                                                                                                                                                                                  | out        | pid  | startedAt |
+  | sc       | sc-status.json {"state":{"phase":"running"},"agents":[{"alive":true},{"alive":true},{"alive":true},{"alive":true},{"alive":false}],"beads":{"open":7,"done":3},"prs":[{"url":"https://example.test/pull/41"},{"url":"https://example.test/pull/42"}]} | the sc out | live | 12:09 |
+  | sc-one   | sc-status.json {"state":{"phase":"planning"},"agents":[{"alive":true}],"beads":{},"prs":[{"url":"https://example.test/pull/7"}]}                                                                     | no file    | live | 12:10 |
+  | sc-done  | sc-status.json {"state":{"phase":"complete"},"agents":[],"beads":{"done":5},"prs":[]}                                                                                                                | no file    | dead | 12:11 |
+  | sc-err   | sc-status.err "no slop-cannon state here\nsecond line\n"                                                                                                                                               | no file    | dead | 12:12 |
+  | sc-slow  | sc-status.slow                                                                                                                                                                                         | no file    | live | 12:13 |
+  | sc-junk  | sc-status.json "nope"                                                                                                                                                                                  | no file    | live | 12:14 |
 
   Background:
     Given bindweed's ui was built with "npm run build"
     And "/tmp/qa/layered" is the committed four-file fixture of features/plan-to-dependency-contract.feature
-    And "/tmp/qa/fakes/bin" holds executable fakes for "sc" and "marestail"
+    And "/tmp/qa/runs" holds the worktrees above and "/tmp/qa/fakes/bin" holds the fake "sc"
     And bindweed is serving "/tmp/qa/layered" with "/tmp/qa/fakes/bin" first on PATH
 
-  Rule: GET /api/runs reports state, position line and log tail for every run
-    GET /api/runs answers {"runs":[...]}. When ".bindweed/runs.json" is missing,
-    not a list, or empty, "runs" is []. Each run object contains "slug",
-    "planName", "tool", "branch", "worktree", "worktreeExists", "pid",
-    "startedAt", "state", "position", and "logTail" (up to 20 lines). Runs are
-    ordered newest first by "startedAt".
+  Rule: GET /api/runs reports every run's state, position and log tail
+    GET /api/runs answers {"runs":[...]}, [] when runs.json is missing, not
+    JSON or not a list. An element is left out unless it is an object with
+    string "slug", "worktree" and "startedAt" and "tool" "marestail" or
+    "slop-cannon". Runs are newest "startedAt" first; on a tie the later
+    element comes first. Each run is exactly {"slug","planName","planExists",
+    "tool","branch","worktree","worktreeExists","pid","startedAt","state",
+    "position","prs","logTail"}. "planName" is the string "name" of
+    ".bindweed/plans/<slug>.json" and "planExists" true, or the slug and
+    false when that file is missing or has no string name. "branch" and "pid"
+    are the entry's string branch and numeric pid, else null. A pid is alive
+    as in features/launch-the-run.feature. "prs" is [] except for sc.
+    "logTail" is the last 20 lines of its file, without newlines, [] when the
+    file is missing. GET /api/runs never writes runs.json.
 
-    For marestail runs:
-    - If worktree does not exist: state is "worktree removed", worktreeExists is false.
-    - If the newest ".marestail/runs/overnight-*.md" contains "all tasks complete": state is "done".
-    - If the newest summary contains "stopped: <task> exited <code>": state is "stopped for a human"
-      when that task's "pipeline.log" last line contains "stopping for a human", else "failed".
-    - Otherwise: state is "running" if pid is alive (kill -0 exits 0 or EPERM), else "dead".
-    - Current task is the newest ".marestail/runs/<task>/pipeline.log". Current role and attempt
-      come from its last line starting "== " (e.g. "== hardener (07-hardener) attempt 1").
-    - Tasks done counts tasks whose "pipeline.log" contains "pipeline complete".
-    - Position line is "task <task> · <role> · attempt <N> · <done> of <total> tasks" or
-      "all tasks complete · <total> of <total> tasks".
-    - Log tail is the last 20 lines of the current task's "pipeline.log".
+    A missing worktree: state "worktree removed", position "worktree removed",
+    worktreeExists false, logTail [], prs [], whatever the tool.
 
-    For slop-cannon runs:
-    - "sc status --repo <worktree> --json" (10s timeout) provides state.phase, live agents count,
-      bead counts by state, and pull requests opened (with links).
-    - If phase is "done" or "complete": state is "done".
-    - Otherwise: state is "running" if pid is alive, else "dead".
-    - If sc status fails: state follows pid alive/dead, position shows error and pid state.
-    - Position line is "<phase> · <agents> agents · <open> open · <done> done · <count> PRs".
-    - Log tail is the last 20 lines of the run's ".out" file.
+    Marestail. The run's tasks are the worktree's "tasks/*.md" files except
+    "tasks/README.md"; a task "tasks/<id>.md" logs to
+    ".marestail/runs/<id>/pipeline.log". A task is done when its log contains
+    a line "pipeline complete". The current task is the "<id>" whose log has
+    the newest mtime. The summary is the newest-mtime
+    ".marestail/runs/overnight-*.md"; its verdict is its last line that is
+    "all tasks complete" or starts "stopped: <path> exited <code>". State:
+    "done" on "all tasks complete"; on "stopped:", "stopped for a human" when
+    the last line of <path>'s log contains "stopping for a human", else
+    "failed"; with no verdict, "running" when the pid is alive, else "dead".
+    The role and attempt are the first word and the number after "attempt" of
+    the current log's last line starting "== ". Position, with <done> and
+    <total> the task counts, the word "tasks" always plural:
+    - state done: "all tasks complete · <done> of <total> tasks"
+    - no log: "no task started · <done> of <total> tasks"
+    - current log ends "pipeline complete": "task <id> · finished · <done> of <total> tasks"
+    - an "== " line: "task <id> · <role> · attempt <n> · <done> of <total> tasks"
+    - otherwise: "task <id> · <done> of <total> tasks"
+    logTail is the current task's log.
 
-    Scenario: Missing or empty runs file answers empty list
+    Slop-cannon. bindweed runs "sc status --repo <worktree> --json" with a
+    10-second timeout. From its JSON: phase is "state.phase"; agents is the
+    number of "agents" elements with "alive" true; beads are the entries of
+    the "beads" object, in its key order; "prs" is the "url" of each "prs"
+    element. A missing field counts as "", 0 or empty. State: "done" when
+    phase is "done" or "complete", else "running" when the pid is alive, else
+    "dead". Position: "<phase> · <agents> agent(s) · <n> <bead state>… · <n>
+    PR(s)", singular only for exactly 1, with no bead parts when beads is
+    empty. When sc fails, state follows the pid and position is "sc status
+    failed: <reason> · pid alive" or "… · pid gone". <reason> is the first
+    line of stderr, "exited <code>" when stderr is empty, "timed out after
+    10s", "not JSON", or "sc is not on PATH". logTail is the entry's "out" file.
+
+    Scenario Outline: Each run reports its state and position
+      Given runs.json holds only entry <name>
+      When I send "GET /api/runs" with the token
+      Then the status is 200 and run 0 has state "<state>", position "<position>" and logTail <tail>
+      And runs.json's bytes are unchanged
+
+      Examples:
+        | name    | state               | position                                            | tail                                                                           |
+        | done    | done                | all tasks complete · 2 of 2 tasks                   | ["== qa (09-qa) attempt 1","pipeline complete"]                                |
+        | stopped | stopped for a human | task 002-x · coder · attempt 2 · 1 of 2 tasks       | ["== coder (03-coder) attempt 2","gate failed","stopping for a human"]         |
+        | failed  | failed              | task 001-f · coder · attempt 1 · 0 of 1 tasks       | ["== coder (03-coder) attempt 1","npm ERR! boom"]                              |
+        | running | running             | task 002-step · hardener · attempt 1 · 1 of 3 tasks | ["starting","== coder (07-coder) attempt 2","== hardener (07-hardener) attempt 1"] |
+        | dead    | dead                | task 001-task · 0 of 1 tasks                        | ["starting"]                                                                   |
+        | between | running             | task 001-a · finished · 1 of 2 tasks                | ["pipeline complete"]                                                          |
+        | fresh   | dead                | no task started · 0 of 1 tasks                      | []                                                                             |
+        | removed | worktree removed    | worktree removed                                    | []                                                                             |
+        | sc      | running             | running · 4 agents · 7 open · 3 done · 2 PRs        | "[sc] line 6" to "[sc] line 25"                                                |
+        | sc-one  | running             | planning · 1 agent · 1 PR                           | []                                                                             |
+        | sc-done | done                | complete · 0 agents · 5 done · 0 PRs                | []                                                                             |
+        | sc-err  | dead                | sc status failed: no slop-cannon state here · pid gone | []                                                                          |
+        | sc-slow | running             | sc status failed: timed out after 10s · pid alive   | []                                                                             |
+        | sc-junk | running             | sc status failed: not JSON · pid alive              | []                                                                             |
+
+    Scenario: One run carries every field, and slop-cannon PRs are listed
+      Given runs.json holds entry sc then entry running
+      And ".bindweed/plans/plan-sc.json" is a plan named "Plan SC"
+      When I send "GET /api/runs" with the token
+      Then run 0 is {"slug":"plan-sc","planName":"Plan SC","planExists":true,"tool":"slop-cannon","branch":"bindweed/plan-sc","worktree":"/tmp/qa/runs/wt-sc","worktreeExists":true,"pid":<its pid>,"startedAt":"2026-10-21T12:09:00.000Z","state":"running","position":"running · 4 agents · 7 open · 3 done · 2 PRs","prs":["https://example.test/pull/41","https://example.test/pull/42"],"logTail":<lines 6 to 25>}
+      And run 1 has slug "plan-running", planName "plan-running", planExists false and prs []
+
+    Scenario: Runs are ordered newest first and malformed elements are left out
+      Given runs.json is [entry done, 7, {"slug":"x"}, entry dead, entry removed]
+      When I send "GET /api/runs" with the token
+      Then the slugs are "plan-dead", "plan-done", "plan-removed"
+
+    Scenario: A slow sc does not hold the answer past its timeout
+      Given runs.json holds only entry sc-slow
+      When I send "GET /api/runs" with the token
+      Then it answers 200 within 12 seconds
+
+    Scenario: sc missing from PATH is reported on the card
+      Given runs.json holds only entry sc-one
+      And bindweed is restarted with PATH holding only node, git, sh, sleep and true
+      When I send "GET /api/runs" with the token
+      Then run 0 has state "running" and position "sc status failed: sc is not on PATH · pid alive"
+
+    Scenario Outline: Missing or malformed runs.json answers no runs
+      Given runs.json is <file>
       When I send "GET /api/runs" with the token
       Then the status is 200 and the body is {"runs":[]}
 
-    Scenario: Marestail run states reflect summaries, logs and pid
-      Given "/tmp/qa/wt-done" has an overnight summary ending "all tasks complete\n", 2 completed tasks, and a dead pid
-      And "/tmp/qa/wt-stopped" has summary "stopped: tasks/002-x.md exited 1\n" and pipeline log ending "stopping for a human\n"
-      And "/tmp/qa/wt-running" has live sleep pid 11111 and pipeline log ending "== hardener (07-hardener) attempt 1\n"
-      And "/tmp/qa/wt-dead" has no summary, dead pid 22222, and incomplete pipeline log
-      And "/tmp/qa/layered/.bindweed/runs.json" records these 4 runs
-      When I send "GET /api/runs" with the token
-      Then the status is 200 and "runs" has 4 items
-      And run 0 state is "dead"
-      And run 1 state is "running" and position is "task 002 · hardener · attempt 1 · 1 of 2 tasks"
-      And run 1 "logTail" contains "== hardener (07-hardener) attempt 1"
-      And run 2 state is "stopped for a human" and "logTail" contains "stopping for a human"
-      And run 3 state is "done"
+      Examples:
+        | file       |
+        | missing    |
+        | "not json" |
+        | {"a":1}    |
+        | []         |
 
-    Scenario: Slop-cannon run states reflect sc status and out log
-      Given "/tmp/qa/wt-sc" is a worktree with an out log of 25 lines and live sleep pid 33333
-      And fake sc status prints {"state":{"phase":"running"},"agents":[{"id":"1","alive":true},{"id":"2","alive":true},{"id":"3","alive":true},{"id":"4","alive":true}],"beads":{"open":7,"done":3},"prs":[{"url":"https://example.test/pull/1"}]}
-      And "/tmp/qa/layered/.bindweed/runs.json" records this slop-cannon run
-      When I send "GET /api/runs" with the token
-      Then the status is 200 and run 0 state is "running"
-      And run 0 position is "running · 4 agents · 7 open · 3 done · 1 PR"
-      And run 0 "logTail" has 20 lines matching the tail of its out file
-
-    Scenario: A missing worktree shows worktree removed
-      Given "/tmp/qa/layered/.bindweed/runs.json" records a run whose worktree "/tmp/qa/nonexistent" is missing
-      When I send "GET /api/runs" with the token
-      Then the status is 200 and run 0 state is "worktree removed"
-      And run 0 "worktreeExists" is false
-      And run 0 "logTail" is []
-
-    Scenario: Requests require bearer token and allowed host
+    Scenario: GET /api/runs checks host and token
       When I send "GET /api/runs" without authorization
       Then the status is 401 and the body is {"error":"missing or wrong token"}
       When I send "GET /api/runs" with Host "evil.example:5000" and the token
       Then the status is 403 and the body is {"error":"bad host"}
 
-  Rule: Forget removes a run whose worktree no longer exists from runs.json
-    DELETE /api/runs?worktree=<path> removes the matching entry from
-    ".bindweed/runs.json" when that worktree does not exist on disk.
-    If the worktree still exists on disk, it returns 400 {"error":"worktree still exists"}.
-    If no run matches the worktree, it returns 404 {"error":"no such run"}.
-    Nothing else is deleted or written.
+  Rule: Forget removes a run whose worktree is gone, and nothing else writes
+    DELETE /api/runs?worktree=<path> rewrites runs.json without the elements
+    whose "worktree" equals <path>, keeping the others in order, and answers
+    {"ok":true}. It answers 400 {"error":"missing worktree"} without the
+    parameter, 400 {"error":"worktree still exists"} when <path> exists, and
+    404 {"error":"no such run"} when no element matches or runs.json is not a
+    list; in those cases runs.json is unchanged. Host and token are checked
+    first, as for every route.
 
-    Scenario: Forget deletes the entry from runs.json and leaves others unchanged
-      Given "/tmp/qa/layered/.bindweed/runs.json" records an active run "/tmp/qa/wt-live" and a removed run "/tmp/qa/wt-gone"
-      And "/tmp/qa/wt-live" exists and "/tmp/qa/wt-gone" does not exist
-      When I send "DELETE /api/runs?worktree=/tmp/qa/wt-gone" with the token
+    Scenario: Forget drops the removed run and keeps the rest
+      Given runs.json is [entry done, entry removed, entry dead]
+      When I send "DELETE /api/runs?worktree=/tmp/qa/runs/wt-removed" with the token
       Then the status is 200 and the body is {"ok":true}
-      And "/tmp/qa/layered/.bindweed/runs.json" contains "/tmp/qa/wt-live" and does not contain "/tmp/qa/wt-gone"
+      And runs.json is [entry done, entry dead]
 
-    Scenario: Forget refuses a run whose worktree still exists
-      Given "/tmp/qa/layered/.bindweed/runs.json" records run "/tmp/qa/wt-live"
-      And "/tmp/qa/wt-live" exists on disk
-      When I send "DELETE /api/runs?worktree=/tmp/qa/wt-live" with the token
-      Then the status is 400 and the body is {"error":"worktree still exists"}
-      And "/tmp/qa/layered/.bindweed/runs.json" still contains "/tmp/qa/wt-live"
+    Scenario Outline: Forget refuses and leaves runs.json unchanged
+      Given runs.json is [entry done, entry removed]
+      When I send "DELETE <url>" with the token
+      Then the status is <status> and the body is <body>
+      And runs.json's bytes are unchanged
 
-  Rule: The UI provides a Runs tab, running count badge, cards, and polling controls
-    - The tab bar has tabs "Files", "Architecture", and "Runs".
-    - The Runs tab has a badge showing the number of runs currently in "running" state.
-    - Opening the Runs tab sets location hash to "#runs".
-    - The Runs view lists cards newest first. Each card shows:
-      - Plan name (clicking opens the plan in the Architecture tab "#at=src&plan=<slug>")
-      - Tool, branch, started time and elapsed time
-      - State as a coloured pill ("running", "stopped for a human", "failed", "done", "dead", "worktree removed")
-      - Position line (with PR links for slop-cannon)
-      - Copy worktree button that copies the path to clipboard
-      - Collapsible log tail toggle showing the last 20 log lines
-      - Runs with missing worktrees show "worktree removed" and a "Forget" button
-      - Runs with existing worktrees do not show a "Forget" button
-    - Polling refreshes GET /api/runs every 5 seconds while the Runs tab is visible, and stops when hidden.
+      Examples:
+        | url                                          | status | body                                |
+        | /api/runs                                    | 400    | {"error":"missing worktree"}        |
+        | /api/runs?worktree=/tmp/qa/runs/wt-done      | 400    | {"error":"worktree still exists"}   |
+        | /api/runs?worktree=/tmp/qa/runs/wt-elsewhere | 404    | {"error":"no such run"}             |
 
-    Scenario: Runs tab displays badge and cards with details and copy action
-      Given 5 runs in runs.json: 2 running, 1 done, 1 stopped for a human, 1 dead
+    Scenario: Forget checks host and token
+      Given runs.json is [entry removed]
+      When I send "DELETE /api/runs?worktree=/tmp/qa/runs/wt-removed" without authorization
+      Then the status is 401 and the body is {"error":"missing or wrong token"}
+      When I send "DELETE /api/runs?worktree=/tmp/qa/runs/wt-removed" with Host "evil.example:5000" and the token
+      Then the status is 403 and the body is {"error":"bad host"}
+      And runs.json's bytes are unchanged
+
+  Rule: The Runs tab shows one card per run and polls only while seen
+    The tab bar is "Files", "Architecture", "Runs". "#runs" opens the Runs
+    tab, and clicking it pushes "#runs". The Runs tab holds a badge with the
+    number of runs in state "running"; with none there is no badge. The page
+    fetches GET /api/runs once on load for the badge. While the Runs tab is
+    shown and document.visibilityState is "visible", it fetches at once, then
+    every 5 seconds, never starting one while the last has not answered.
+    Otherwise it does not fetch, and the badge keeps its last count.
+    Each run is a card in the order of GET /api/runs, showing: planName, a
+    link to "#at=<at>&plan=<slug>" when planExists (<at> is the Architecture
+    view's current at, "" if never set), else plain text; tool; branch;
+    worktree with a "Copy worktree" button; "started <startedAt> ·
+    <elapsed>"; the state pill; the position line; one link per "prs" URL,
+    its text the URL; and a closed "Log tail" disclosure holding logTail.
+    Elapsed is now minus startedAt, on every refresh and in every state:
+    "<s>s" under a minute, "<m>m" under an hour, "<h>h <m>m" under a day,
+    else "<d>d <h>h". The pill has class "pill" and one of these, white text:
+    | state               | class        | background |
+    | running             | pill-running | #2563eb    |
+    | stopped for a human | pill-stopped | #d97706    |
+    | failed              | pill-failed  | #dc2626    |
+    | done                | pill-done    | #16a34a    |
+    | dead                | pill-dead    | #6b7280    |
+    | worktree removed    | pill-removed | #9ca3af    |
+    Only "worktree removed" cards have a "Forget" button. A 200 removes the
+    card at once. Any other answer keeps the card and shows "Forget failed:
+    <error>" on it. With no runs the panel says "No runs launched from this
+    repository yet."
+
+    Scenario: The panel shows every run with its state and badge
+      Given runs.json is [entry removed, entry done, entry stopped, entry failed, entry running, entry dead, entry sc-err, entry sc]
+      And ".bindweed/plans/plan-running.json" is a plan named "Plan Running"
       When I open bindweed at "#runs"
-      Then the Runs tab badge shows "2"
-      And 5 cards are rendered
-      When I click "Copy worktree" on the running card
-      Then the clipboard holds the worktree path
+      Then the Runs tab is selected and its badge is "2"
+      And the cards' titles are "plan-sc-err", "plan-sc", "plan-dead", "Plan Running", "plan-failed", "plan-stopped", "plan-done", "plan-removed"
+      And each card's pill and position are those of the outline above, and its pill has that state's class and background
+      And the "plan-sc" card has links "https://example.test/pull/41" and "https://example.test/pull/42"
+      And only "plan-removed" has a "Forget" button
 
-    Scenario: Forget button appears only for removed worktree and removes its card
-      Given runs.json has a run with removed worktree "/tmp/qa/wt-gone"
+    Scenario: A card's log tail, copy and plan link
+      Given runs.json is [entry running]
+      And ".bindweed/plans/plan-running.json" is a plan named "Plan Running"
+      When I open bindweed at "#at=src", click "Runs" and open "Log tail" on "Plan Running"
+      Then it shows "starting", "== coder (07-coder) attempt 2" and "== hardener (07-hardener) attempt 1"
+      When I click "Copy worktree"
+      Then the clipboard is "/tmp/qa/runs/wt-running"
+      When I click "Plan Running"
+      Then the hash is "#at=src&plan=plan-running" and the Architecture tab shows plan "Plan Running"
+
+    Scenario Outline: Elapsed time
+      Given runs.json is [entry dead] with startedAt <age> before now
       When I open bindweed at "#runs"
-      Then the card for "/tmp/qa/wt-gone" shows "worktree removed" and a "Forget" button
-      When I click "Forget" on that card
-      Then the card is removed from the view
-      And ".bindweed/runs.json" no longer contains "/tmp/qa/wt-gone"
+      Then the card shows "started <startedAt> · <elapsed>"
 
-    Scenario: Polling refreshes every 5 seconds while visible and stops when hidden
+      Examples:
+        | age        | elapsed |
+        | 42 seconds | 42s     |
+        | 90 seconds | 1m      |
+        | 3h 5m      | 3h 5m   |
+        | 2d 3h 1m   | 2d 3h   |
+
+    Scenario: Forget removes the card, and a refused Forget keeps it
+      Given runs.json is [entry done, entry removed]
+      When I open bindweed at "#runs" and the next DELETE /api/runs answers 400 {"error":"worktree still exists"}
+      And I click "Forget" on "plan-removed"
+      Then the card stays and shows "Forget failed: worktree still exists"
+      When I click "Forget" on "plan-removed" again
+      Then the card is gone before the next refresh
+      And runs.json is [entry done]
+
+    Scenario: No runs, no badge
+      Given runs.json is missing
       When I open bindweed at "#runs"
-      Then GET /api/runs is requested every 5 seconds
-      When I switch to the "Files" tab
-      Then no GET /api/runs request is sent for 15 seconds
+      Then the Runs tab has no badge and the panel says "No runs launched from this repository yet."
 
-  Rule: Every existing route still answers
+    Scenario: Polling stops on another tab and in a hidden browser tab
+      Given runs.json is [entry running]
+      When I open bindweed at "#runs"
+      Then GET /api/runs is requested at once and then every 5 seconds
+      When I click "Files"
+      Then no GET /api/runs is requested for 15 seconds
+      When I click "Runs"
+      Then GET /api/runs is requested at once
+      When document.visibilityState becomes "hidden"
+      Then no GET /api/runs is requested for 15 seconds
+      When document.visibilityState becomes "visible"
+      Then GET /api/runs is requested at once and then every 5 seconds
+
+  Rule: Launch (010) and every existing route keep working
+    Scenario: A launch still records exactly the 010 fields and shows as running
+      Given the Background, fakes and launch plan of features/launch-the-run.feature
+      When I send a marestail launch
+      Then the steps are all ok
+      And runs.json is a one-element array whose object's keys are exactly "slug", "tool", "worktree", "branch", "pid", "startedAt", "out" and "settings"
+      When I send "GET /api/plans/gate/launch" with the token
+      Then "alive" is true, "worktree" is "/tmp/qa/layered-bw-gate", "branch" is "bindweed/gate" and "watch" is "marestail watch"
+      When I send "GET /api/runs" with the token
+      Then run 0 has slug "gate", planName "Gate", tool "marestail", state "running" and position "no task started · 0 of 3 tasks"
+
     Scenario: Old routes still answer and README lists /api/runs
       When I send "GET /api/tree" with the token
       Then the status is 200
