@@ -94,6 +94,10 @@ describe('backends and processes', () => {
     expect(await runProcess({ bin: 'sh', args: ['-c', 'cat; pwd'], env: CLEAN }, 'hello\n', placeOf(new AbortController().signal), 5000)).toEqual({ kind: 'done', stdout: `hello\n${tmpdir()}\n` });
   });
 
+  it('still finishes when the command closes stdin before the prompt is written', async () => {
+    expect(await runProcess({ bin: 'true', args: [], env: CLEAN }, 'x'.repeat(1024 * 1024), placeOf(new AbortController().signal), 5000)).toEqual({ kind: 'done', stdout: '' });
+  });
+
   it('starts nothing once cancelled, and survives a cancel before a missing binary fails', async () => {
     const controller = new AbortController();
     controller.abort();
