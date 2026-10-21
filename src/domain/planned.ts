@@ -4,6 +4,7 @@ import {
   mergeDest,
   moveDest,
   parentOf,
+  parsePlanEdit,
   renamedFile,
   splitPartPath,
   within,
@@ -407,6 +408,31 @@ export function applyPlan(scan: ScanResult, edits: PlanEdit[]): ScanResult {
 
 export function staleReasons(scan: ScanResult, edits: PlanEdit[]): (string | null)[] {
   return walkPlan(scan, edits).stale;
+}
+
+function proposalReason(scan: ScanResult, applied: PlanEdit[], raw: unknown): { reason: string | null; edit: PlanEdit | undefined } {
+  const edit = parsePlanEdit(raw);
+  if (edit === undefined) return { reason: 'not an edit', edit: undefined };
+  return { reason: staleReasons(scan, [...applied, edit]).at(-1) as string | null, edit };
+}
+
+function keepApplied(applied: PlanEdit[], step: { reason: string | null; edit: PlanEdit | undefined }): void {
+  if (step.edit === undefined) return;
+  if (step.reason !== null) return;
+  applied.push(step.edit);
+}
+
+function recordStep(scan: ScanResult, applied: PlanEdit[], stale: (string | null)[], raw: unknown): void {
+  const step = proposalReason(scan, applied, raw);
+  stale.push(step.reason);
+  keepApplied(applied, step);
+}
+
+export function reviewProposed(scan: ScanResult, saved: PlanEdit[], proposed: unknown[]): (string | null)[] {
+  const applied = [...saved];
+  const stale: (string | null)[] = [];
+  for (const raw of proposed) recordStep(scan, applied, stale, raw);
+  return stale;
 }
 
 type Placed = { at: number; warning: PlanWarning };

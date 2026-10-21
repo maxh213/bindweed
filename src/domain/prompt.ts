@@ -1,4 +1,4 @@
-import { byStrings, everyRead, listOfAtLeast, pendingRound, recordOf, sentenceOf, stringsFrom, within, type FateEdit, type NoteTarget, type PlanDoc, type PlanEdit, type Question, type Round } from './plan.ts';
+import { byStrings, chatLines, everyRead, listOfAtLeast, oneParagraph, pendingRound, recordOf, sentenceOf, stringsFrom, within, type ChatTurn, type FateEdit, type NoteTarget, type PlanDoc, type PlanEdit, type Question, type Round } from './plan.ts';
 import type { PlanWarning, ScanResult } from './scan.ts';
 import { LAST_TASK_NUMBER, numberedTasks, type Slice } from './tasks.ts';
 
@@ -250,4 +250,185 @@ export function planAfter(doc: PlanDoc, turn: Turn, reply: Reply, first: number)
   if ('questions' in reply) return askedPlan(doc, turn, reply.questions);
   if (first + reply.slices.length - 1 > LAST_TASK_NUMBER) return { error: 'task numbers would pass 999' };
   return { ...doc, interview: turn.interview, tasks: numberedTasks(reply.slices, first), brief: reply.brief };
+}
+
+export type PromptNode = {
+  id: string;
+  kind: string;
+  name: string;
+  files?: number;
+  ca: number;
+  ce: number;
+  i: string;
+  a: string;
+  d: string;
+  zone?: string;
+  crap?: number | '–';
+  coverage?: string;
+  mutants?: number;
+  cycle: boolean;
+};
+
+export type PromptEdge = {
+  from: string;
+  to: string;
+  runtime: number;
+  type: number;
+  heritage?: number;
+  cycle: boolean;
+  cycleText?: string;
+};
+
+export type PromptView = { heading: string; nodes: PromptNode[]; edges: PromptEdge[] };
+
+export type ProposeFacts = {
+  name: string;
+  text: string;
+  at: string;
+  views: PromptView[];
+  edits: PlanEdit[];
+  turns: ChatTurn[];
+};
+
+export type Proposal = { summary: string; edits: unknown[] };
+
+const EDIT_JSON = [
+  '{"kind":"move-file","file":"<path>","to":"<dir>"}',
+  '{"kind":"cut-edge","from":"<box>","to":"<box>","files":[["<file>","<file>"]]}',
+  '{"kind":"add-edge","from":"<box>","to":"<box>"}',
+  '{"kind":"note","target":{"node":"<box>"},"text":"<text>"}',
+  '{"kind":"note","target":{"edge":["<box>","<box>"]},"text":"<text>"}',
+  '{"kind":"create-package","path":"<path>"}',
+  '{"kind":"rename-package","from":"<path>","to":"<path>"}',
+  '{"kind":"rename-file","from":"<path>","to":"<name>"}',
+  '{"kind":"merge-packages","packages":["<path>"],"into":"<path>"}',
+  '{"kind":"split-package","package":"<path>","parts":[{"name":"<name>","files":["<path>"]}]}',
+  '{"kind":"fate","file":"<path>","fate":"delete"}',
+  '{"kind":"fate","file":"<path>","fate":"fold","into":"<path>"}',
+];
+
+const PROPOSE_REPLY = ['Reply with exactly one JSON object, in a fenced json block.', '{"summary":"<one paragraph>","edits":[<edit>]}'];
+
+function filesPart(node: PromptNode): string {
+  return node.files === undefined ? '' : ` files ${node.files}`;
+}
+
+function zonePart(node: PromptNode): string {
+  return node.zone === undefined ? '' : ` zone ${node.zone}`;
+}
+
+function crapPart(node: PromptNode): string {
+  return node.crap === undefined ? '' : ` crap ${node.crap}`;
+}
+
+function coveragePart(node: PromptNode): string {
+  return node.coverage === undefined ? '' : ` coverage ${node.coverage}`;
+}
+
+function mutantsPart(node: PromptNode): string {
+  return node.mutants === undefined ? '' : ` mutants ${node.mutants}`;
+}
+
+function nodeLine(node: PromptNode): string {
+  const metrics = `ca ${node.ca} ce ${node.ce} i ${node.i} a ${node.a} d ${node.d}`;
+  const health = `${zonePart(node)}${crapPart(node)}${coveragePart(node)}${mutantsPart(node)}`;
+  return `node ${node.id} ${node.kind} ${node.name}${filesPart(node)} ${metrics}${health} cycle ${node.cycle}`;
+}
+
+function heritagePart(edge: PromptEdge): string {
+  return (edge.heritage ?? 0) > 0 ? ` heritage ${edge.heritage}` : '';
+}
+
+function textPart(edge: PromptEdge): string {
+  return edge.cycleText === undefined ? '' : ` text ${edge.cycleText}`;
+}
+
+function edgeLine(edge: PromptEdge): string {
+  return `edge ${edge.from} -> ${edge.to} runtime ${edge.runtime} type ${edge.type}${heritagePart(edge)} cycle ${edge.cycle}${textPart(edge)}`;
+}
+
+function pairKey(edge: PromptEdge): string {
+  return [edge.from, edge.to].sort(byStrings).join('\n');
+}
+
+function addCycleText(texts: Map<string, string[]>, edge: PromptEdge): void {
+  if (edge.cycleText === undefined) return;
+  const key = pairKey(edge);
+  texts.set(key, [...(texts.get(key) ?? []), edge.cycleText]);
+}
+
+function textsOf(edges: PromptEdge[]): Map<string, string[]> {
+  const texts = new Map<string, string[]>();
+  for (const edge of edges) addCycleText(texts, edge);
+  return texts;
+}
+
+function smallestText(list: string[]): string {
+  return list.toSorted(byStrings)[0];
+}
+
+function cycleTextsOf(edges: PromptEdge[]): string[] {
+  return [...textsOf(edges).values()].map(smallestText).sort(byStrings);
+}
+
+function cyclesLine(edges: PromptEdge[]): string {
+  const texts = cycleTextsOf(edges);
+  return texts.length === 0 ? 'cycles none' : `cycles ${texts.join(' | ')}`;
+}
+
+function viewLines(view: PromptView): string[] {
+  return [`### ${view.heading}`, ...view.nodes.map(nodeLine), ...view.edges.map(edgeLine), cyclesLine(view.edges)];
+}
+
+function currentView(at: string): string {
+  return at === '' ? '(root)' : at;
+}
+
+function editBlock(edits: PlanEdit[]): string[] {
+  if (edits.length === 0) return [];
+  return [...edits.map(sentenceOf), JSON.stringify(edits)];
+}
+
+function proposeIntro(name: string): string {
+  return `You are proposing edits to the plan "${name}". The developer says what they dislike; you propose edits they will accept or reject. You change nothing yourself.`;
+}
+
+export function proposePrompt(facts: ProposeFacts): string {
+  return [
+    proposeIntro(facts.name),
+    section('What they dislike', [facts.text]),
+    section('Current view', [currentView(facts.at)]),
+    section('Planned graph', facts.views.flatMap(viewLines)),
+    section("The plan's edits so far", editBlock(facts.edits)),
+    section('Edit JSON', EDIT_JSON),
+    section('Conversation so far', chatLines(facts.turns)),
+    section('What to reply', PROPOSE_REPLY),
+  ].join('\n\n');
+}
+
+function exactKeys(rec: Record<string, unknown>, keys: string): boolean {
+  return keysOf(rec) === keys;
+}
+
+function proposalShape(value: unknown): { summary: unknown; edits: unknown } | undefined {
+  const rec = recordOf(value);
+  if (rec === undefined || !exactKeys(rec, 'edits,summary')) return undefined;
+  return { summary: rec.summary, edits: rec.edits };
+}
+
+function shapedProposal(summary: string, edits: unknown[]): Proposal | { problem: string } {
+  return oneParagraph(summary) ? { summary, edits } : { problem: 'the summary must be one paragraph' };
+}
+
+function usableProposal(value: unknown): Proposal | { problem: string } {
+  const shape = proposalShape(value);
+  if (shape === undefined || typeof shape.summary !== 'string' || !Array.isArray(shape.edits)) {
+    return { problem: 'it needs a summary and an edits array' };
+  }
+  return shapedProposal(shape.summary, shape.edits);
+}
+
+export function readProposal(stdout: string): Proposal | { problem: string } {
+  const json = parsed(replyText(stdout));
+  return json === undefined ? { problem: 'it is not valid JSON' } : usableProposal(json.value);
 }

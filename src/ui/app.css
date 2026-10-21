@@ -322,6 +322,34 @@ aside[aria-label='metrics'] tbody tr {
   border-style: dashed;
 }
 
+.box.proposal {
+  border: 1px dashed #7c3aed;
+  color: #7c3aed;
+  background: #ffffff;
+}
+
+.box-row[data-proposal='true'] {
+  border: 1px dashed #7c3aed;
+  color: #7c3aed;
+  cursor: default;
+}
+
+[data-strike='true'] {
+  text-decoration-line: line-through;
+  text-decoration-color: #7c3aed;
+}
+
+.proposal-cut-label {
+  font-size: 12px;
+  fill: #7c3aed;
+  text-anchor: middle;
+}
+
+.chat-line {
+  white-space: pre;
+  margin: 0;
+}
+
 .note-marker {
   font-size: 0.7rem;
   margin-left: 0.25rem;

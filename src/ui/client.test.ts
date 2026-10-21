@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { LayoutDoc } from '../domain/layout.ts';
 import type { PlanDoc } from '../domain/plan.ts';
-import { deletePlan, fetchConfig, fetchContract, fetchRepo, postCancel, postFiles, postGenerate, putConfig, fetchDetail, fetchFile, fetchGraph, fetchLayout, fetchPairs, fetchPlan, fetchPlans, fetchTree, postContract, postPlan, postRescan, putLayout, putPlan, takeToken } from './client.ts';
+import { deletePlan, fetchChat, fetchConfig, fetchContract, fetchRepo, postCancel, postFiles, postGenerate, postPropose, postReview, putChat, putConfig, fetchDetail, fetchFile, fetchGraph, fetchLayout, fetchPairs, fetchPlan, fetchPlans, fetchTree, postContract, postPlan, postRescan, putLayout, putPlan, takeToken } from './client.ts';
 
 describe('fetchTree', () => {
   it('returns the tree with a bearer header and no token in the address', async () => {
@@ -680,5 +680,38 @@ describe('the 008 routes', () => {
     ]);
     expect(await postFiles('tok', 'gate', down)).toEqual({ error: 'cannot reach bindweed' });
     expect(await fetchRepo('tok', down)).toEqual({ error: 'cannot reach bindweed' });
+  });
+
+  it('proposes, reviews and stores a chat', async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const chat = [{ at: '2026-10-21T09:00:00.000Z', text: 'hi', summary: 'Done.', edits: [], decisions: {} }];
+    const answer = answering({ ran: 'command: fake', summary: 'Done.', edits: [], stale: [null], chat, note: 'watch' }, true, calls);
+    expect(await postPropose('tok', 'gate', { text: 'hi', at: 'src' }, answer)).toEqual({ ran: 'command: fake', summary: 'Done.', edits: [], stale: [null], chat, note: 'watch' });
+    expect(calls.map(call => [call.url, call.init?.method, call.init?.body])).toEqual([
+      ['/api/plans/gate/propose', 'POST', '{"text":"hi","at":"src"}'],
+    ]);
+    expect(await postPropose('tok', 'gate', { text: 'hi', at: 'src' }, answering({ error: 'bad', raw: 'x', ran: 'r', note: 'n' }))).toEqual({ error: 'bad', raw: 'x', ran: 'r', note: 'n' });
+    expect(await postPropose('tok', 'gate', { text: 'hi', at: 'src' }, answering({ error: 'bad propose' }, false))).toEqual({ error: 'bad propose' });
+    expect(await postPropose('tok', 'gate', { text: 'hi', at: 'src' }, answering({ ran: 'r', summary: 's', edits: [], stale: [], chat: {} }))).toEqual({ error: 'cannot reach bindweed' });
+    expect(await postPropose('tok', 'gate', { text: 'hi', at: 'src' }, answering({ nope: 1 }))).toEqual({ error: 'cannot reach bindweed' });
+    expect(await postPropose('tok', 'gate', { text: 'hi', at: 'src' }, down)).toEqual({ error: 'cannot reach bindweed' });
+    expect(await fetchChat('tok', 'gate', answering(chat))).toEqual(chat);
+    expect(await putChat('tok', 'gate', chat, answering(chat))).toEqual(chat);
+    expect(await fetchChat('tok', 'gate', answering({ error: 'no such plan' }, false))).toEqual({ error: 'no such plan' });
+    expect(await putChat('tok', 'gate', chat, answering([1]))).toEqual({ error: 'cannot reach bindweed' });
+    expect(await fetchChat('tok', 'gate', down)).toEqual({ error: 'cannot reach bindweed' });
+    expect(await postReview('tok', 'gate', [1], answering({ stale: ['not an edit'] }))).toEqual({ stale: ['not an edit'] });
+    expect(await postReview('tok', 'gate', [], answering({ error: 'bad review' }, false))).toEqual({ error: 'bad review' });
+    expect(await postReview('tok', 'gate', [], answering({ stale: [1] }))).toEqual({ error: 'cannot reach bindweed' });
+    expect(await postReview('tok', 'gate', [], down)).toEqual({ error: 'cannot reach bindweed' });
+    const seen: string[] = [];
+    const recording = (async (url: string) => {
+      seen.push(url);
+      return { ok: false, json: async () => ({ error: 'x' }) } as Response;
+    }) as typeof fetch;
+    await fetchGraph('tok', 'src', recording, {});
+    await fetchGraph('tok', 'src', recording, { proposals: '' });
+    await fetchGraph('tok', 'src', recording, { proposals: '[]', plan: 'gate' });
+    expect(seen).toEqual(['/api/graph?at=src', '/api/graph?at=src', '/api/graph?at=src&plan=gate&proposals=%5B%5D']);
   });
 });

@@ -16,6 +16,8 @@ import {
 import { ContractPanel } from './ContractPanel.tsx';
 import { SettingsDialog } from './SettingsDialog.tsx';
 import { TasksPanel } from './TasksPanel.tsx';
+import { invoke } from './ask.ts';
+import { useAsk } from './asksession.tsx';
 import { deletePlan, fetchGraph, fetchPairs, fetchPlan, fetchPlans, postPlan, putPlan } from './client.ts';
 import { parentDir } from './draw.ts';
 import {
@@ -33,7 +35,7 @@ import {
   SplitDialog,
 } from './PlanBar.tsx';
 import { FILE_DRAG_MIME, fieldTarget, keyActionOf, planDropTarget } from './plangesture.ts';
-import { arrowViewAt, entryTarget, planPicture, type Planning, type ShownGraph } from './planpicture.ts';
+import { arrowViewAt, entryTarget, planPicture, proposalInk, type Planning, type ShownGraph } from './planpicture.ts';
 import { planRoster } from './planroster.ts';
 import { declaredPaths, nameEdit, nameTaken, splitEdit, splitRows, type NameAsk, type Reshaped } from './reshape.ts';
 
@@ -308,6 +310,8 @@ function TasksSlot(
     onPlan: (doc: PlanDoc) => void;
     onSave: (current: PlanDoc, next: PlanDoc) => Promise<void>;
     idle: { readonly current: Promise<void> };
+    held: boolean;
+    onRunning: (running: boolean) => void;
     onClose: () => void;
   }>,
 ) {
@@ -322,6 +326,8 @@ function TasksSlot(
       onPlan={props.onPlan}
       onSave={next => props.onSave(doc, next)}
       idle={props.idle}
+      held={props.held}
+      onRunning={props.onRunning}
       onClose={props.onClose}
     />
   );
@@ -409,6 +415,7 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
   const docRef = useRef<PlanDoc | null>(null);
   const versionRef = useRef(0);
   const tailRef = useRef<Promise<void>>(Promise.resolve());
+  const recheckRef = useRef<(() => void) | null>(null);
   const roster = planRoster(plansQuery.data, planQuery.data, slug, deleteTarget);
   const doc = roster.doc;
   const edits = editsOf(doc);
@@ -441,48 +448,48 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     openPlan(next);
     return versionRef.current;
   };
-  const landed = async (id: number, previous: PlanDoc, next: PlanDoc): Promise<void> => {
+  const landed = async (id: number, previous: PlanDoc, next: PlanDoc): Promise<PlanDoc | { error: string }> => {
     const saved = await putPlan(props.token, next, props.fetcher);
-    if (versionRef.current !== id) return;
+    if (versionRef.current !== id) return previous;
     if ('error' in saved) {
       publish(previous);
       setNotice(saved.error);
-      return;
+      return saved;
     }
     await queryClient.invalidateQueries({ queryKey: ['graph'] });
+    return saved;
   };
-  const enqueue = (previous: PlanDoc, next: PlanDoc): Promise<void> => {
+  const enqueue = (previous: PlanDoc, next: PlanDoc): Promise<PlanDoc | { error: string }> => {
     const id = publish(next);
     const run = tailRef.current.then(() => landed(id, previous, next));
     tailRef.current = run.then(() => undefined);
     return run;
   };
-  const savePlan = (current: PlanDoc, next: PlanDoc): void => {
-    setNotice(null);
-    void enqueue(current, next);
-  };
-  const changePlan = (nextOf: (current: PlanDoc) => PlanDoc | null): void => {
+  const changePlan = (nextOf: (current: PlanDoc) => PlanDoc | null): Promise<PlanDoc | { error: string } | undefined> => {
     const base = baseDoc();
-    if (base === null) return;
+    if (base === null) return Promise.resolve(undefined);
     const next = nextOf(base);
-    if (next === null) return;
-    savePlan(base, next);
+    if (next === null) return Promise.resolve(undefined);
+    setNotice(null);
+    return enqueue(base, next);
   };
   const editPlan = (edit: PlanEdit): void => {
-    changePlan(base => withEdit(base, edit));
+    void changePlan(base => withEdit(base, edit));
   };
-  const undoEdit = (): void => {
-    changePlan(base => (base.edits.length === 0 ? null : withUndo(base)));
-  };
-  const redoEdit = (): void => {
-    changePlan(base => (base.redo.length === 0 ? null : withRedo(base)));
-  };
+  const undoEdit = (): Promise<PlanDoc | { error: string } | undefined> => changePlan(base => (base.edits.length === 0 ? null : withUndo(base)));
+  const redoEdit = (): Promise<PlanDoc | { error: string } | undefined> => changePlan(base => (base.redo.length === 0 ? null : withRedo(base)));
   const removeEdit = (index: number): void => {
-    changePlan(base => withoutEdit(base, index));
+    void changePlan(base => withoutEdit(base, index));
+  };
+  const commitEdit = (edit: PlanEdit): Promise<PlanDoc | { error: string }> => {
+    const base = baseDoc();
+    if (base === null) return Promise.resolve({ error: 'no such plan' });
+    setNotice(null);
+    return enqueue(base, withEdit(base, edit));
   };
   const storeDoc = (from: PlanDoc, next: PlanDoc): Promise<void> => {
     const base = docRef.current ?? from;
-    return enqueue(base, overlayChanged(base, from, next));
+    return enqueue(base, overlayChanged(base, from, next)).then(() => undefined);
   };
   const saveContract = (rules: ContractRule[]): void => {
     changePlan(base => ({ ...base, contract: { rules } }));
@@ -634,8 +641,12 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     if (file !== '') moveFile(file, at);
   };
 
-  const onUndo = useEffectEvent(undoEdit);
-  const onRedo = useEffectEvent(redoEdit);
+  const onUndo = (): void => {
+    void undoEdit().then(() => invoke(recheckRef.current));
+  };
+  const onRedo = (): void => {
+    void redoEdit().then(() => invoke(recheckRef.current));
+  };
   const onDelete = useEffectEvent(deleteMarked);
   useEffect(() => {
     const run = (action: ReturnType<typeof keyActionOf>): void => {
@@ -650,10 +661,36 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     return () => window.removeEventListener('keydown', onKey);
   });
 
+  const asking = useAsk({
+    token: props.token,
+    fetcher: props.fetcher,
+    slug,
+    at: props.at,
+    tests: props.tests,
+    external: props.external,
+    nodes: props.nodes,
+    commit: commitEdit,
+    onError: setNotice,
+    changes: <PlanChanges slug={slug} doc={doc} entries={entries} onUndo={onUndo} onRedo={onRedo} onPick={pickEntry} onRemove={removeEdit} />,
+  });
+  useEffect(() => {
+    recheckRef.current = asking.recheck;
+  });
+  const proposal = proposalInk({
+    shown: props.shown,
+    planned: props.nodes,
+    pins: props.pins,
+    proposal: asking.picture.proposal,
+    children: asking.picture.children,
+    edits: asking.picture.edits,
+    hover: asking.picture.hover,
+  });
+
   const planning = ((): Planning | null => {
     if (slug === null) return null;
     return {
       ink: picture.ink,
+      proposal,
       mergeReady: selectedPackages(props.nodes, props.selection).length >= 2,
       onDropFile: moveFile,
       onDrawEdge: drawEdge,
@@ -691,17 +728,7 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
       />
     ),
     notice: <PlanNotice slug={slug} text={notice} />,
-    changes: (
-      <PlanChanges
-        slug={slug}
-        doc={doc}
-        entries={entries}
-        onUndo={undoEdit}
-        onRedo={redoEdit}
-        onPick={pickEntry}
-        onRemove={removeEdit}
-      />
-    ),
+    changes: asking.column,
     dialogs: (
       <>
         <ReshapeDialogs nameAsk={nameAsk} splitAsk={splitAsk} error={askError} onName={submitName} onSplit={submitSplit} onCancel={closeAsk} />
@@ -727,6 +754,8 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
           onPlan={openPlan}
           onSave={storeDoc}
           idle={tailRef}
+          held={asking.running}
+          onRunning={asking.onTasks}
           onClose={() => setTasksOpening(current => ({ ...current, open: false }))}
         />
         {settingsOpen ? <SettingsDialog token={props.token} fetcher={props.fetcher} onClose={() => setSettingsOpen(false)} /> : null}

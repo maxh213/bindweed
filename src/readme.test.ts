@@ -52,4 +52,11 @@ describe('README routes', () => {
     const environment = text.slice(text.indexOf('## Environment'));
     expect(environment).toContain('| `BINDWEED_ROOT` |');
   });
+
+  it('The README lists the new routes', () => {
+    const table = routesTable(readFileSync(join(process.cwd(), 'README.md'), 'utf8'));
+    for (const route of ['/api/plans/<slug>/propose', '/api/plans/<slug>/chat', '/api/plans/<slug>/review', '/api/plans/<slug>/files', '/api/plans/<slug>/generate']) {
+      expect(table).toContain(`| \`${route}\` | live |`);
+    }
+  });
 });

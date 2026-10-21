@@ -211,18 +211,29 @@ describe('the app on localhost', () => {
   it('serves the page only to the link with the token', async () => {
     await mkdir(join(root, 'dist', 'ui'), { recursive: true });
     await writeFile(join(root, 'dist', 'ui', 'index.html'), '<html>the repository page</html>');
-    const ok = await hit(port, 'GET', `/?token=${app.token}`);
-    expect(ok.status).toBe(200);
-    expect(ok.type).toBe('text/html; charset=utf-8');
-    expect(ok.body.toString()).toBe('<html>bindweed — ui</html>');
-    const almostRight = nearMisses(app.token).map(almost => `/?token=${almost}`);
-    for (const path of ['/', `/?token=${wrong}`, '/?token=', ...almostRight]) {
-      const res = await hit(port, 'GET', path, bearer);
-      expect(res.status).toBe(401);
-      expect(res.type).toBe('text/plain; charset=utf-8');
-      expect(res.body.toString()).toBe('bindweed: use the link bindweed printed in the terminal');
+    try {
+      const ok = await hit(port, 'GET', `/?token=${app.token}`);
+      expect(ok.status).toBe(200);
+      expect(ok.type).toBe('text/html; charset=utf-8');
+      expect(ok.body.toString()).toBe('<html>bindweed — ui</html>');
+      const home = await hit(port, 'GET', '/', bearer);
+      expect(home.status).toBe(200);
+      expect(home.type).toBe('text/html; charset=utf-8');
+      expect(home.body.toString()).toBe('<html>bindweed — ui</html>');
+      const bare = await hit(port, 'GET', '/');
+      expect(bare.status).toBe(401);
+      expect(bare.type).toBe('text/plain; charset=utf-8');
+      expect(bare.body.toString()).toBe('bindweed: use the link bindweed printed in the terminal');
+      const almostRight = nearMisses(app.token).map(almost => `/?token=${almost}`);
+      for (const path of [`/?token=${wrong}`, '/?token=', ...almostRight]) {
+        const res = await hit(port, 'GET', path, bearer);
+        expect(res.status).toBe(401);
+        expect(res.type).toBe('text/plain; charset=utf-8');
+        expect(res.body.toString()).toBe('bindweed: use the link bindweed printed in the terminal');
+      }
+    } finally {
+      await rm(join(root, 'dist'), { recursive: true, force: true });
     }
-    await rm(join(root, 'dist'), { recursive: true });
   });
 
   it('serves assets without a token, typed by extension', async () => {

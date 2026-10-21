@@ -22,7 +22,7 @@ import { pointsUp, type PlacedBox } from '../domain/layout.ts';
 import { arrowColor, boxCenter, edgeLabel, edgeTitle, filesLabel, headOf, lineOf, plannedColor } from './draw.ts';
 import { badgeLevel, badgeText, type Level, type OverlayName } from './healthdraw.ts';
 import { FILE_DRAG_MIME } from './plangesture.ts';
-import type { CutMarkInk, GhostBoxInk, Planning, RowInk } from './planpicture.ts';
+import type { CutMarkInk, GhostBoxInk, Planning, ProposalBox, ProposalLink, ProposalRow, RowInk } from './planpicture.ts';
 
 export type MarkSel = { from: string; to: string; cut: boolean };
 
@@ -77,6 +77,16 @@ type CutData = { selected: boolean };
 
 type CutEdge = Edge<CutData, 'cutmark'>;
 
+type ProposalData = { name: string; x: number; y: number; kind: null; highlight: boolean; rows: ProposalRow[] };
+
+type ProposalNode = Node<ProposalData, 'proposal'>;
+
+type ProposalMarkData = { highlight: boolean };
+
+type ProposalCutEdge = Edge<ProposalMarkData, 'proposalcut'>;
+
+type ProposalArrowEdge = Edge<ProposalMarkData, 'proposalarrow'>;
+
 type MarkerEnd = string | { type: MarkerType; width: number; height: number; color: string };
 
 export type CanvasProps = {
@@ -101,6 +111,17 @@ const CONNECT_RADIUS = 260;
 
 function boolAttr(value: boolean): 'true' | 'false' {
   return value ? 'true' : 'false';
+}
+
+function onAttr(value: boolean): 'true' | undefined {
+  return value ? 'true' : undefined;
+}
+
+function strikeFor(planning: Planning | null, id: string): { strike: boolean; highlight: boolean } {
+  if (planning === null) return { strike: false, highlight: false };
+  const found = planning.proposal.strikes.find(item => item.id === id);
+  if (found === undefined) return { strike: false, highlight: false };
+  return { strike: true, highlight: found.highlight };
 }
 
 function readBoxHeight(): number {
@@ -176,7 +197,21 @@ function fateOf(deleted: boolean): 'delete' | undefined {
   return deleted ? 'delete' : undefined;
 }
 
+function ProposalRowMark({ row }: Readonly<{ row: ProposalRow }>) {
+  return (
+    <div className="box-row" data-proposal="true" data-path={row.path} data-highlight={onAttr(row.highlight)}>
+      {row.name}
+    </div>
+  );
+}
+
+function proposalRowsOf(planning: Planning | null, id: string): ProposalRow[] {
+  if (planning === null) return [];
+  return planning.proposal.rows.filter(row => row.boxId === id);
+}
+
 function BoxRow({ row, planning }: Readonly<{ row: RowInk; planning: Planning }>) {
+  const strike = strikeFor(planning, row.path);
   if (row.ghost) {
     return (
       <div className="box-row" data-ghost="true" data-path={row.path} onDoubleClick={event => event.stopPropagation()}>
@@ -189,6 +224,9 @@ function BoxRow({ row, planning }: Readonly<{ row: RowInk; planning: Planning }>
       className="box-row nodrag"
       data-path={row.path}
       data-fate={fateOf(row.deleted)}
+      data-proposal={onAttr(strike.strike)}
+      data-strike={onAttr(strike.strike)}
+      data-highlight={onAttr(strike.highlight)}
       draggable
       onDragStart={event => event.dataTransfer.setData(FILE_DRAG_MIME, row.path)}
       onDoubleClick={event => {
@@ -215,6 +253,17 @@ function BoxRows({ rows, planning }: Readonly<{ rows: RowInk[]; planning: Planni
     <div className="box-rows">
       {rows.map(row => (
         <BoxRow key={row.path} row={row} planning={planning} />
+      ))}
+    </div>
+  );
+}
+
+function ProposalRows({ rows }: Readonly<{ rows: ProposalRow[] }>) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="box-rows">
+      {rows.map(row => (
+        <ProposalRowMark key={row.path} row={row} />
       ))}
     </div>
   );
@@ -308,6 +357,7 @@ function drawLabel(planning: Planning | null): string | undefined {
 }
 
 function Box({ id, data }: NodeProps<BoxNode>) {
+  const strike = strikeFor(data.planning, id);
   return (
     <div
       className={boxClass(data)}
@@ -323,12 +373,15 @@ function Box({ id, data }: NodeProps<BoxNode>) {
       {...boxDropProps(data, id)}
     >
       <Handle type="target" position={Position.Top} />
-      <span className="box-name">{data.name}</span>
+      <span className="box-name" data-proposal={onAttr(strike.strike)} data-strike={onAttr(strike.strike)} data-highlight={onAttr(strike.highlight)}>
+        {data.name}
+      </span>
       <BoxCount text={data.count} />
       <TestTag show={data.test} />
       <HealthBadge text={data.badge} level={data.level} />
       <NoteMarks texts={data.noteTexts} />
       {data.planning === null ? null : <BoxRows rows={data.rows} planning={data.planning} />}
+      <ProposalRows rows={proposalRowsOf(data.planning, id)} />
       {boxMenu(data, id)}
       <Handle type="source" position={Position.Bottom} aria-label={drawLabel(data.planning)} isConnectable={data.planning !== null} />
     </div>
@@ -339,6 +392,15 @@ function GhostBox({ id, data }: NodeProps<GhostNode>) {
   return (
     <div className="box ghost" data-id={id} data-x={data.x} data-y={data.y} data-ghost="true">
       <span className="box-name">{data.name}</span>
+    </div>
+  );
+}
+
+function ProposalBoxNode({ id, data }: NodeProps<ProposalNode>) {
+  return (
+    <div className="box proposal" data-proposal="true" data-id={id} data-x={data.x} data-y={data.y} data-highlight={onAttr(data.highlight)}>
+      <span className="box-name">{data.name}</span>
+      <ProposalRows rows={data.rows} />
     </div>
   );
 }
@@ -464,6 +526,34 @@ function CutMark(props: EdgeProps<CutEdge>) {
   );
 }
 
+function cutHighlight(data: ProposalMarkData | undefined): boolean {
+  if (data === undefined) return false;
+  return data.highlight;
+}
+
+function ProposalCut(props: EdgeProps<ProposalCutEdge>) {
+  const [path, labelX, labelY] = getBezierPath(props);
+  return (
+    <g className="proposal-cut" data-proposal="true" data-from={props.source} data-to={props.target} data-highlight={onAttr(cutHighlight(props.data))}>
+      <BaseEdge id={props.id} path={path} style={{ stroke: '#7c3aed', strokeWidth: 1, strokeDasharray: '4 4' }} />
+      <text x={labelX} y={labelY} className="proposal-cut-label" fill="#7c3aed">
+        ✂
+      </text>
+    </g>
+  );
+}
+
+function ProposalArrow(props: EdgeProps<ProposalArrowEdge>) {
+  const data = props.data;
+  if (data === undefined) return null;
+  const [path] = getBezierPath(props);
+  return (
+    <g data-proposal="true" data-from={props.source} data-to={props.target} data-highlight={onAttr(data.highlight)}>
+      <BaseEdge id={props.id} path={path} style={{ stroke: '#7c3aed', strokeWidth: 1.5, strokeDasharray: '6 4' }} markerEnd={props.markerEnd} />
+    </g>
+  );
+}
+
 function hollowMarkerId(color: string): string {
   return `hollow-${color.slice(1)}`;
 }
@@ -485,8 +575,8 @@ function MarkerSvg() {
   );
 }
 
-const nodeTypes = { box: Box, ghost: GhostBox };
-const edgeTypes = { arrow: Arrow, cutmark: CutMark };
+const nodeTypes = { box: Box, ghost: GhostBox, proposal: ProposalBoxNode };
+const edgeTypes = { arrow: Arrow, cutmark: CutMark, proposalcut: ProposalCut, proposalarrow: ProposalArrow };
 
 function isAbstract(node: GraphNode): boolean {
   return (node as { abstract?: true }).abstract === true;
@@ -572,6 +662,16 @@ function toGhost(ghost: GhostBoxInk): GhostNode {
     type: 'ghost',
     position: { x: ghost.x, y: ghost.y },
     data: { name: ghost.name, x: ghost.x, y: ghost.y, kind: null },
+    draggable: false,
+  };
+}
+
+function toProposalNode(box: ProposalBox): ProposalNode {
+  return {
+    id: box.id,
+    type: 'proposal',
+    position: { x: box.x, y: box.y },
+    data: { name: box.name, x: box.x, y: box.y, kind: null, highlight: box.highlight, rows: box.rows },
     draggable: false,
   };
 }
@@ -676,6 +776,27 @@ function toCutMark(cut: CutMarkInk, marked: MarkSel | null): CutEdge {
   };
 }
 
+function toProposalCut(link: ProposalLink): ProposalCutEdge {
+  return {
+    id: `proposal-cut:${link.from}->${link.to}`,
+    source: link.from,
+    target: link.to,
+    type: 'proposalcut',
+    data: { highlight: link.highlight },
+  };
+}
+
+function toProposalArrow(link: ProposalLink): ProposalArrowEdge {
+  return {
+    id: `proposal-arrow:${link.from}->${link.to}`,
+    source: link.from,
+    target: link.to,
+    type: 'proposalarrow',
+    data: { highlight: link.highlight },
+    markerEnd: markerFor('filled', '#7c3aed'),
+  };
+}
+
 function namesOf(nodes: GraphNode[]): Map<string, string> {
   return new Map(nodes.map(node => [node.id, node.name]));
 }
@@ -688,7 +809,7 @@ function boxElement(id: string): HTMLElement | undefined {
   return [...document.querySelectorAll<HTMLElement>('.box')].find(box => box.dataset.id === id);
 }
 
-function nodeKind(node: BoxNode | GhostNode): GraphNode['kind'] | null {
+function nodeKind(node: BoxNode | GhostNode | ProposalNode): GraphNode['kind'] | null {
   return node.data.kind;
 }
 
@@ -747,6 +868,21 @@ function inkEdges(planning: Planning | null): InkEdges {
   return { added: planning.ink.added, cuts: planning.ink.cuts };
 }
 
+function proposalNodes(planning: Planning | null): ProposalNode[] {
+  if (planning === null) return [];
+  return planning.proposal.boxes.map(toProposalNode);
+}
+
+function proposalCuts(planning: Planning | null): ProposalCutEdge[] {
+  if (planning === null) return [];
+  return planning.proposal.cuts.map(toProposalCut);
+}
+
+function proposalArrows(planning: Planning | null): ProposalArrowEdge[] {
+  if (planning === null) return [];
+  return planning.proposal.arrows.map(toProposalArrow);
+}
+
 export function ArchCanvas(props: Readonly<CanvasProps & { view: GraphView }>) {
   const height = useBoxHeight();
   const planning = props.planning;
@@ -764,7 +900,7 @@ export function ArchCanvas(props: Readonly<CanvasProps & { view: GraphView }>) {
       }),
     [props.view.nodes, props.spots, props.hover, props.chosen, props.also, props.overlay, props.crapMax, planning, props.onHover],
   );
-  const boxes = useMemo(() => [...nodes, ...(planning?.ink.ghosts ?? []).map(toGhost)], [nodes, planning]);
+  const boxes = useMemo(() => [...nodes, ...(planning?.ink.ghosts ?? []).map(toGhost), ...proposalNodes(planning)], [nodes, planning]);
   const edges = useMemo(() => {
     const ctx: ArrowCtx = {
       spots: spotMap(props.spots),
@@ -779,6 +915,8 @@ export function ArchCanvas(props: Readonly<CanvasProps & { view: GraphView }>) {
       ...props.view.edges.map(edge => toArrow(edge, ctx)),
       ...ink.added.map(edge => toAddedArrow(edge, ctx)),
       ...ink.cuts.map(cut => toCutMark(cut, props.marked)),
+      ...proposalCuts(planning),
+      ...proposalArrows(planning),
     ];
   }, [props.view.edges, props.view.nodes, props.spots, props.hover, height, props.marked, planning]);
   useFocusCentre(props.focus, props.spots, nodesKey);

@@ -6,14 +6,14 @@ import { basename, dirname, extname, join } from 'node:path';
 import { z } from 'zod';
 import type { CruiserFile } from './cruiser.ts';
 import { contractRules } from './domain/contract.ts';
-import { cycleTexts, edgePairs, graphView, nodeDetail, type GraphFlags, type GraphView } from './domain/graph.ts';
+import { cycleTexts, edgePairs, graphView, nodeDetail, type GraphFlags, type GraphNode, type GraphView } from './domain/graph.ts';
 import { emptyLayout, parseLayout, type LayoutDoc } from './domain/layout.ts';
-import { contractNamesFrom, PLAN_SLUG_PATTERN, parsePlan, planNameFrom, slugOf, type ContractRule, type PlanDoc } from './domain/plan.ts';
-import { applyPlan, plannedShape, planReport, type PlanReport } from './domain/planned.ts';
+import { byStrings, contractNamesFrom, freshTurn, parseChat, parsePlan, parsePlanEdit, planNameFrom, PLAN_SLUG_PATTERN, proposeFrom, reviewFrom, slugOf, type ContractRule, type PlanDoc, type PlanEdit } from './domain/plan.ts';
+import { applyPlan, plannedShape, planReport, reviewProposed, type PlanReport } from './domain/planned.ts';
 import type { ScanResult } from './domain/scan.ts';
 import { buildTree, filePathSet, type TreeRoot } from './domain/tree.ts';
-import { DEFAULT_LIMITS, generate, readConfig, saveConfig, turnOf, type Limits, type Turn } from './generate.ts';
-import { freePlanSlug, listPlans, readPlan, removePlan, saveTaskFiles, writePlan } from './plans.ts';
+import { DEFAULT_LIMITS, generate, propose, readConfig, saveConfig, turnOf, type Limits, type PromptEdge, type PromptNode, type PromptView, type Turn } from './generate.ts';
+import { freePlanSlug, listPlans, readChat, readPlan, removePlan, saveTaskFiles, writeChat, writePlan } from './plans.ts';
 import { readHealth } from './reports.ts';
 import { gitHead, listedRegularFiles } from './repo.ts';
 
@@ -143,9 +143,17 @@ function apiDenied(app: App, req: IncomingMessage, url: URL): boolean {
   return url.pathname.startsWith('/api/') && !apiTokenOk(app.token, req, url);
 }
 
-async function serveIndex(app: App, res: ServerResponse, url: URL): Promise<void> {
-  const given = url.searchParams.get('token');
-  if (given === null || !tokensEqual(given, app.token)) {
+function indexToken(req: IncomingMessage, url: URL): string | null {
+  return url.searchParams.get('token') ?? bearerToken(req.headers.authorization);
+}
+
+function indexAllowed(app: App, req: IncomingMessage, url: URL): boolean {
+  const given = indexToken(req, url);
+  return given !== null && tokensEqual(given, app.token);
+}
+
+async function serveIndex(app: App, req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+  if (!indexAllowed(app, req, url)) {
     send(res, 401, TEXT_TYPE, Buffer.from('bindweed: use the link bindweed printed in the terminal'));
     return;
   }
@@ -245,6 +253,34 @@ function viewBody(view: GraphView, report: PlanReport | null): GraphView {
   return { ...view, stale: report.stale, ...warningsField(report) };
 }
 
+function parsedJson(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function planEditsOf(raw: unknown): PlanEdit[] {
+  if (!Array.isArray(raw)) return [];
+  const edits: PlanEdit[] = [];
+  for (const item of raw) {
+    const edit = parsePlanEdit(item);
+    if (edit !== undefined) edits.push(edit);
+  }
+  return edits;
+}
+
+function proposalParam(url: URL): PlanEdit[] {
+  const raw = url.searchParams.get('proposals');
+  if (raw === null) return [];
+  return planEditsOf(parsedJson(raw));
+}
+
+function drawnScan(scan: ScanResult, extra: PlanEdit[]): ScanResult {
+  return extra.length === 0 ? scan : applyPlan(scan, extra);
+}
+
 async function serveGraph(app: App, graphs: GraphHolder, res: ServerResponse, url: URL): Promise<void> {
   const scan = await readyScan(app, graphs);
   const load = await loadPlan(app, url);
@@ -253,7 +289,8 @@ async function serveGraph(app: App, graphs: GraphHolder, res: ServerResponse, ur
     return;
   }
   const plan = graphPlanOf(scan, load);
-  const view = graphView(plan.scan, url.searchParams.get('at') ?? '', basename(app.repoRoot), graphFlags(url), healthOf(app.repoRoot, plan.scan));
+  const planned = drawnScan(plan.scan, proposalParam(url));
+  const view = graphView(planned, url.searchParams.get('at') ?? '', basename(app.repoRoot), graphFlags(url), healthOf(app.repoRoot, planned));
   if (view === null) {
     sendJson(res, 404, { error: 'no such directory' });
     return;
@@ -434,7 +471,8 @@ type PlanVerb = (app: App, req: IncomingMessage, res: ServerResponse, slug: stri
 const PLAN_DOC_VERBS: Record<string, PlanVerb> = { GET: getPlan, PUT: putPlan, DELETE: deletePlan };
 
 const PLANS_PREFIX = '/api/plans/';
-const PLAN_ACTION_PATH = /^\/api\/plans\/[^/]*\/(contract|generate|cancel|files)$/;
+const PLAN_ACTION_PATH = /^\/api\/plans\/[^/]*\/(contract|generate|cancel|files|propose|chat|review)$/;
+const CLOSED_FLAGS: GraphFlags = { tests: false, external: false };
 
 type PlanAction = (app: App, graphs: GraphHolder, req: IncomingMessage, res: ServerResponse, doc: PlanDoc) => Promise<void>;
 
@@ -569,6 +607,127 @@ async function dispatchMiss(app: App, req: IncomingMessage, res: ServerResponse,
   await servePlanDoc(app, req, res, slug);
 }
 
+function promptNode(node: GraphNode): PromptNode {
+  const source = node as PromptNode;
+  return {
+    id: source.id,
+    kind: source.kind,
+    name: source.name,
+    files: source.files,
+    ca: source.ca,
+    ce: source.ce,
+    i: source.i,
+    a: source.a,
+    d: source.d,
+    zone: source.zone,
+    crap: source.crap,
+    coverage: source.coverage,
+    mutants: source.mutants,
+    cycle: source.cycle,
+  };
+}
+
+function promptEdge(edge: GraphView['edges'][number]): PromptEdge {
+  return { from: edge.from, to: edge.to, runtime: edge.runtime, type: edge.type, heritage: edge.heritage, cycle: edge.cycle, cycleText: edge.cycleText };
+}
+
+function promptOfView(view: GraphView, heading: string): PromptView {
+  return { heading, nodes: view.nodes.map(promptNode), edges: view.edges.map(promptEdge) };
+}
+
+function childIds(view: GraphView): string[] {
+  return view.nodes.flatMap(node => (node.kind === 'package' ? [node.id] : [])).sort(byStrings);
+}
+
+function viewed(scan: ScanResult, at: string, rootName: string, health: ReturnType<typeof healthOf>): GraphView | null {
+  return graphView(scan, at, rootName, CLOSED_FLAGS, health);
+}
+
+function childPrompt(scan: ScanResult, id: string, rootName: string, health: ReturnType<typeof healthOf>): PromptView {
+  const child = viewed(scan, id, rootName, health);
+  if (child === null) return { heading: id, nodes: [], edges: [] };
+  return promptOfView(child, id);
+}
+
+function headingOf(at: string): string {
+  return at === '' ? '(root)' : at;
+}
+
+function promptViews(scan: ScanResult, at: string, rootName: string, health: ReturnType<typeof healthOf>): PromptView[] {
+  const current = viewed(scan, at, rootName, health) as GraphView;
+  const children = childIds(current).map(id => childPrompt(scan, id, rootName, health));
+  return [promptOfView(current, headingOf(at)), ...children];
+}
+
+type ProposeAsk = { text: string; at: string };
+
+async function proposed(app: App, graphs: GraphHolder, doc: PlanDoc, ask: ProposeAsk, signal: AbortSignal): Promise<Record<string, unknown>> {
+  const scan = applyPlan(await readyScan(app, graphs), doc.edits);
+  const health = healthOf(app.repoRoot, scan);
+  const turns = await readChat(app.repoRoot, doc.slug);
+  const result = await propose({
+    place: { root: app.repoRoot, env: app.env, limits: app.limits, signal },
+    doc,
+    facts: { name: doc.name, text: ask.text, at: ask.at, views: promptViews(scan, ask.at, basename(app.repoRoot), health), edits: doc.edits, turns },
+  });
+  if (result.proposal === undefined) return result.body;
+  const stale = reviewProposed(await readyScan(app, graphs), doc.edits, result.proposal.edits);
+  const chat = [...turns, freshTurn(ask.text, result.proposal.summary, result.proposal.edits, new Date().toISOString())];
+  await writeChat(app.repoRoot, doc.slug, chat);
+  return { ...result.body, stale, chat };
+}
+
+async function proposeView(app: App, graphs: GraphHolder, doc: PlanDoc, at: string): Promise<GraphView | null> {
+  const scan = applyPlan(await readyScan(app, graphs), doc.edits);
+  return viewed(scan, at, basename(app.repoRoot), healthOf(app.repoRoot, scan));
+}
+
+async function postPropose(app: App, graphs: GraphHolder, req: IncomingMessage, res: ServerResponse, doc: PlanDoc): Promise<void> {
+  const ask = proposeFrom(await readJsonBody(req));
+  if (ask === undefined) {
+    sendJson(res, 400, { error: 'bad propose' });
+    return;
+  }
+  if ((await proposeView(app, graphs, doc, ask.at)) === null) {
+    sendJson(res, 400, { error: 'bad propose' });
+    return;
+  }
+  if (app.runs.has(doc.slug)) {
+    sendJson(res, 409, { error: 'already running' });
+    return;
+  }
+  const controller = new AbortController();
+  app.runs.set(doc.slug, controller);
+  try {
+    sendJson(res, 200, await proposed(app, graphs, doc, ask, controller.signal));
+  } finally {
+    app.runs.delete(doc.slug);
+  }
+}
+
+async function getChat(app: App, _graphs: GraphHolder, _req: IncomingMessage, res: ServerResponse, doc: PlanDoc): Promise<void> {
+  sendJson(res, 200, await readChat(app.repoRoot, doc.slug));
+}
+
+async function putChat(app: App, _graphs: GraphHolder, req: IncomingMessage, res: ServerResponse, doc: PlanDoc): Promise<void> {
+  const chat = parseChat(await readJsonBody(req));
+  if (chat === undefined) {
+    sendJson(res, 400, { error: 'bad chat' });
+    return;
+  }
+  await writeChat(app.repoRoot, doc.slug, chat);
+  sendJson(res, 200, chat);
+}
+
+async function postReview(app: App, graphs: GraphHolder, req: IncomingMessage, res: ServerResponse, doc: PlanDoc): Promise<void> {
+  const edits = reviewFrom(await readJsonBody(req));
+  if (edits === undefined) {
+    sendJson(res, 400, { error: 'bad review' });
+    return;
+  }
+  sendJson(res, 200, { stale: reviewProposed(await readyScan(app, graphs), doc.edits, edits) });
+}
+
 function routesFor(app: App, graphs: GraphHolder): Routes {
   const table: Routes = new Map();
   const router = {
@@ -582,7 +741,7 @@ function routesFor(app: App, graphs: GraphHolder): Routes {
       table.set(`PUT ${path}`, handler);
     },
   };
-  router.get('/', (_req, res, url) => serveIndex(app, res, url));
+  router.get('/', (req, res, url) => serveIndex(app, req, res, url));
   router.get('/assets/', (_req, res, url) => serveAsset(app, res, url));
   router.get('/api/tree', (_req, res) => serveTree(app, res));
   router.get('/api/file', (_req, res, url) => serveFile(app, res, url));
@@ -599,6 +758,10 @@ function routesFor(app: App, graphs: GraphHolder): Routes {
   router.post('/api/plans/<slug>/generate', (req, res, url) => servePlanAction(app, graphs, req, res, url, postGenerate));
   router.post('/api/plans/<slug>/cancel', (req, res, url) => servePlanAction(app, graphs, req, res, url, postCancel));
   router.post('/api/plans/<slug>/files', (req, res, url) => servePlanAction(app, graphs, req, res, url, postFiles));
+  router.post('/api/plans/<slug>/propose', (req, res, url) => servePlanAction(app, graphs, req, res, url, postPropose));
+  router.get('/api/plans/<slug>/chat', (req, res, url) => servePlanAction(app, graphs, req, res, url, getChat));
+  router.put('/api/plans/<slug>/chat', (req, res, url) => servePlanAction(app, graphs, req, res, url, putChat));
+  router.post('/api/plans/<slug>/review', (req, res, url) => servePlanAction(app, graphs, req, res, url, postReview));
   router.get('/api/config', (_req, res) => serveConfig(app, res));
   router.put('/api/config', (req, res) => putConfig(app, req, res));
   router.get('/api/repo', async (_req, res) => sendJson(res, 200, { root: app.repoRoot }));

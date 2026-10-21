@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { pendingRound, type PlanDoc, type PlanEdit, type Round } from './domain/plan.ts';
-import { generateAskFrom, planAfter, promptOf, readReply, retryPrompt, turnFor, type PromptFacts, type Turn } from './domain/prompt.ts';
+import { generateAskFrom, planAfter, promptOf, proposePrompt, readProposal, readReply, retryPrompt, turnFor, type PromptEdge, type PromptFacts, type PromptNode, type ProposeFacts, type Turn } from './domain/prompt.ts';
 import type { PlanWarning, ScanResult } from './domain/scan.ts';
 
 const FENCE = '```';
@@ -222,5 +222,105 @@ describe('planAfter', () => {
       brief: 'B',
     });
     expect(planAfter(doc, turn, reply, 999)).toEqual({ error: 'task numbers would pass 999' });
+  });
+});
+
+describe('proposePrompt', () => {
+  const cut: PlanEdit = { kind: 'cut-edge', from: 'src/app', to: 'src/domain', files: [['src/app/a.ts', 'src/domain/model.ts']] };
+  const move: PlanEdit = { kind: 'move-file', file: 'src/app/b.ts', to: 'src/ports' };
+
+  function node(over: Partial<PromptNode> = {}): PromptNode {
+    return { id: 'src/a.ts', kind: 'file', name: 'a.ts', ca: 1, ce: 0, i: '0.00', a: '0.00', d: '1.00', cycle: false, ...over };
+  }
+
+  function edge(over: Partial<PromptEdge> = {}): PromptEdge {
+    return { from: 'src/a', to: 'src/b', runtime: 1, type: 0, cycle: false, ...over };
+  }
+
+  function facts(over: Partial<ProposeFacts> = {}): ProposeFacts {
+    return { name: 'Gate', text: 'the ui knows about the scanner', at: 'src', views: [], edits: [], turns: [], ...over };
+  }
+
+  it('writes the sections, health fields, heritage and the smaller cycle text', () => {
+    const prompt = proposePrompt(facts({
+      at: '',
+      text: 'split it\nby job',
+      edits: [cut, move],
+      turns: [
+        { at: '2026-10-21T09:00:00.000Z', text: 'the ui knows about the scanner', summary: 'Pull scanning out.', edits: [cut], decisions: { '0': 'accepted' } },
+      ],
+      views: [
+        {
+          heading: '(root)',
+          nodes: [
+            node({ id: 'src', kind: 'package', name: 'src', files: 4, zone: 'healthy', crap: '–', mutants: 0 }),
+            node({ id: 'src/rule.ts', name: 'rule.ts', crap: 2.5, coverage: '0.50', mutants: 1, i: '–' }),
+            node({ id: 'src/bare.ts', name: 'bare.ts' }),
+          ],
+          edges: [
+            edge({ heritage: 2, cycle: true, cycleText: 'b → a → b' }),
+            edge({ from: 'src/b', to: 'src/a', heritage: 0, cycle: true, cycleText: 'a → b → a' }),
+            edge({ from: 'src/c', to: 'src/d', runtime: 0, type: 1 }),
+          ],
+        },
+        { heading: 'src', nodes: [node({ id: 'src/app', kind: 'package', name: 'app', files: 2 })], edges: [] },
+      ],
+    }));
+    expect(prompt.startsWith('You are proposing edits to the plan "Gate". The developer says what they dislike; you propose edits they will accept or reject. You change nothing yourself.')).toBe(true);
+    expect(prompt).toContain('## What they dislike\nsplit it\nby job');
+    expect(prompt).toContain('## Current view\n(root)');
+    expect(prompt).toContain('node src package src files 4 ca 1 ce 0 i 0.00 a 0.00 d 1.00 zone healthy crap – mutants 0 cycle false');
+    expect(prompt).toContain('node src/rule.ts file rule.ts ca 1 ce 0 i – a 0.00 d 1.00 crap 2.5 coverage 0.50 mutants 1 cycle false');
+    expect(prompt).toContain('node src/bare.ts file bare.ts ca 1 ce 0 i 0.00 a 0.00 d 1.00 cycle false');
+    expect(prompt).toContain('edge src/a -> src/b runtime 1 type 0 heritage 2 cycle true text b → a → b');
+    expect(prompt).toContain('edge src/b -> src/a runtime 1 type 0 cycle true text a → b → a');
+    expect(prompt).toContain('edge src/c -> src/d runtime 0 type 1 cycle false');
+    expect(prompt).toContain('cycles a → b → a');
+    expect(prompt).not.toContain('cycles b → a → b');
+    expect(prompt).toContain('### src\nnode src/app package app files 2');
+    expect(prompt).toContain('## The plan\'s edits so far\nsrc/app must not import src/domain (1 import)\nMove src/app/b.ts to src/ports\n' + JSON.stringify([cut, move]));
+    expect(prompt).toContain('{"kind":"fate","file":"<path>","fate":"fold","into":"<path>"}');
+    expect(prompt).toContain('## Conversation so far\nThey said: the ui knows about the scanner\nSummary: Pull scanning out.\n0 accepted: src/app must not import src/domain (1 import)');
+    expect(prompt).toContain('## What to reply\nReply with exactly one JSON object, in a fenced json block.\n{"summary":"<one paragraph>","edits":[<edit>]}');
+    expect(prompt).not.toContain('crapMax');
+    expect(prompt).not.toContain('coverage on');
+    expect(prompt).not.toContain('mutation on');
+  });
+
+  it('says none when there is no graph, no edit and no turn', () => {
+    const prompt = proposePrompt(facts());
+    expect(prompt).toContain('## Current view\nsrc');
+    expect(prompt).toContain('## Planned graph\nnone');
+    expect(prompt).toContain('## The plan\'s edits so far\nnone');
+    expect(prompt).toContain('## Conversation so far\nnone');
+    const quiet = proposePrompt(facts({ views: [{ heading: 'src', nodes: [], edges: [edge()] }] }));
+    expect(quiet).toContain('### src\nedge src/a -> src/b runtime 1 type 0 cycle false\ncycles none');
+  });
+});
+
+describe('readProposal', () => {
+  const good = { summary: 'Pull it out.', edits: [{ kind: 'note', target: { node: 'src' }, text: 'x' }] };
+
+  function fence(value: unknown): string {
+    return `prose\n\`\`\`json\n{"example":1}\n\`\`\`\nProposed.\n\`\`\`json\n${JSON.stringify(value)}\n\`\`\`\n`;
+  }
+
+  it('reads the last fenced object and names the first failing reason', () => {
+    expect(readProposal(fence(good))).toEqual(good);
+    expect(readProposal(JSON.stringify(good))).toEqual(good);
+    expect(readProposal('{"summary":"ok","edits":[]}')).toEqual({ summary: 'ok', edits: [] });
+    const reasons: [string, string][] = [
+      ['nope', 'it is not valid JSON'],
+      [fence([1]), 'it needs a summary and an edits array'],
+      [fence({ summary: 'ok', edits: [], extra: 1 }), 'it needs a summary and an edits array'],
+      [fence({ summary: 'ok' }), 'it needs a summary and an edits array'],
+      [fence({ summary: 1, edits: [] }), 'it needs a summary and an edits array'],
+      [fence({ summary: 'ok', edits: {} }), 'it needs a summary and an edits array'],
+      [fence({ edits: [], summary: '' }), 'the summary must be one paragraph'],
+      [fence({ edits: [], summary: '   ' }), 'the summary must be one paragraph'],
+      [fence({ edits: [], summary: 'one\ntwo' }), 'the summary must be one paragraph'],
+      [fence({ edits: [], summary: 'one\rtwo' }), 'the summary must be one paragraph'],
+    ];
+    for (const [stdout, reason] of reasons) expect(readProposal(stdout)).toEqual({ problem: reason });
   });
 });

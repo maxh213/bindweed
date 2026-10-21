@@ -2,8 +2,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { PlanDoc } from './domain/plan.ts';
-import { freePlanSlug, listPlans, readPlan, removePlan, writePlan } from './plans.ts';
+import type { ChatTurn, PlanDoc } from './domain/plan.ts';
+import { freePlanSlug, listPlans, readChat, readPlan, removePlan, writeChat, writePlan } from './plans.ts';
 
 function docOf(slug: string, createdAt: string, name = 'Split app'): PlanDoc {
   return {
@@ -71,6 +71,22 @@ describe('plans store', () => {
     await writePlan(root, docOf('evil', '2026-10-01T00:00:00.000Z'));
     await writeFile(join(root, '.bindweed', 'plans', 'evilx.jso'), 'whatever');
     expect(await listPlans(root)).toEqual([{ name: 'Split app', slug: 'evil', editCount: 0, createdAt: '2026-10-01T00:00:00.000Z' }]);
+  });
+
+  it('reads a chat, treats a bad file as none, and deletes the chat with the plan', async () => {
+    const turn: ChatTurn = { at: '2026-10-01T00:00:00.000Z', text: 'hi', summary: 'Done.', edits: [], decisions: {} };
+    expect(await readChat(root, 'split-app')).toEqual([]);
+    await writeChat(root, 'split-app', [turn]);
+    expect(await readChat(root, 'split-app')).toEqual([turn]);
+    await writePlan(root, docOf('split-app', '2026-10-01T00:00:00.000Z'));
+    await writeFile(join(root, '.bindweed', 'plans', 'split-app.chat.json'), JSON.stringify([{ at: 1 }]));
+    expect(await readChat(root, 'split-app')).toEqual([]);
+    expect(await listPlans(root)).toEqual([{ name: 'Split app', slug: 'split-app', editCount: 0, createdAt: '2026-10-01T00:00:00.000Z' }]);
+    await writeChat(root, 'split-app', [turn]);
+    expect(await removePlan(root, 'split-app')).toBe(true);
+    expect(await readChat(root, 'split-app')).toEqual([]);
+    await writeFile(join(root, '.bindweed', 'plans', 'split-app.chat.json'), '{not json');
+    expect(await readChat(root, 'split-app')).toEqual([]);
   });
 
   it('counts the edits, not the redo stack', async () => {

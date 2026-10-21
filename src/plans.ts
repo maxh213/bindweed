@@ -1,6 +1,6 @@
 import { mkdir, readdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { freeSlug, parsePlan, summarisePlan, type PlanDoc, type PlanSummary } from './domain/plan.ts';
+import { freeSlug, parseChat, parsePlan, summarisePlan, type ChatTurn, type PlanDoc, type PlanSummary } from './domain/plan.ts';
 
 function plansDir(root: string): string {
   return join(root, '.bindweed', 'plans');
@@ -8,6 +8,10 @@ function plansDir(root: string): string {
 
 function planFile(root: string, slug: string): string {
   return join(plansDir(root), `${slug}.json`);
+}
+
+function chatFile(root: string, slug: string): string {
+  return join(plansDir(root), `${slug}.chat.json`);
 }
 
 export async function readPlan(root: string, slug: string): Promise<PlanDoc | undefined> {
@@ -21,13 +25,32 @@ export async function writePlan(root: string, doc: PlanDoc): Promise<void> {
   await writeFile(planFile(root, doc.slug), JSON.stringify(doc));
 }
 
+async function unlinkQuiet(path: string): Promise<void> {
+  await unlink(path).catch(() => undefined);
+}
+
 export async function removePlan(root: string, slug: string): Promise<boolean> {
   try {
     await unlink(planFile(root, slug));
-    return true;
   } catch {
     return false;
   }
+  await unlinkQuiet(chatFile(root, slug));
+  return true;
+}
+
+export async function readChat(root: string, slug: string): Promise<ChatTurn[]> {
+  try {
+    const bytes = await readFile(chatFile(root, slug));
+    return parseChat(JSON.parse(bytes.toString('utf8'))) ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export async function writeChat(root: string, slug: string, turns: ChatTurn[]): Promise<void> {
+  await mkdir(plansDir(root), { recursive: true });
+  await writeFile(chatFile(root, slug), JSON.stringify(turns));
 }
 
 async function planFileNames(root: string): Promise<string[] | undefined> {

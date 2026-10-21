@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { cycleTexts, graphView } from './domain/graph.ts';
 import type { PlanEdit } from './domain/plan.ts';
-import { applyPlan, planReport, staleReasons } from './domain/planned.ts';
+import { applyPlan, planReport, reviewProposed, staleReasons } from './domain/planned.ts';
 import type { ScanResult } from './domain/scan.ts';
 
 const LAYERED: ScanResult = {
@@ -1600,5 +1600,21 @@ describe('planReport', () => {
         { kind: 'added-cycle', cycle: 'b → a → b' },
       ],
     ]);
+  });
+});
+
+describe('reviewProposed', () => {
+  const cut = CUT_APP_DOMAIN;
+  const created: PlanEdit = { kind: 'create-package', path: 'src/ports' };
+  const move: PlanEdit = { kind: 'move-file', file: 'src/app/b.ts', to: 'src/ports' };
+  const missing: PlanEdit = { kind: 'move-file', file: 'src/no-such.ts', to: 'src/ports' };
+  const fold = { kind: 'fold', file: 'src/app/a.ts' };
+
+  it('checks each proposal against the plan with only the earlier applicable ones applied', () => {
+    expect(reviewProposed(LAYERED, [], [cut, created, move, missing])).toEqual([null, null, null, 'no such file src/no-such.ts']);
+    expect(reviewProposed(LAYERED, [], [move, created])).toEqual(['no such directory src/ports', null]);
+    expect(reviewProposed(LAYERED, [], [fold, created, move])).toEqual(['not an edit', null, null]);
+    expect(reviewProposed(LAYERED, [created], [move])).toEqual([null]);
+    expect(reviewProposed(LAYERED, [cut], [cut])).toEqual(['src/app/a.ts no longer imports src/domain/model.ts']);
   });
 });

@@ -12,7 +12,13 @@ type TasksPanelProps = {
   onSave: (doc: PlanDoc) => Promise<void>;
   idle: { readonly current: Promise<void> };
   onClose: () => void;
+  held?: boolean;
+  onRunning: (running: boolean) => void;
 };
+
+function fieldsLocked(running: boolean, held: boolean | undefined): boolean {
+  return running || held === true;
+}
 
 type Run = { kind: 'idle' } | { kind: 'running' } | ({ kind: 'failed' } & Exclude<GenerateAnswer, { plan: PlanDoc }>) | { kind: 'done'; ran: string; note?: string };
 
@@ -324,10 +330,15 @@ async function whenSaved(saving: { readonly current: Promise<void> }): Promise<v
 
 export function TasksPanel(props: Readonly<TasksPanelProps>) {
   const doc = props.doc;
+  const onRunning = props.onRunning;
   const [run, setRun] = useState<Run>({ kind: 'idle' });
   const [boxes, setBoxes] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState<string | null>(null);
   const [seconds, restartTicker] = useTicker(run.kind === 'running');
+  useEffect(() => {
+    onRunning(run.kind === 'running');
+    return () => onRunning(false);
+  }, [run.kind, onRunning]);
   const pending = pendingOf(doc);
   const keep = (next: PlanDoc): void => {
     void props.onSave(next);
@@ -354,7 +365,7 @@ export function TasksPanel(props: Readonly<TasksPanelProps>) {
     <div className="plan-dialog-backdrop">
       <dialog open aria-label="Tasks" className="plan-dialog tasks-panel">
         <RunState run={run} seconds={seconds} onCancel={() => void postCancel(props.token, doc.slug, props.fetcher)} />
-        <fieldset disabled={run.kind === 'running'} className="tasks-fields">
+        <fieldset disabled={fieldsLocked(run.kind === 'running', props.held)} className="tasks-fields">
           <Interview rounds={answeredRounds(doc.interview)} />
           <Questions round={pending} boxes={boxes} onType={(key, value) => setBoxes(current => ({ ...current, [key]: value }))} />
           <GenerateButtons pending={pending !== null} onRun={step => void generate(step)} />

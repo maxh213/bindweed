@@ -2059,7 +2059,7 @@ describe('the plan canvas over a real server', () => {
     expect(calls.filter(call => call.at !== 'src' && call.at !== 'src/app')).toEqual([]);
     await actRun(() => render('src', undefined));
     await settle();
-    expect(planDocCalls).toEqual(['/api/plans/p']);
+    expect(planDocCalls).toEqual(['/api/plans/p', '/api/plans/p/chat']);
   });
 
   it('pins a file dragged onto a package box when no plan is open', async () => {

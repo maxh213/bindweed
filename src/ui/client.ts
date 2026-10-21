@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { GraphView, NodeDetail } from '../domain/graph.ts';
 import { emptyLayout, parseLayout, type LayoutDoc } from '../domain/layout.ts';
-import { parseContract, parsePlan, type Contract, type PlanDoc, type PlanSummary } from '../domain/plan.ts';
+import { parseChat, parseContract, parsePlan, type ChatTurn, type Contract, type PlanDoc, type PlanSummary } from '../domain/plan.ts';
 import type { TreeEntry } from '../domain/tree.ts';
 
 const treeEntrySchema: z.ZodType<TreeEntry> = z.lazy(() =>
@@ -174,17 +174,26 @@ function parseBody<T>(schema: z.ZodType<T>, raw: unknown, ok: boolean): T | { er
   return parsed.success ? parsed.data : { error: 'cannot reach bindweed' };
 }
 
-export type GraphQuery = { tests?: boolean; external?: boolean; plan?: string | null };
+export type GraphQuery = { tests?: boolean; external?: boolean; plan?: string | null; proposals?: string };
 
 function withFlag(params: URLSearchParams, name: string, on: boolean | undefined): void {
   if (on === true) params.set(name, '1');
+}
+
+function withPlan(params: URLSearchParams, plan: string | null | undefined): void {
+  if (typeof plan === 'string' && plan !== '') params.set('plan', plan);
+}
+
+function withProposals(params: URLSearchParams, proposals: string | undefined): void {
+  if (proposals !== undefined && proposals !== '') params.set('proposals', proposals);
 }
 
 function queryUrl(path: string, params: Record<string, string>, query: GraphQuery): string {
   const search = new URLSearchParams(params);
   withFlag(search, 'tests', query.tests);
   withFlag(search, 'external', query.external);
-  if (typeof query.plan === 'string' && query.plan !== '') search.set('plan', query.plan);
+  withPlan(search, query.plan);
+  withProposals(search, query.proposals);
   return `${path}?${search.toString()}`;
 }
 
@@ -484,6 +493,54 @@ function generateAnswer(raw: unknown, ok: boolean): GenerateAnswer {
 
 export function postGenerate(token: string, slug: string, body: GenerateBody, fetcher: typeof fetch = fetch): Promise<GenerateAnswer> {
   return answered(fetcher, `/api/plans/${slug}/generate`, sendingJson(token, 'POST', body), generateAnswer);
+}
+
+const proposeOkSchema = z.object({
+  ran: z.string(),
+  summary: z.string(),
+  edits: z.array(z.unknown()),
+  stale: z.array(z.union([z.string(), z.null()])),
+  chat: z.unknown(),
+  note: z.string().optional(),
+});
+
+export type ProposeAnswer =
+  | { ran: string; summary: string; edits: unknown[]; stale: (string | null)[]; chat: ChatTurn[]; note?: string }
+  | { error: string; raw?: string; ran?: string; note?: string };
+
+function proposeOk(raw: z.infer<typeof proposeOkSchema>): ProposeAnswer {
+  const chat = parseChat(raw.chat);
+  if (chat === undefined) return { error: 'cannot reach bindweed' };
+  return { ran: raw.ran, summary: raw.summary, edits: raw.edits, stale: raw.stale, chat, note: raw.note };
+}
+
+function proposeAnswer(raw: unknown, ok: boolean): ProposeAnswer {
+  if (!ok) return errorFrom(raw);
+  const failed = failedRunSchema.safeParse(raw);
+  if (failed.success) return failed.data;
+  const done = proposeOkSchema.safeParse(raw);
+  return done.success ? proposeOk(done.data) : { error: 'cannot reach bindweed' };
+}
+
+export function postPropose(token: string, slug: string, body: { text: string; at: string }, fetcher: typeof fetch = fetch): Promise<ProposeAnswer> {
+  return answered(fetcher, `/api/plans/${slug}/propose`, sendingJson(token, 'POST', body), proposeAnswer);
+}
+
+function chatBody(raw: unknown, ok: boolean): ChatTurn[] | { error: string } {
+  if (!ok) return errorFrom(raw);
+  return parseChat(raw) ?? { error: 'cannot reach bindweed' };
+}
+
+export function fetchChat(token: string, slug: string, fetcher: typeof fetch = fetch): Promise<ChatTurn[] | { error: string }> {
+  return answered(fetcher, `/api/plans/${slug}/chat`, bearer(token), chatBody);
+}
+
+export function putChat(token: string, slug: string, turns: ChatTurn[], fetcher: typeof fetch = fetch): Promise<ChatTurn[] | { error: string }> {
+  return answered(fetcher, `/api/plans/${slug}/chat`, sendingJson(token, 'PUT', turns), chatBody);
+}
+
+export function postReview(token: string, slug: string, edits: unknown[], fetcher: typeof fetch = fetch): Promise<{ stale: (string | null)[] } | { error: string }> {
+  return answered(fetcher, `/api/plans/${slug}/review`, sendingJson(token, 'POST', { edits }), readWith(z.object({ stale: z.array(z.union([z.string(), z.null()])) })));
 }
 
 function postPlanAction<T>(token: string, slug: string, action: string, schema: z.ZodType<T>, fetcher: typeof fetch): Promise<T | { error: string }> {

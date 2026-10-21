@@ -33,6 +33,9 @@ Status: being built by marestail, one slice per file in `tasks/`.
 | `/api/plans/<slug>/generate` | live |
 | `/api/plans/<slug>/cancel` | live |
 | `/api/plans/<slug>/files` | live |
+| `/api/plans/<slug>/propose` | live |
+| `/api/plans/<slug>/chat` | live |
+| `/api/plans/<slug>/review` | live |
 | `/api/config` | live |
 | `/api/repo` | live |
 
