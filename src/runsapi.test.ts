@@ -128,6 +128,7 @@ const CANNON: Record<string, Fixture> = {
   'sc-text': { tool: 'slop-cannon', pid: 'live', at: '12:15', build: status('sc-status.json', 'nope') },
   'sc-quiet': { tool: 'slop-cannon', pid: 'dead', at: '12:16', build: status('sc-status.code', '') },
   'sc-odd': { tool: 'slop-cannon', pid: 'live', at: '12:17', build: status('sc-status.json', JSON.stringify({ state: null, agents: 'x', beads: { open: 'many', done: 2 }, prs: [1, { url: 2 }, { url: 'https://example.test/pull/9' }] })) },
+  'sc-nulls': { tool: 'slop-cannon', pid: 'live', at: '12:17', build: status('sc-status.json', JSON.stringify({ state: { phase: 'running' }, agents: [null, { alive: true }], beads: {}, prs: [null, 1, { url: 2 }, { url: 'https://example.test/pull/9' }] })) },
   'sc-truthy': { tool: 'slop-cannon', pid: 'live', at: '12:19', build: status('sc-status.json', JSON.stringify({ state: { phase: 'running' }, agents: [{ alive: true }, { alive: 'true' }, { alive: 1 }], beads: {}, prs: [] })) },
   'sc-gone': { tool: 'slop-cannon', pid: 'dead', at: '12:19', build: status('sc-status.json', JSON.stringify({ state: { phase: 'running' } })) },
   'sc-phase': { tool: 'slop-cannon', pid: 'dead', at: '12:18', build: status('sc-status.json', JSON.stringify({ state: { phase: 'done' } })) },
@@ -340,6 +341,7 @@ describe('GET /api/runs', () => {
     ['sc-text', 'running', 'sc status failed: not JSON · pid alive', []],
     ['sc-quiet', 'dead', 'sc status failed: exited 3 · pid gone', []],
     ['sc-odd', 'running', ' · 0 agents · 2 done · 1 PR', []],
+    ['sc-nulls', 'running', 'running · 1 agent · 1 PR', []],
     ['sc-truthy', 'running', 'running · 1 agent · 0 PRs', []],
     ['sc-phase', 'done', 'done · 0 agents · 0 PRs', []],
     ['sc-gone', 'dead', 'running · 0 agents · 0 PRs', []],
@@ -352,6 +354,10 @@ describe('GET /api/runs', () => {
     expect(await only('sc-slow')).toMatchObject({ state: 'running', position: 'sc status failed: timed out after 10s · pid alive', logTail: [] });
     expect(Date.now() - started).toBeLessThan(12000);
   }, 15000);
+
+  it('Null agents and PRs from sc are skipped', async () => {
+    expect(await only('sc-nulls')).toMatchObject({ state: 'running', position: 'running · 1 agent · 1 PR', prs: ['https://example.test/pull/9'] });
+  });
 
   it('An sc that answers after a few seconds keeps its position', async () => {
     const started = Date.now();

@@ -48,8 +48,9 @@ async function runsResponse(): Promise<Response> {
   return response(body, status);
 }
 
-function deleteResponse(path: string): Response {
+function deleteResponse(path: string, init: RequestInit): Response {
   deletes.push(path);
+  if (new Headers(init.headers).get('Authorization') !== 'Bearer tok') return response({ error: 'missing or wrong token' }, 401);
   const [status, body] = deleteAnswers.shift() ?? [200, { ok: true }];
   return response(body, status);
 }
@@ -64,7 +65,7 @@ const GETS: Record<string, () => Response | Promise<Response>> = {
 const fetcher = (async (path: string, init?: RequestInit) => {
   const answer = GETS[path];
   if (answer !== undefined) return answer();
-  if (init?.method === 'DELETE') return deleteResponse(path);
+  if (init?.method === 'DELETE') return deleteResponse(path, init);
   return response({ error: 'not found' }, 404);
 }) as typeof fetch;
 
