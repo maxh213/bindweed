@@ -60,11 +60,11 @@ third row    [ domain: model.ts ]
 4. In the second terminal run `grep -F '## What they dislike' -A1 "$QA/log/1.prompt"; echo; grep -c 'edge src/app -> src/domain runtime 0 type 1' "$QA/log/1.prompt"; grep -c 'node src/app/a.ts file a.ts' "$QA/log/1.prompt"; grep -c 'cycles a.ts → b.ts → a.ts' "$QA/log/1.prompt"; grep -c '{"kind":"move-file","file":"<path>","to":"<dir>"}' "$QA/log/1.prompt"; grep -c 'Reply with slices now.' "$QA/log/1.prompt"; echo`.
    **Expect:** the first grep prints `## What they dislike` and, on the next line, `the ui knows about the scanner`. The counts are `1`, `1`, `1`, `1` and `0`.
 
-5. Hover `src/app must not import src/domain (1 import)`.
-   **Expect:** the purple `✂` is highlighted and the `ports` box is not.
+5. Hover `src/app must not import src/domain (1 import)`. Then click `Accept Move src/app/b.ts to src/ports` and in the second terminal run `node -e 'const p=require(process.argv[1]); console.log(p.edits.length)' "$QA/layered/.bindweed/plans/gate.json"; node -e 'console.log(JSON.stringify(require(process.argv[1])[0].decisions))' "$QA/layered/.bindweed/plans/gate.chat.json"`.
+   **Expect:** on hover the purple `✂` is highlighted and the `ports` box is not. After the click the move's row, still third, reads `dropped: Move src/app/b.ts to src/ports — no such directory src/ports` with only `Reject`. The `ports` box stays and its `b.ts` row is gone. The commands print `0` and `{}`.
 
 6. Click `Accept src/app must not import src/domain (1 import)`. Click `Undo`, then `Redo`, then `Undo`.
-   **Expect:** Accept puts that sentence in `Changes` and removes it from `Proposals`. The first Undo clears `Changes`. Redo brings the sentence back. The second Undo clears it again. `Proposals` does not regain the cut. The package, the move and the dropped line stay.
+   **Expect:** Accept puts that sentence in `Changes` and removes it from `Proposals`, and the move is back with `Accept` and `Reject` and its `b.ts` row in `ports`. The first Undo clears `Changes`. Redo brings the sentence back. The second Undo clears it again. `Proposals` does not regain the cut. The package, the move and the dropped line stay.
 
 7. Click `Reject all`. In the second terminal run `node -e 'const c=require(process.argv[1]); console.log(JSON.stringify(c[0].decisions)); console.log(c.length)' "$QA/layered/.bindweed/plans/gate.chat.json"` and `node -e 'const p=require(process.argv[1]); console.log(p.edits.length, p.redo.length)' "$QA/layered/.bindweed/plans/gate.json"`.
    **Expect:** `Proposals` is gone and `Changes` has no sentence. The first command prints `{"0":"accepted","1":"rejected","2":"rejected","3":"rejected"}` and `1`. The second prints `0 1`.
@@ -73,13 +73,13 @@ third row    [ domain: model.ts ]
    **Expect:** `Proposals` lists only `src/domain should use src/app`, with Accept and Reject. The purple `✂`, the `ports` box and the `b.ts` row are gone. A dashed purple arrow runs from `domain` to `app`. The first grep prints `## The plan's edits so far` and `none`. The second prints `## Conversation so far`, `They said: the ui knows about the scanner`, `Summary: Pull scanning out of the ui so app has one job.`, `0 accepted: src/app must not import src/domain (1 import)`, `1 rejected: Create package src/ports`, `2 rejected: Move src/app/b.ts to src/ports` and `3 rejected: Move src/no-such.ts to src/ports`.
 
 9. Reload the page. Click `Conversation`.
-   **Expect:** before the click, `Conversation` is collapsed and the dashed purple arrow from `domain` to `app` is back. After the click you see `the ui knows about the scanner`, `Pull scanning out of the ui so app has one job.`, `keep scan where it is` and `Leave scanning in app.`.
+   **Expect:** before the click, `Conversation` is collapsed and the dashed purple arrow from `domain` to `app` is back. After the click it shows, in order: `They said: the ui knows about the scanner`, `Summary: Pull scanning out of the ui so app has one job.`, `0 accepted: src/app must not import src/domain (1 import)`, `1 rejected: Create package src/ports`, `2 rejected: Move src/app/b.ts to src/ports`, `3 rejected: Move src/no-such.ts to src/ports`, `They said: keep scan where it is`, `Summary: Leave scanning in app.` and `0 open: src/domain should use src/app`.
 
 10. Click `Tasks`, then `Generate`. Close the dialog.
     **Expect:** the two questions `Must a.ts keep exporting a?` and `Should b.ts move before the cut?` show, with their reasons. After closing, `Conversation` still has both turns and the purple arrow is still there.
 
 11. Click `Settings`, replace `Command` with `echo nope`, click `Save`. Type `hello` and click `Propose`.
-    **Expect:** the ask region shows text starting `the LLM's reply was not usable: ` and a `Raw output` block holding `nope`. The textarea still holds `hello`. `Proposals` still lists `src/domain should use src/app`.
+    **Expect:** the ask region shows `the LLM's reply was not usable: it is not valid JSON` and a `Raw output` block holding `nope`. The textarea still holds `hello`. `Proposals` still lists `src/domain should use src/app`.
 
 12. Click `Settings`, set `Command` back to `node $BW/qa/fixtures/fake-llm.mjs $QA/log`, click `Save`. Clear `Ask`, type `SLEEP-NOW` and click `Propose`. When `running for` is counting, click `Cancel` and wait 2 seconds. In the second terminal run `for p in $(cat "$QA/log/sleep.pids"); do kill -0 "$p" 2>/dev/null && echo alive "$p"; done; echo checked`.
     **Expect:** while it runs, `Propose` is disabled. After Cancel the page shows `cancelled` and `Proposals` still lists `src/domain should use src/app`. The loop prints only `checked`.

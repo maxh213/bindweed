@@ -50,19 +50,26 @@ Feature: say what you dislike and review the proposed reshaping on the canvas
     And bindweed is serving it with "/tmp/qa/layered/.bindweed/config.json" holding {"llm":{"backend":"command","command":"<the fake>"}}
 
   Rule: Propose asks through the 008 backend and saves a chat beside the plan
+    An unknown slug on propose, chat (GET or PUT) or review answers 404
+    {"error":"no such plan"} before the body is read, and writes nothing.
     POST /api/plans/<slug>/propose takes exactly {"text":T,"at":A}. T is a
-    non-blank string and may hold "\n". A is a view directory, "" allowed. Anything else,
+    non-blank string and may hold "\n". A is "" or a directory for which this
+    plan's planned graph (its edits, not redo, tests and external off) has a
+    view, the same answer GET /api/graph?at=A&plan=<slug> gives. Anything else,
     including a blank T or an A that is not a view, answers 400
     {"error":"bad propose"} and does not run the LLM. The backend, its 15 minute
     limit, the route fallback, Cancel, the retry and the error bodies are the
     Generate rule of features/flesh-out-into-tasks-and-brief.feature. Propose
     shares that plan's one run with generate, so the other answers 409
-    {"error":"already running"}. A usable reply is a JSON object with exactly
-    the keys "summary" and "edits": summary one non-empty paragraph (no \n or
-    \r), edits an array. The reply is the last fenced json block, else all of
-    stdout. A first unusable reply is retried once; the reason is "it is not
-    valid JSON" or "the summary must be one paragraph" or "it needs a summary
-    and an edits array". A usable reply does not change the plan. It appends
+    {"error":"already running"}. "One paragraph" is a string with a
+    non-whitespace character and no "\n" or "\r". The reply is the last fenced
+    json block, else all of stdout. Its reason, checked in this order: text that
+    does not parse is "it is not valid JSON"; a value that is not an object
+    with exactly the keys "summary" and "edits", with a string summary and an
+    array edits, is "it needs a summary and an edits array"; a summary that is
+    not one paragraph (empty, blank, or holding "\n" or "\r") is "the summary
+    must be one paragraph". Anything else is usable. A first unusable reply is
+    retried once. A usable reply does not change the plan. It appends
     one turn to .bindweed/plans/<slug>.chat.json and answers 200
     {"ran","summary","edits","stale","chat"} plus "note" when the Generate rule
     would add one. "stale" has one entry per edit: null when it applies, a
@@ -125,7 +132,8 @@ Feature: say what you dislike and review the proposed reshaping on the canvas
     index of an edit, with no leading zero, to "accepted" or "rejected".
     Anything else answers 400 {"error":"bad chat"} and leaves the bytes.
     POST /api/plans/<slug>/review takes exactly {"edits":[...]} and answers
-    {"stale":[...]} by the same check, and writes nothing. The chat file is not
+    {"stale":[...]} by the same check, and writes nothing. Any other body
+    answers 400 {"error":"bad review"}. The chat file is not
     a plan: the list skips it and GET /api/plans/<slug> has no chat key.
     DELETE /api/plans/<slug> removes <slug>.json and, when present,
     <slug>.chat.json, and answers as before.
@@ -178,6 +186,18 @@ Feature: say what you dislike and review the proposed reshaping on the canvas
       And it contains "### src\nnode src/app package app" and it does not contain "node src/app/a.ts" or "edge src/app -> src/domain"
       And it contains "src/app must not import src/domain (1 import)" and JSON.stringify of the edits
       And "GET /api/plans/gate" still has the one package cut and redo []
+
+    Scenario: A package that exists only in the plan is a view
+      Given the plan "Gate" has the package and the move
+      When I send "POST /api/plans/gate/propose" with the token and {"text":"the ui knows about the scanner","at":"src/ports"}
+      Then the status is 200
+      And /tmp/qa/log/1.prompt contains "## Current view\nsrc/ports\n" and this block, followed by a blank line and "## The plan's edits so far":
+        """
+        ## Planned graph
+        ### src/ports
+        node src/ports/b.ts file b.ts ca 1 ce 2 i 0.67 a 0.00 d 0.33 cycle false
+        cycles none
+        """
 
     Scenario: Review uses the same check and writes nothing
       Given the plan "Gate" has no edits
@@ -242,11 +262,16 @@ Feature: say what you dislike and review the proposed reshaping on the canvas
     Scenario: A bad reply is retried once and Cancel kills the run
       Given the plan "Gate" has no edits
       When I send "POST /api/plans/gate/propose" with the token and {"text":"BAD-ONCE","at":"src"}
-      Then the body has "error" starting "the LLM's reply was not usable: " and "raw" containing "\"questions\"" and the fake ran twice
+      Then the body has "error" "the LLM's reply was not usable: it needs a summary and an edits array" and "raw" containing "\"questions\"" and the fake ran twice
+      And /tmp/qa/log/2.prompt is the bytes of /tmp/qa/log/1.prompt, then "\n\nYour last reply was not usable: it is not valid JSON"
       And no chat file exists and "GET /api/plans/gate" has no interview key
       Given the backend command is "echo nope"
       When I send "POST /api/plans/gate/propose" with the token and {"text":"hello","at":"src"}
-      Then the body has "error" starting "the LLM's reply was not usable: ", "raw" "nope\n" and "ran" "command: echo nope"
+      Then the body has "error" "the LLM's reply was not usable: it is not valid JSON", "raw" "nope\n" and "ran" "command: echo nope"
+      Given the backend command is the shell text: node -e 'console.log(JSON.stringify({summary:"one"+String.fromCharCode(10)+"two",edits:[]}))'
+      When I send "POST /api/plans/gate/propose" with the token and {"text":"hello","at":"src"}
+      Then the body has "error" "the LLM's reply was not usable: the summary must be one paragraph"
+      And no chat file exists
       Given the backend command is "echo half; exit 3"
       When I send "POST /api/plans/gate/propose" with the token and {"text":"hello","at":"src"}
       Then the body has "error" "the LLM command exited with code 3" and "raw" "half\n"
@@ -280,9 +305,14 @@ Feature: say what you dislike and review the proposed reshaping on the canvas
         | POST /api/plans/gate/review   | {"edits":[]} and the token                               | 200    | {"stale":[]}                       |
         | PUT /api/plans/gate/chat      | [{"text":"x"}] and the token                             | 400    | {"error":"bad chat"}               |
         | GET /api/plans/gate/chat      | the token, with gate.chat.json holding "[{\"at\":1}]"    | 200    | []                                 |
+        | GET /api/plans/nope/chat      | the token                                                | 404    | {"error":"no such plan"}           |
+        | PUT /api/plans/nope/chat      | [] and the token, and then no file "nope.chat.json" exists | 404  | {"error":"no such plan"}           |
+        | POST /api/plans/nope/review   | {"edits":[]} and the token                               | 404    | {"error":"no such plan"}           |
+        | POST /api/plans/gate/review   | {"edits":{}} and the token                               | 400    | {"error":"bad review"}             |
+        | POST /api/plans/gate/review   | {"edits":[],"x":1} and the token                         | 400    | {"error":"bad review"}             |
 
     Scenario: A 008 plan loads unchanged and the old routes still answer
-      Given "/tmp/qa/layered/.bindweed/plans/old.json" holds a 007 plan with the package cut and a contract of one rule, plus "interview" [], "tasks" [] and "brief" "b"
+      Given "/tmp/qa/layered/.bindweed/plans/old.json" holds a 008 plan with the package cut and a contract of one rule, plus "interview" [], "tasks" [] and "brief" "b"
       When I send "GET /api/plans/old" with the token
       Then the body is that document
       When I send "GET /api/tree" with the token
@@ -335,7 +365,9 @@ Feature: say what you dislike and review the proposed reshaping on the canvas
     The proposals region shows the summary, then each undecided edit in order.
     An applicable edit is its sentence with "Accept <sentence>" and
     "Reject <sentence>". A dropped edit is the line
-    "dropped: <sentence> — <reason>" and "Reject <sentence>" only. Then
+    "dropped: <sentence> — <reason>" and "Reject <sentence>" only. An element
+    that is not an edit has JSON.stringify of that element as its sentence,
+    here, in its labels and in Conversation. Then
     "Accept all" and "Reject all". Hovering a row sets data-highlight "true"
     on that edit's marks only; leaving clears it.
     Marks are drawn only while Planned is shown, in #7c3aed, with
@@ -359,25 +391,34 @@ Feature: say what you dislike and review the proposed reshaping on the canvas
     "true" and a #7c3aed line-through. A move strikes nothing. A note is
     listed and not drawn. A mark belongs to the proposal at which it first
     appears when the proposals are applied in order.
-    Accept appends the edit with the same write as a canvas edit, so redo
-    becomes [], and interview, tasks, brief and contract stay. It does this
-    only when the edit applies to the saved plan alone; otherwise the plan is
-    unchanged and the row becomes dropped with that reason. The edit leaves
-    the list, the decision is "accepted", and the rest are re-checked against
-    the new plan. Reject only records "rejected" and re-checks the rest.
-    Accept all does this for every applicable row, in order, one undo step
-    each, and leaves dropped rows. Reject all records "rejected" for every
-    remaining index and clears the region, and does not change the plan.
+    Each open row is applicable or dropped as the last check left it. A check
+    is the review rule over the open rows in index order. The page checks on
+    load, after a reply, and after every Accept, Reject, Undo and Redo.
+    Accept first checks the edit against the saved plan alone. If it applies,
+    the edit is appended with the same write as a canvas edit (redo becomes
+    [], interview, tasks, brief and contract stay), the decision is
+    "accepted", the row leaves the list, and the rest are checked. If it does
+    not, nothing is written and no decision is recorded; that row alone
+    becomes dropped with that reason, keeps its place, and is not drawn or
+    applied for the rows after it until the next check, which may make it
+    applicable again. Reject records "rejected", removes the row and checks
+    the rest. Accept all accepts, in index order, each row that is applicable
+    when reached, one undo step each, and leaves dropped rows. Reject all
+    records "rejected" for every remaining index and clears the region, and
+    does not change the plan.
     Undo and Redo do not restore a proposal. A new message appends a turn and
     the open list becomes that turn's undecided edits. Earlier undecided
     indexes stay undecided in the chat and are not shown. On load, the open
-    list is the latest turn's undecided edits, re-checked. Conversation starts
-    aria-expanded "false"; activating it shows each turn's text, summary and
-    decision lines and sets aria-expanded "true".
+    list is the latest turn's undecided edits, checked. Conversation starts
+    aria-expanded "false"; activating it sets aria-expanded "true" and shows,
+    per turn in order, "They said: <text>", "Summary: <summary>" and one line
+    "<index> <accepted|rejected|open>: <sentence>" per edit.
 
     Scenario: Propose, accept the cut, undo it, and reject the rest
       Given the plan "Gate" has no edits and is open on "http://127.0.0.1:5000/?token={token}#at=src&plan=gate"
       Then "Ask" is shown and "Propose" is shown and "Conversation" is not shown
+      When I click "Propose" with "Ask" empty
+      Then the ask region shows "write what you dislike" and no file exists under /tmp/qa/log
       When I type "the ui knows about the scanner" in "Ask" and press Enter
       Then no file exists under /tmp/qa/log
       When I click "Propose"
@@ -412,7 +453,18 @@ Feature: say what you dislike and review the proposed reshaping on the canvas
       When I reload the page
       Then "Conversation" has aria-expanded "false"
       When I click "Conversation"
-      Then I see "the ui knows about the scanner", "Pull scanning out of the ui so app has one job.", "keep scan where it is" and "Leave scanning in app."
+      Then "Conversation" has aria-expanded "true" and shows these lines, in order:
+        """
+        They said: the ui knows about the scanner
+        Summary: Pull scanning out of the ui so app has one job.
+        0 accepted: src/app must not import src/domain (1 import)
+        1 rejected: Create package src/ports
+        2 rejected: Move src/app/b.ts to src/ports
+        3 rejected: Move src/no-such.ts to src/ports
+        They said: keep scan where it is
+        Summary: Leave scanning in app.
+        0 open: src/domain should use src/app
+        """
       And the dashed purple arrow from "domain" to "app" is shown
       And "git status --porcelain" in "/tmp/qa/layered" is empty
 
@@ -426,6 +478,30 @@ Feature: say what you dislike and review the proposed reshaping on the canvas
       When I click "Undo"
       Then the changes region lists only the cut sentence and "Create package src/ports"
       And the move is not back in the proposals region
+
+    Scenario: Accepting the move before its package writes nothing until the package is accepted
+      Given the plan "Gate" has no edits and the proposals for "the ui knows about the scanner" are open on the src planned view
+      When I click "Accept Move src/app/b.ts to src/ports"
+      Then "GET /api/plans/gate" has edits [] and redo []
+      And the proposals region shows "dropped: Move src/app/b.ts to src/ports — no such directory src/ports" with "Reject Move src/app/b.ts to src/ports" and no Accept for it, between "Create package src/ports" and the "src/no-such.ts" line
+      And the chat turn's decisions are {}
+      And the "ports" box is still drawn and no "src/ports/b.ts" row is drawn
+      When I click "Accept Create package src/ports"
+      Then "GET /api/plans/gate" has edits [the package] and the chat turn's decisions are {"1":"accepted"}
+      And the proposals region lists "Move src/app/b.ts to src/ports" with "Accept Move src/app/b.ts to src/ports" and "Reject Move src/app/b.ts to src/ports"
+      When I click "Accept Move src/app/b.ts to src/ports"
+      Then "GET /api/plans/gate" has edits [the package, the move] and the decisions are {"1":"accepted","2":"accepted"}
+
+    Scenario: A reply element that is not an edit is shown by its JSON
+      Given the plan "Gate" has no edits
+      And "PUT /api/plans/gate/chat" stored one turn with text "x", summary "y", edits [{"kind":"fold","file":"src/app/a.ts"}] and decisions {}
+      When I open "http://127.0.0.1:5000/?token={token}#at=src&plan=gate"
+      Then the proposals region shows "dropped: {"kind":"fold","file":"src/app/a.ts"} — not an edit" with "Reject {"kind":"fold","file":"src/app/a.ts"}" and no Accept for it
+      And no element has data-proposal "true"
+      When I click "Conversation"
+      Then it shows "0 open: {"kind":"fold","file":"src/app/a.ts"}"
+      When I click "Reject {"kind":"fold","file":"src/app/a.ts"}"
+      Then the proposals region is not shown and the chat turn's decisions are {"0":"rejected"}
 
     Scenario: Rejecting the new package drops the move, and Now draws no proposal
       Given the plan "Gate" has no edits and the proposals for "the ui knows about the scanner" are open on the src planned view
@@ -478,7 +554,7 @@ Feature: say what you dislike and review the proposed reshaping on the canvas
       Given the plan "Gate" has no edits and the proposals for "keep scan where it is" are open
       And the backend command is "echo nope"
       When I type "hello" in "Ask" and click "Propose"
-      Then the ask region shows text starting "the LLM's reply was not usable: " and "Raw output" holding "nope"
+      Then the ask region shows "the LLM's reply was not usable: it is not valid JSON" and "Raw output" holding "nope"
       And the proposals region still lists "src/domain should use src/app"
       And the textarea still holds "hello"
 
@@ -489,4 +565,4 @@ Feature: say what you dislike and review the proposed reshaping on the canvas
       When I close the dialog and type "SLEEP-NOW" in "Ask" and click "Propose"
       Then "running for" is shown and "Propose" is disabled
       When I click "Cancel"
-      Then within 2 seconds the page shows "cancelled" and the proposals region still lists the cut sentence
+      Then within 2 seconds the page shows "cancelled" and the proposals region still shows "dropped: src/app must not import src/domain (1 import) — src/app/a.ts no longer imports src/domain/model.ts", since the plan already holds that cut
