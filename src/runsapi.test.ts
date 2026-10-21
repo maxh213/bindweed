@@ -140,6 +140,8 @@ const CANNON: Record<string, Fixture> = {
   'sc-truthy': { tool: 'slop-cannon', pid: 'live', at: '12:19', build: status('sc-status.json', JSON.stringify({ state: { phase: 'running' }, agents: [{ alive: true }, { alive: 'true' }, { alive: 1 }], beads: {}, prs: [] })) },
   'sc-gone': { tool: 'slop-cannon', pid: 'dead', at: '12:19', build: status('sc-status.json', JSON.stringify({ state: { phase: 'running' } })) },
   'sc-phase': { tool: 'slop-cannon', pid: 'dead', at: '12:18', build: status('sc-status.json', JSON.stringify({ state: { phase: 'done' } })) },
+  'sc-done-live': { tool: 'slop-cannon', pid: 'live', at: '12:23', build: status('sc-status.json', JSON.stringify({ state: { phase: 'complete' }, agents: [], beads: { done: 5 }, prs: [] })) },
+  'sc-num': { tool: 'slop-cannon', pid: 'live', at: '12:24', build: status('sc-status.json', JSON.stringify({ state: { phase: 5 }, agents: [], beads: {}, prs: [] })) },
   'sc-removed': { tool: 'slop-cannon', pid: 'dead', at: '12:00', build: async dir => {
     await put(join(dir, 'sc-status.json'), JSON.stringify({ state: { phase: 'running' }, agents: [{ alive: true }], beads: {}, prs: [{ url: 'https://example.test/pull/5' }] }));
     await put(outOf('sc-removed'), 'sc said something\n');
@@ -363,6 +365,8 @@ describe('GET /api/runs', () => {
     ['sc-nulls', 'running', 'running · 1 agent · 1 PR', []],
     ['sc-truthy', 'running', 'running · 1 agent · 0 PRs', []],
     ['sc-phase', 'done', 'done · 0 agents · 0 PRs', []],
+    ['sc-done-live', 'done', 'complete · 0 agents · 5 done · 0 PRs', []],
+    ['sc-num', 'running', ' · 0 agents · 0 PRs', []],
     ['sc-gone', 'dead', 'running · 0 agents · 0 PRs', []],
   ])('Each run reports its state and position: %s', async (name, state, position, logTail) => {
     expect(await only(name)).toMatchObject({ state, position, logTail });
@@ -616,15 +620,17 @@ describe('DELETE /api/runs', () => {
   it('Forget drops the removed run and keeps the rest', async () => {
     const [done, removed, dead] = [await entry('done'), await entry('removed'), await entry('dead')];
     const relaunched = { ...removed, startedAt: stamp('12:40').toISOString() };
-    await writeRuns([done, 7, null, [], removed, dead, relaunched]);
+    const sibling = { ...removed, slug: 'plan-removed-2', worktree: `${worktreeOf('removed')}-2` };
+    await writeRuns([done, 7, null, [], removed, dead, relaunched, sibling]);
     expect(await call(`/api/runs?worktree=${worktreeOf('removed')}`, 'DELETE')).toEqual({ status: 200, body: { ok: true } });
-    expect(JSON.parse(await runsText())).toEqual([done, 7, null, [], dead]);
+    expect(JSON.parse(await runsText())).toEqual([done, 7, null, [], dead, sibling]);
   });
 
   it.each([
     ['', 400, { error: 'missing worktree' }],
     ['?worktree=WT/wt-done', 400, { error: 'worktree still exists' }],
     ['?worktree=WT/wt-elsewhere', 404, { error: 'no such run' }],
+    ['?worktree=WT/wt-remov', 404, { error: 'no such run' }],
   ])('Forget refuses and leaves runs.json unchanged: %s', async (query, code, body) => {
     const before = await writeRuns([await entry('done'), await entry('removed')]);
     expect(await call(`/api/runs${query.replace('WT', runs)}`, 'DELETE')).toEqual({ status: code, body });
