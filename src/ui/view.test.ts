@@ -317,4 +317,9 @@ describe('nextRuns', () => {
     expect(nextRuns({ runs: [kept, gone] }, '/gone')).toEqual({ runs: [kept] });
     expect(nextRuns({ runs: [kept] }, '/missing')).toEqual({ runs: [kept] });
   });
+
+  it('drops every card for the forgotten worktree', () => {
+    const relaunched = { worktree: '/gone', slug: 'again' };
+    expect(nextRuns({ runs: [gone, kept, relaunched] }, '/gone')).toEqual({ runs: [kept] });
+  });
 });

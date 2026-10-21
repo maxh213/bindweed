@@ -64,26 +64,39 @@ function named(stoppedLog: string, newerLog: string) {
   };
 }
 
+async function doneBuild(dir: string): Promise<void> {
+  await files('001-a', '002-b')(dir);
+  await log(dir, '001-a', logged(DONE_TAIL), '12:10');
+  await log(dir, '002-b', logged(DONE_TAIL), '12:20');
+  await put(join(dir, SUMMARY), '001-a ok\n002-b ok\nall tasks complete 2026-10-21 12:30:00\n', '12:30');
+}
+
+async function stoppedBuild(dir: string): Promise<void> {
+  await files('001-w', '002-x')(dir);
+  await log(dir, '001-w', COMPLETE, '12:10');
+  await log(dir, '002-x', logged(HUMAN_TAIL), '12:20');
+  await put(join(dir, SUMMARY), 'stopped: tasks/002-x.md exited 1\n', '12:30');
+}
+
+function failedBuild(code: number) {
+  return async (dir: string) => {
+    await files('001-f')(dir);
+    await log(dir, '001-f', logged(BOOM_TAIL), '12:10');
+    await put(join(dir, SUMMARY), `stopped: tasks/001-f.md exited ${code}\n`, '12:30');
+  };
+}
+
 const MARESTAIL: Record<string, Fixture> = {
+  'done-live': { tool: 'marestail', pid: 'live', at: '12:01', tasks: ['tasks/001-a.md', 'tasks/002-b.md'], build: doneBuild },
+  'stopped-live': { tool: 'marestail', pid: 'live', at: '12:02', tasks: ['tasks/001-w.md', 'tasks/002-x.md'], build: stoppedBuild },
+  'failed-live': { tool: 'marestail', pid: 'live', at: '12:03', tasks: ['tasks/001-f.md'], build: failedBuild(10) },
   done: { tool: 'marestail', pid: 'dead', at: '12:01', tasks: ['tasks/001-a.md', 'tasks/002-b.md'], build: async dir => {
-    await files('001-a', '002-b')(dir);
-    await log(dir, '001-a', logged(DONE_TAIL), '12:10');
-    await log(dir, '002-b', logged(DONE_TAIL), '12:20');
-    await put(join(dir, SUMMARY), '001-a ok\n002-b ok\nall tasks complete 2026-10-21 12:30:00\n', '12:30');
+    await doneBuild(dir);
     await put(join(dir, '.marestail/runs/overnight-20261021T1230.log'), 'marestail output\n', '12:31');
     await put(join(dir, '.marestail/runs/notes.md'), 'scratch\n', '12:32');
   } },
-  stopped: { tool: 'marestail', pid: 'dead', at: '12:02', tasks: ['tasks/001-w.md', 'tasks/002-x.md'], build: async dir => {
-    await files('001-w', '002-x')(dir);
-    await log(dir, '001-w', COMPLETE, '12:10');
-    await log(dir, '002-x', logged(HUMAN_TAIL), '12:20');
-    await put(join(dir, SUMMARY), 'stopped: tasks/002-x.md exited 1\n', '12:30');
-  } },
-  failed: { tool: 'marestail', pid: 'dead', at: '12:03', tasks: ['tasks/001-f.md'], build: async dir => {
-    await files('001-f')(dir);
-    await log(dir, '001-f', logged(BOOM_TAIL), '12:10');
-    await put(join(dir, SUMMARY), 'stopped: tasks/001-f.md exited 2\n', '12:30');
-  } },
+  stopped: { tool: 'marestail', pid: 'dead', at: '12:02', tasks: ['tasks/001-w.md', 'tasks/002-x.md'], build: stoppedBuild },
+  failed: { tool: 'marestail', pid: 'dead', at: '12:03', tasks: ['tasks/001-f.md'], build: failedBuild(2) },
   running: { tool: 'marestail', pid: 'live', at: '12:04', tasks: ['tasks/001-init.md', 'tasks/002-step.md', 'tasks/003-later.md'], build: async dir => {
     await files('README', '000-old', '001-init', '002-step', '003-later')(dir);
     await log(dir, '000-old', 'pipeline complete\n', '12:25');
@@ -116,6 +129,7 @@ const MARESTAIL: Record<string, Fixture> = {
   'stopped-older': { tool: 'marestail', pid: 'dead', at: '12:02', tasks: ['tasks/001-w.md', 'tasks/002-x.md'], build: named(logged(HUMAN_TAIL), logged(BOOM_TAIL)) },
   'failed-older': { tool: 'marestail', pid: 'dead', at: '12:02', tasks: ['tasks/001-w.md', 'tasks/002-x.md'], build: named(logged(BOOM_TAIL), logged(HUMAN_TAIL)) },
   removed: { tool: 'marestail', pid: 'dead', at: '12:00', tasks: [], build: async dir => rm(dir, { recursive: true }) },
+  'removed-live': { tool: 'marestail', pid: 'live', at: '12:00', tasks: [], build: async dir => rm(dir, { recursive: true }) },
 };
 
 function status(name: string, text: string) {
@@ -142,6 +156,13 @@ const CANNON: Record<string, Fixture> = {
   'sc-phase': { tool: 'slop-cannon', pid: 'dead', at: '12:18', build: status('sc-status.json', JSON.stringify({ state: { phase: 'done' } })) },
   'sc-done-live': { tool: 'slop-cannon', pid: 'live', at: '12:23', build: status('sc-status.json', JSON.stringify({ state: { phase: 'complete' }, agents: [], beads: { done: 5 }, prs: [] })) },
   'sc-num': { tool: 'slop-cannon', pid: 'live', at: '12:24', build: status('sc-status.json', JSON.stringify({ state: { phase: 5 }, agents: [], beads: {}, prs: [] })) },
+  'sc-done-phase-live': { tool: 'slop-cannon', pid: 'live', at: '12:24', build: status('sc-status.json', JSON.stringify({ state: { phase: 'done' }, agents: [], beads: {}, prs: [] })) },
+  'sc-string': { tool: 'slop-cannon', pid: 'live', at: '12:15', build: status('sc-status.json', '"x"') },
+  'sc-removed-live': { tool: 'slop-cannon', pid: 'live', at: '12:00', build: async dir => {
+    await put(join(dir, 'sc-status.json'), JSON.stringify({ state: { phase: 'running' }, agents: [{ alive: true }], beads: {}, prs: [{ url: 'https://example.test/pull/5' }] }));
+    await put(outOf('sc-removed-live'), 'sc said something\n');
+    await rm(dir, { recursive: true });
+  } },
   'sc-removed': { tool: 'slop-cannon', pid: 'dead', at: '12:00', build: async dir => {
     await put(join(dir, 'sc-status.json'), JSON.stringify({ state: { phase: 'running' }, agents: [{ alive: true }], beads: {}, prs: [{ url: 'https://example.test/pull/5' }] }));
     await put(outOf('sc-removed'), 'sc said something\n');
@@ -339,6 +360,9 @@ describe('GET /api/runs', () => {
   it.each([
     ['done', 'done', 'all tasks complete · 2 of 2 tasks', DONE_TAIL],
     ['stopped', 'stopped for a human', 'task 002-x · coder · attempt 2 · 1 of 2 tasks', HUMAN_TAIL],
+    ['done-live', 'done', 'all tasks complete · 2 of 2 tasks', DONE_TAIL],
+    ['stopped-live', 'stopped for a human', 'task 002-x · coder · attempt 2 · 1 of 2 tasks', HUMAN_TAIL],
+    ['failed-live', 'failed', 'task 001-f · coder · attempt 1 · 0 of 1 tasks', BOOM_TAIL],
     ['failed', 'failed', 'task 001-f · coder · attempt 1 · 0 of 1 tasks', BOOM_TAIL],
     ['stopped-older', 'stopped for a human', 'task 002-x · coder · attempt 1 · 0 of 2 tasks', BOOM_TAIL],
     ['failed-older', 'failed', 'task 002-x · coder · attempt 2 · 0 of 2 tasks', HUMAN_TAIL],
@@ -351,6 +375,8 @@ describe('GET /api/runs', () => {
     ['unverified', 'running', 'task 001-a · finished · 1 of 1 tasks', UNVERIFIED_TAIL],
     ['removed', 'worktree removed', 'worktree removed', []],
     ['sc-removed', 'worktree removed', 'worktree removed', []],
+    ['removed-live', 'worktree removed', 'worktree removed', []],
+    ['sc-removed-live', 'worktree removed', 'worktree removed', []],
     ['sc', 'running', 'running · 4 agents · 7 open · 3 done · 2 PRs', SC_LINES.slice(5)],
     ['sc-one', 'running', 'planning · 1 agent · 1 PR', []],
     ['sc-done', 'done', 'complete · 0 agents · 5 done · 0 PRs', []],
@@ -360,12 +386,14 @@ describe('GET /api/runs', () => {
     ['sc-junk', 'running', 'sc status failed: not JSON · pid alive', []],
     ['sc-list', 'running', 'sc status failed: not JSON · pid alive', []],
     ['sc-text', 'running', 'sc status failed: not JSON · pid alive', []],
+    ['sc-string', 'running', 'sc status failed: not JSON · pid alive', []],
     ['sc-quiet', 'dead', 'sc status failed: exited 3 · pid gone', []],
     ['sc-odd', 'running', ' · 0 agents · 2 done · 1 PR', []],
     ['sc-nulls', 'running', 'running · 1 agent · 1 PR', []],
     ['sc-truthy', 'running', 'running · 1 agent · 0 PRs', []],
     ['sc-phase', 'done', 'done · 0 agents · 0 PRs', []],
     ['sc-done-live', 'done', 'complete · 0 agents · 5 done · 0 PRs', []],
+    ['sc-done-phase-live', 'done', 'done · 0 agents · 0 PRs', []],
     ['sc-num', 'running', ' · 0 agents · 0 PRs', []],
     ['sc-gone', 'dead', 'running · 0 agents · 0 PRs', []],
   ])('Each run reports its state and position: %s', async (name, state, position, logTail) => {
@@ -378,8 +406,9 @@ describe('GET /api/runs', () => {
     expect(Date.now() - started).toBeLessThan(12000);
   }, 15000);
 
-  it('A removed slop-cannon worktree reads worktree removed and is not asked', async () => {
-    expect(await only('sc-removed')).toMatchObject({ worktreeExists: false, state: 'worktree removed', position: 'worktree removed', logTail: [], prs: [] });
+  it.each(['sc-removed', 'sc-removed-live'])('A removed slop-cannon worktree reads worktree removed and is not asked: %s', async name => {
+    expect(await only(name)).toMatchObject({ worktreeExists: false, state: 'worktree removed', position: 'worktree removed', logTail: [], prs: [] });
+    expect(await appeared(join(worktreeOf(name), 'sc.pid'))).toBe(false);
   });
 
   it('Null agents and PRs from sc are skipped', async () => {
