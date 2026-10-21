@@ -69,6 +69,7 @@ const MARESTAIL: Record<string, Fixture> = {
     await log(dir, '002-b', logged(DONE_TAIL), '12:20');
     await put(join(dir, SUMMARY), '001-a ok\n002-b ok\nall tasks complete 2026-10-21 12:30:00\n', '12:30');
     await put(join(dir, '.marestail/runs/overnight-20261021T1230.log'), 'marestail output\n', '12:31');
+    await put(join(dir, '.marestail/runs/notes.md'), 'scratch\n', '12:32');
   } },
   stopped: { tool: 'marestail', pid: 'dead', at: '12:02', tasks: ['tasks/001-w.md', 'tasks/002-x.md'], build: async dir => {
     await files('001-w', '002-x')(dir);
@@ -575,7 +576,8 @@ describe('GET /api/runs', () => {
 describe('DELETE /api/runs', () => {
   it('Forget drops the removed run and keeps the rest', async () => {
     const [done, removed, dead] = [await entry('done'), await entry('removed'), await entry('dead')];
-    await writeRuns([done, 7, null, [], removed, dead]);
+    const relaunched = { ...removed, startedAt: stamp('12:40').toISOString() };
+    await writeRuns([done, 7, null, [], removed, dead, relaunched]);
     expect(await call(`/api/runs?worktree=${worktreeOf('removed')}`, 'DELETE')).toEqual({ status: 200, body: { ok: true } });
     expect(JSON.parse(await runsText())).toEqual([done, 7, null, [], dead]);
   });
