@@ -193,13 +193,15 @@ function spotOf(node: GraphNode): { id: string; row: number; order: number } {
   return { id: node.id, row: node.row, order: node.order };
 }
 
-function ownedMissing(planned: GraphNode[], nodes: GraphNode[], edits: OpenProposal[]): GraphNode[] {
-  return missingIds(planned, nodes).filter(node => boxOwner(edits, node.id) !== undefined);
-}
-
 function placeBoxes(nodes: GraphNode[], planned: GraphNode[], pins: Record<string, Pin>, edits: OpenProposal[], hover: number | null, rows: Map<string, ProposalRow[]>): ProposalBox[] {
   const taken = takenCells(arrange(planned.map(spotOf), pins));
-  return nodes.map(node => placedBox(node, boxOwner(edits, node.id) as number, pins, taken, hover, rows.get(node.id) ?? []));
+  const boxes: ProposalBox[] = [];
+  for (const node of nodes) {
+    const index = boxOwner(edits, node.id);
+    if (index === undefined) continue;
+    boxes.push(placedBox(node, index, pins, taken, hover, rows.get(node.id) ?? []));
+  }
+  return boxes;
 }
 
 function pushStrike(seen: Set<string>, marks: ProposalStrike[], id: string, index: number, hover: number | null): void {
@@ -245,9 +247,9 @@ export function proposalInk(input: ProposalInput): ProposalInk {
   if (input.proposal === null) return noProposal();
   const owners = ownersOf(seedPaths(input.planned, input.children, input.edits), input.edits);
   const held = input.children.flatMap(child => childRows(child, owners));
-  const fresh = ownedMissing(input.planned, input.proposal.nodes, input.edits);
-  const newIds = new Set(fresh.map(node => node.id));
-  const boxes = placeBoxes(fresh, input.planned, input.pins, input.edits, input.hover, boxedRows(held, newIds, input.hover));
+  const missing = missingIds(input.planned, input.proposal.nodes);
+  const newIds = new Set(missing.filter(node => boxOwner(input.edits, node.id) !== undefined).map(node => node.id));
+  const boxes = placeBoxes(missing, input.planned, input.pins, input.edits, input.hover, boxedRows(held, newIds, input.hover));
   const ids = new Set([...input.planned.map(node => node.id), ...boxes.map(box => box.id)]);
   return {
     boxes,

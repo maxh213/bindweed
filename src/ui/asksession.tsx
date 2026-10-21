@@ -4,7 +4,7 @@ import type { GraphNode, GraphView } from '../domain/graph.ts';
 import { chatLines, decide, rejectOpen, undecided, type ChatTurn } from '../domain/chat.ts';
 import { byStrings, parsePlanEdit, type PlanDoc, type PlanEdit } from '../domain/plan.ts';
 import { RunStatus, type LlmRun } from './RunFeedback.tsx';
-import { acceptance, askTextOk, openList, openRaws, withTurn, type HeldDrop, type OpenRow } from './ask.ts';
+import { acceptance, actOnTurn, askTextOk, openList, openRaws, withTurn, type HeldDrop, type OpenRow } from './ask.ts';
 import { fetchChat, fetchGraph, postCancel, postPropose, postReview, putChat, type ProposeAnswer } from './client.ts';
 import { proposalInk, type ProposalChild, type ProposalInk, type ProposalInput } from './proposalpicture.ts';
 
@@ -365,10 +365,10 @@ export function useAsk(props: AskProps): AskModel {
         seconds={seconds}
         changes={changes}
         onHover={setHover}
-        onAccept={index => void accept(index, turn as ChatTurn)}
-        onReject={index => void remember(decide(turn as ChatTurn, index, 'rejected'))}
-        onAcceptAll={() => void acceptAll(turn as ChatTurn)}
-        onRejectAll={() => void remember(rejectOpen(turn as ChatTurn))}
+        onAccept={index => actOnTurn(turn, current => void accept(index, current))}
+        onReject={index => actOnTurn(turn, current => void remember(decide(current, index, 'rejected')))}
+        onAcceptAll={() => actOnTurn(turn, current => void acceptAll(current))}
+        onRejectAll={() => actOnTurn(turn, current => void remember(rejectOpen(current)))}
         onToggle={() => setOpen(current => !current)}
         onText={setText}
         onPropose={() => void propose()}

@@ -19,6 +19,11 @@ export function askTextOk(text: string): boolean {
   return text.trim() !== '';
 }
 
+export function actOnTurn(turn: ChatTurn | null, run: (current: ChatTurn) => void): void {
+  if (turn === null) return;
+  run(turn);
+}
+
 export function withTurn(turns: ChatTurn[], turn: ChatTurn): ChatTurn[] {
   return [...turns.slice(0, -1), turn];
 }

@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { bindApp, listenErrorMessage } from './serve.ts';
+import type { GraphNode, GraphView } from './domain/graph.ts';
+import { bindApp, listenErrorMessage, toPromptView } from './serve.ts';
 
 const WORKER = process.env.STRYKER_MUTATOR_WORKER;
 const PORT_BASE = 20035 + 70 * (WORKER === undefined ? 0 : Number(WORKER) + 1);
@@ -482,6 +483,62 @@ describe('bindApp ports', () => {
 
   it('passes on listen errors that are not a taken port', async () => {
     await expect(bindApp(deps, { mode: 'fixed', port: 70000 })).rejects.toThrow(/port/i);
+  });
+});
+
+type Metrics = {
+  ca?: number;
+  ce?: number;
+  i?: string;
+  a?: string;
+  d?: string;
+  zone?: 'healthy' | 'pain' | 'useless';
+  crap?: number | '–';
+  coverage?: string;
+  mutants?: number;
+};
+
+function packageNode(over: Metrics): GraphNode {
+  return { id: 'src/app', kind: 'package', name: 'app', path: 'src/app', files: 4, row: 0, order: 0, cycle: false, ...over };
+}
+
+function fileNode(over: Metrics): GraphNode {
+  return { id: 'src/app/a.ts', kind: 'file', name: 'a.ts', path: 'src/app/a.ts', row: 0, order: 1, cycle: true, ...over };
+}
+
+function promptView(nodes: GraphNode[]): GraphView {
+  return {
+    at: 'src',
+    crumbs: [],
+    nodes,
+    edges: [{ from: 'src/app', to: 'src/domain', runtime: 1, type: 2, heritage: 0, cycle: true, cycleText: 'app -> domain' }],
+    crapMax: 4,
+    coverage: 'on',
+    mutation: 'off',
+  };
+}
+
+describe('toPromptView', () => {
+  const metrics = { ca: 1, ce: 2, i: '0.67', a: '0.00', d: '0.33' };
+  const edge = { from: 'src/app', to: 'src/domain', runtime: 1, type: 2, heritage: 0, cycle: true, cycleText: 'app -> domain' };
+
+  it('copies a node that has Martin fields and drops one that does not', () => {
+    const drawn = toPromptView(promptView([packageNode({ ...metrics, zone: 'healthy', coverage: '1.00' }), fileNode({ ...metrics, crap: '–', coverage: '0.50', mutants: 1 })]), 'src');
+    expect(drawn).toEqual({
+      at: 'src',
+      nodes: [
+        { id: 'src/app', kind: 'package', name: 'app', files: 4, ...metrics, zone: 'healthy', crap: undefined, coverage: '1.00', mutants: undefined, cycle: false },
+        { id: 'src/app/a.ts', kind: 'file', name: 'a.ts', files: undefined, ...metrics, zone: undefined, crap: '–', coverage: '0.50', mutants: 1, cycle: true },
+      ],
+      edges: [edge],
+    });
+    expect(toPromptView(promptView([packageNode({})]), 'src').nodes).toEqual([]);
+    expect(toPromptView(promptView([packageNode({ ca: 1 })]), 'src').nodes).toEqual([]);
+    expect(toPromptView(promptView([packageNode({ ca: 1, ce: 2 })]), 'src').nodes).toEqual([]);
+    expect(toPromptView(promptView([packageNode({ ca: 1, ce: 2, i: '0.67' })]), 'src').nodes).toEqual([]);
+    expect(toPromptView(promptView([packageNode({ ca: 1, ce: 2, i: '0.67', a: '0.00' })]), 'src').nodes).toEqual([]);
+    const external: GraphNode = { id: 'left-pad', kind: 'external', name: 'left-pad', path: 'left-pad', row: 1, order: 0, cycle: false };
+    expect(toPromptView(promptView([packageNode(metrics), external]), 'src').nodes.map(node => node.id)).toEqual(['src/app']);
   });
 });
 

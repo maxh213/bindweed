@@ -413,7 +413,7 @@ export function staleReasons(scan: ScanResult, edits: PlanEdit[]): (string | nul
 function proposalReason(scan: ScanResult, applied: PlanEdit[], raw: unknown): { reason: string | null; edit: PlanEdit | undefined } {
   const edit = parsePlanEdit(raw);
   if (edit === undefined) return { reason: 'not an edit', edit: undefined };
-  return { reason: staleReasons(scan, [...applied, edit]).at(-1) as string | null, edit };
+  return { reason: lastOf(staleReasons(scan, [...applied, edit])), edit };
 }
 
 function keepApplied(applied: PlanEdit[], step: { reason: string | null; edit: PlanEdit | undefined }): void {

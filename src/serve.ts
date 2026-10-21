@@ -608,32 +608,59 @@ async function dispatchMiss(app: App, req: IncomingMessage, res: ServerResponse,
   await servePlanDoc(app, req, res, slug);
 }
 
-function promptNode(node: GraphNode): PromptNode {
-  const source = node as PromptNode;
+function countsOf(node: GraphNode): { ca: number; ce: number } | undefined {
+  if (node.ca === undefined || node.ce === undefined) return undefined;
+  return { ca: node.ca, ce: node.ce };
+}
+
+function ratiosOf(node: GraphNode): { i: string; a: string; d: string } | undefined {
+  if (node.i === undefined || node.a === undefined || node.d === undefined) return undefined;
+  return { i: node.i, a: node.a, d: node.d };
+}
+
+function fileCount(node: GraphNode): number | undefined {
+  if (node.kind !== 'package') return undefined;
+  return node.files;
+}
+
+function promptNode(node: GraphNode): PromptNode | undefined {
+  const counts = countsOf(node);
+  const ratios = ratiosOf(node);
+  if (counts === undefined || ratios === undefined) return undefined;
   return {
-    id: source.id,
-    kind: source.kind,
-    name: source.name,
-    files: source.files,
-    ca: source.ca,
-    ce: source.ce,
-    i: source.i,
-    a: source.a,
-    d: source.d,
-    zone: source.zone,
-    crap: source.crap,
-    coverage: source.coverage,
-    mutants: source.mutants,
-    cycle: source.cycle,
+    id: node.id,
+    kind: node.kind,
+    name: node.name,
+    files: fileCount(node),
+    ca: counts.ca,
+    ce: counts.ce,
+    i: ratios.i,
+    a: ratios.a,
+    d: ratios.d,
+    zone: node.zone,
+    crap: node.crap,
+    coverage: node.coverage,
+    mutants: node.mutants,
+    cycle: node.cycle,
   };
+}
+
+function promptNodes(nodes: GraphNode[]): PromptNode[] {
+  const prompts: PromptNode[] = [];
+  for (const node of nodes) {
+    const prompt = promptNode(node);
+    if (prompt === undefined) continue;
+    prompts.push(prompt);
+  }
+  return prompts;
 }
 
 function promptEdge(edge: GraphView['edges'][number]): PromptEdge {
   return { from: edge.from, to: edge.to, runtime: edge.runtime, type: edge.type, heritage: edge.heritage, cycle: edge.cycle, cycleText: edge.cycleText };
 }
 
-function promptOfView(view: GraphView, at: string): PromptView {
-  return { at, nodes: view.nodes.map(promptNode), edges: view.edges.map(promptEdge) };
+export function toPromptView(view: GraphView, at: string): PromptView {
+  return { at, nodes: promptNodes(view.nodes), edges: view.edges.map(promptEdge) };
 }
 
 function childIds(view: GraphView): string[] {
@@ -647,25 +674,24 @@ function viewed(scan: ScanResult, at: string, rootName: string, health: ReturnTy
 function childPrompt(scan: ScanResult, id: string, rootName: string, health: ReturnType<typeof healthOf>): PromptView {
   const child = viewed(scan, id, rootName, health);
   if (child === null) return { at: id, nodes: [], edges: [] };
-  return promptOfView(child, id);
+  return toPromptView(child, id);
 }
 
-function promptViews(scan: ScanResult, at: string, rootName: string, health: ReturnType<typeof healthOf>): PromptView[] {
-  const current = viewed(scan, at, rootName, health) as GraphView;
+function promptViews(scan: ScanResult, at: string, rootName: string, health: ReturnType<typeof healthOf>): PromptView[] | null {
+  const current = viewed(scan, at, rootName, health);
+  if (current === null) return null;
   const children = childIds(current).map(id => childPrompt(scan, id, rootName, health));
-  return [promptOfView(current, at), ...children];
+  return [toPromptView(current, at), ...children];
 }
 
 type ProposeAsk = { text: string; at: string };
 
-async function proposed(app: App, graphs: GraphHolder, doc: PlanDoc, ask: ProposeAsk, signal: AbortSignal): Promise<Record<string, unknown>> {
-  const scan = applyPlan(await readyScan(app, graphs), doc.edits);
-  const health = healthOf(app.repoRoot, scan);
+async function proposed(app: App, graphs: GraphHolder, doc: PlanDoc, ask: ProposeAsk, signal: AbortSignal, views: PromptView[]): Promise<Record<string, unknown>> {
   const turns = await readChat(app.repoRoot, doc.slug);
   const result = await propose({
     place: { root: app.repoRoot, env: app.env, limits: app.limits, signal },
     doc,
-    facts: { name: doc.name, text: ask.text, at: ask.at, views: promptViews(scan, ask.at, basename(app.repoRoot), health), edits: doc.edits, turns },
+    facts: { name: doc.name, text: ask.text, at: ask.at, views, edits: doc.edits, turns },
   });
   if (result.proposal === undefined) return result.body;
   const stale = reviewProposed(await readyScan(app, graphs), doc.edits, result.proposal.edits);
@@ -674,18 +700,15 @@ async function proposed(app: App, graphs: GraphHolder, doc: PlanDoc, ask: Propos
   return { ...result.body, stale, chat };
 }
 
-async function proposeView(app: App, graphs: GraphHolder, doc: PlanDoc, at: string): Promise<GraphView | null> {
-  const scan = applyPlan(await readyScan(app, graphs), doc.edits);
-  return viewed(scan, at, basename(app.repoRoot), healthOf(app.repoRoot, scan));
-}
-
 async function postPropose(app: App, graphs: GraphHolder, req: IncomingMessage, res: ServerResponse, doc: PlanDoc): Promise<void> {
   const ask = proposeFrom(await readJsonBody(req));
   if (ask === undefined) {
     sendJson(res, 400, { error: 'bad propose' });
     return;
   }
-  if ((await proposeView(app, graphs, doc, ask.at)) === null) {
+  const scan = applyPlan(await readyScan(app, graphs), doc.edits);
+  const views = promptViews(scan, ask.at, basename(app.repoRoot), healthOf(app.repoRoot, scan));
+  if (views === null) {
     sendJson(res, 400, { error: 'bad propose' });
     return;
   }
@@ -696,7 +719,7 @@ async function postPropose(app: App, graphs: GraphHolder, req: IncomingMessage, 
   const controller = new AbortController();
   app.runs.set(doc.slug, controller);
   try {
-    sendJson(res, 200, await proposed(app, graphs, doc, ask, controller.signal));
+    sendJson(res, 200, await proposed(app, graphs, doc, ask, controller.signal, views));
   } finally {
     app.runs.delete(doc.slug);
   }

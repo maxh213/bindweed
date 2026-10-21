@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatTurn } from '../domain/chat.ts';
 import type { PlanEdit } from '../domain/plan.ts';
-import { acceptance, askTextOk, openList, openRaws, withTurn } from './ask.ts';
+import { acceptance, actOnTurn, askTextOk, openList, openRaws, withTurn } from './ask.ts';
 
 const cut: PlanEdit = { kind: 'cut-edge', from: 'src/app', to: 'src/domain', files: [['src/app/a.ts', 'src/domain/model.ts']] };
 const fold = { kind: 'fold', file: 'src/app/a.ts' };
@@ -51,6 +51,18 @@ describe('ask rows', () => {
     expect(acceptance(cut, null)).toEqual({ edit: cut });
     expect(acceptance(cut, 'no such file src/no-such.ts')).toEqual({ reason: 'no such file src/no-such.ts' });
     expect(acceptance(fold, null)).toEqual({ reason: 'not an edit' });
+  });
+
+  it('acts only when a turn is open', () => {
+    const seen: ChatTurn[] = [];
+    actOnTurn(null, current => {
+      seen.push(current);
+    });
+    const open = turn();
+    actOnTurn(open, current => {
+      seen.push(current);
+    });
+    expect(seen).toEqual([open]);
   });
 });
 
