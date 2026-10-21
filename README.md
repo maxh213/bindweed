@@ -39,6 +39,7 @@ Status: being built by marestail, one slice per file in `tasks/`.
 | `/api/plans/<slug>/review` | live |
 | `/api/config` | live |
 | `/api/repo` | live |
+| `/api/runs` | live |
 
 ## Environment
 

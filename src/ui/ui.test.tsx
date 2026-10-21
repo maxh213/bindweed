@@ -403,7 +403,7 @@ describe('App and boot', () => {
       "2 export const name = 'żółw';",
       '3 export const sum = a + 2;',
     ]);
-    expect(calls.map(c => c.url).sort()).toEqual(['/api/file?path=src%2Fa.ts', '/api/tree']);
+    expect(calls.map(c => c.url).sort()).toEqual(['/api/file?path=src%2Fa.ts', '/api/runs', '/api/tree']);
     for (const call of calls) expect(call.headers).toEqual({ Authorization: 'Bearer tok' });
   });
 
@@ -523,13 +523,13 @@ describe('App and boot', () => {
     freshDom('http://127.0.0.1:4477/?token=tok');
     const calls: Call[] = [];
     const rows = ['demo-repo/', 'docs/', 'notes/', 'src/', '.gitignore', 'README.md', 'Zebra.txt', 'apple.txt'];
-    await renderDemoApp(root, demoFetcher(calls, 1));
+    await renderDemoApp(root, demoFetcher(calls, 2));
     await waitFor(() => {
       expect(rowTexts()).toContain('README.md');
     });
     for (const event of ['visibilitychange', 'focus', 'offline', 'online']) window.dispatchEvent(new window.Event(event));
     await new Promise(r => setTimeout(r, 150));
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
     expect(rowTexts()).toEqual(rows);
     expect(document.title).toBe('bindweed — demo-repo');
     await act(async () => {
@@ -540,7 +540,7 @@ describe('App and boot', () => {
     });
     expect(document.querySelector('main header')?.textContent).toBe('README.md');
     expect(document.querySelector('pre')).toBeNull();
-    expect(calls.map(c => c.url)).toEqual(['/api/tree', '/api/file?path=README.md']);
+    expect(calls.map(c => c.url)).toEqual(['/api/tree', '/api/runs', '/api/file?path=README.md']);
     expect(rowTexts()).toEqual(rows);
   });
 
@@ -583,7 +583,7 @@ describe('App and boot', () => {
       }),
     );
     await waitFor(() => {
-      expect(calls).toBe(1);
+      expect(calls).toBe(2);
       expect(document.body.textContent).toContain('select a file');
     });
     expect(document.title).not.toBe('bindweed — ');
@@ -632,7 +632,7 @@ describe('App and boot', () => {
     }
     expect(window.sessionStorage.getItem('bindweed.token')).toBe('tok');
     expect(window.location.href).toBe('http://127.0.0.1:4477/#file=src/a.ts');
-    expect(calls.map(c => c.url).sort()).toEqual(['/api/file?path=src%2Fa.ts', '/api/tree']);
+    expect(calls.map(c => c.url).sort()).toEqual(['/api/file?path=src%2Fa.ts', '/api/runs', '/api/tree']);
     for (const call of calls) expect(call.headers).toEqual({ Authorization: 'Bearer tok' });
   });
 

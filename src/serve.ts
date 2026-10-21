@@ -18,6 +18,7 @@ import { buildTree, filePathSet, type TreeRoot } from './domain/tree.ts';
 import { DEFAULT_LIMITS, generate, propose, readConfig, saveConfig, turnOf, type Limits, type PromptEdge, type PromptNode, type PromptView, type Turn } from './generate.ts';
 import { freePlanSlug, listPlans, readChat, readPlan, removePlan, saveTaskFiles, writeChat, writePlan } from './plans.ts';
 import { readHealth } from './reports.ts';
+import { forgetRun, listRuns } from './runs.ts';
 import { gitHead, listedRegularFiles } from './repo.ts';
 
 export type PortChoice = { mode: 'fixed' | 'range'; port: number };
@@ -572,6 +573,16 @@ async function postLaunch(app: App, graphs: GraphHolder, req: IncomingMessage, r
   }
 }
 
+async function serveRuns(app: App, res: ServerResponse): Promise<void> {
+  const runs = await listRuns({ root: app.repoRoot, env: app.env }, async slug => (await readPlan(app.repoRoot, slug))?.name);
+  sendJson(res, 200, { runs });
+}
+
+async function deleteRun(app: App, res: ServerResponse, url: URL): Promise<void> {
+  const answer = await forgetRun(app.repoRoot, url.searchParams.get('worktree'));
+  sendJson(res, answer.status, answer.body);
+}
+
 async function serveConfig(app: App, res: ServerResponse): Promise<void> {
   sendJson(res, 200, await readConfig(app.repoRoot));
 }
@@ -820,6 +831,9 @@ function routesFor(app: App, graphs: GraphHolder): Routes {
     put(path: string, handler: Handler) {
       table.set(`PUT ${path}`, handler);
     },
+    delete(path: string, handler: Handler) {
+      table.set(`DELETE ${path}`, handler);
+    },
   };
   router.get('/', (req, res, url) => serveIndex(app, req, res, url));
   router.get('/assets/', (_req, res, url) => serveAsset(app, res, url));
@@ -846,6 +860,8 @@ function routesFor(app: App, graphs: GraphHolder): Routes {
   router.post('/api/plans/<slug>/launch', (req, res, url) => servePlanAction(app, graphs, req, res, url, postLaunch));
   router.get('/api/config', (_req, res) => serveConfig(app, res));
   router.put('/api/config', (req, res) => putConfig(app, req, res));
+  router.get('/api/runs', (_req, res) => serveRuns(app, res));
+  router.delete('/api/runs', (_req, res, url) => deleteRun(app, res, url));
   router.get('/api/repo', async (_req, res) => sendJson(res, 200, { root: app.repoRoot }));
   return table;
 }

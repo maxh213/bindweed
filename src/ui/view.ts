@@ -46,7 +46,7 @@ export function panelFromQuery(
   return panelFromFile(selected, data);
 }
 
-export type Tab = 'files' | 'arch';
+export type Tab = 'files' | 'arch' | 'runs';
 
 export type GraphState =
   | { kind: 'loading'; view?: undefined }
@@ -54,6 +54,7 @@ export type GraphState =
   | { kind: 'ok'; view: GraphView };
 
 export function tabFromLocation(location: Location): Tab {
+  if (location.hash === RUNS_HASH) return 'runs';
   return atHashFrom(location) === null ? 'files' : 'arch';
 }
 
@@ -71,6 +72,7 @@ export function planFromLocation(location: Location): string | null {
 export type PageState = { tab: Tab; at: string; selected: string | null; plan: string | null };
 
 export function pageFromLocation(location: Location): PageState {
+  if (location.hash === RUNS_HASH) return { tab: 'runs', at: '', selected: null, plan: null };
   if (atHashFrom(location) !== null) return { tab: 'arch', at: atFromLocation(location), selected: null, plan: planFromLocation(location) };
   return { tab: 'files', at: '', selected: selectedFromLocation(location), plan: null };
 }
@@ -90,6 +92,7 @@ export function openSelection(actions: Pick<PageActions, 'setSelected' | 'setExp
 
 export function applyPage(actions: PageActions, page: PageState): void {
   actions.setTab(page.tab);
+  if (page.tab === 'runs') return;
   actions.setAt(page.at);
   actions.setPlan(page.plan);
   if (page.selected === null) return;
@@ -103,12 +106,14 @@ export function graphStateOf(data: GraphView | { error: string } | undefined, pe
 }
 
 const FILE_HASH_PREFIX = '#file=';
+const RUNS_HASH = '#runs';
 const AT_HASH_PREFIX = '#at=';
 
 type HistoryWrite =
   | { kind: 'file'; path: string; mode: 'push' | 'replace' }
   | { kind: 'at'; at: string; plan?: string | null }
-  | { kind: 'path'; pathname: string };
+  | { kind: 'path'; pathname: string }
+  | { kind: 'runs' };
 
 function hashParts(hash: string): Map<string, string> {
   const parts = new Map<string, string>();
@@ -141,7 +146,7 @@ function fileHash(path: string): string {
   return `${FILE_HASH_PREFIX}${encodeHashPath(path)}`;
 }
 
-function atHash(at: string, plan?: string | null): string {
+export function atHash(at: string, plan?: string | null): string {
   const base = `${AT_HASH_PREFIX}${encodeHashPath(at)}`;
   return plan === undefined || plan === null || plan === '' ? base : `${base}&plan=${encodeHashPath(plan)}`;
 }
@@ -161,6 +166,9 @@ function pushOther(history: History, write: Exclude<HistoryWrite, { kind: 'file'
       return;
     case 'path':
       pushState(history, write.pathname);
+      return;
+    case 'runs':
+      pushState(history, RUNS_HASH);
   }
 }
 

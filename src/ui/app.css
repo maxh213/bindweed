@@ -609,3 +609,80 @@ aside[aria-label='changes'] ol {
   font-size: 12px;
   word-break: break-all;
 }
+
+.tabbar .badge {
+  margin-left: 0.35rem;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  background: #2563eb;
+  color: #ffffff;
+  font-size: 0.75rem;
+}
+
+.runs-panel {
+  flex: 1;
+  overflow: auto;
+  padding: 0.75rem;
+}
+
+.run-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid #cccccc;
+  border-radius: 6px;
+}
+
+.run-card header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.run-title {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.run-prs {
+  display: flex;
+  flex-direction: column;
+}
+
+.run-card pre {
+  margin: 0.25rem 0 0;
+  white-space: pre-wrap;
+}
+
+.pill {
+  padding: 0.1rem 0.6rem;
+  border-radius: 999px;
+  color: #ffffff;
+  font-size: 0.8rem;
+}
+
+.pill-running {
+  background: #2563eb;
+}
+
+.pill-stopped {
+  background: #d97706;
+}
+
+.pill-failed {
+  background: #dc2626;
+}
+
+.pill-done {
+  background: #16a34a;
+}
+
+.pill-dead {
+  background: #6b7280;
+}
+
+.pill-removed {
+  background: #9ca3af;
+}

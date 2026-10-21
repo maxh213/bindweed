@@ -216,7 +216,7 @@ describe('launch API', () => {
     expect(await text(join(log, 'marestail.log'))).toBe('install .\n');
     expect(await waitFor(join(log, 'overnight.json'))).toEqual({ argv: TASKS.map(task => `tasks/${task.file}`), cwd: worktree, model: MARE.model, scope: MARE.scope, focus: MARE.focus, stop: MARE.stopAt, claudecode: null, entrypoint: null, configDir: null, pathHead: bin });
     const [run] = await json(join(root, '.bindweed/runs.json'));
-    expect(run).toEqual({ slug: 'gate', tool: 'marestail', worktree, branch: 'bindweed/gate', pid: body.pid, startedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/), out: expect.stringMatching(/launch-\d{8}T\d{4}\.out$/), settings: { model: MARE.model, scope: MARE.scope, focus: MARE.focus, stopAt: MARE.stopAt } });
+    expect(run).toEqual({ slug: 'gate', tool: 'marestail', worktree, branch: 'bindweed/gate', pid: body.pid, startedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/), out: expect.stringMatching(/launch-\d{8}T\d{4}\.out$/), settings: { model: MARE.model, scope: MARE.scope, focus: MARE.focus, stopAt: MARE.stopAt }, tasks: TASKS.map(task => `tasks/${task.file}`) });
     expect((await text(run.out)).split('\n')[0]).toBe(`start pid=${body.pid} model=${MARE.model} scope=hard focus=${MARE.focus} stop=qa`);
     const script = await text(run.out.replace(/out$/, 'sh'));
     expect(script).toContain("systemd-inhibit --what=idle --who=bindweed --why='bindweed gate'");
@@ -229,6 +229,21 @@ describe('launch API', () => {
     expect((await request('/api/plans/gate/launch')).body).toEqual({ marestail: true, sc: true, alive: true, focus: MARE.focus, worktree, branch: 'bindweed/gate', watch: 'marestail watch' });
     await restart();
     expect(() => process.kill(Number(body.pid), 0)).not.toThrow();
+  });
+
+  it('A launch records the 010 fields plus "tasks" and shows as running', async () => {
+    const { body } = await launch();
+    expect(body.steps).toEqual(OK);
+    const raw = await json(join(root, '.bindweed/runs.json'));
+    expect(raw).toHaveLength(1);
+    expect(Object.keys(raw[0])).toEqual(['slug', 'tool', 'worktree', 'branch', 'pid', 'startedAt', 'out', 'settings', 'tasks']);
+    expect(raw[0].tasks).toEqual(['tasks/005-add-core.md', 'tasks/006-move-b.md', 'tasks/007-cut-app-domain.md']);
+    expect((await request('/api/plans/gate/launch')).body).toMatchObject({ alive: true, worktree, branch: 'bindweed/gate', watch: 'marestail watch' });
+    expect((await request('/api/runs')).body.runs[0]).toMatchObject({ slug: 'gate', planName: 'Gate', tool: 'marestail', state: 'running', position: 'no task started · 0 of 3 tasks' });
+  });
+
+  it('Old routes still answer beside /api/runs', async () => {
+    for (const path of ['/api/tree', '/api/graph?at=src', '/api/plans', '/api/config', '/api/runs']) expect((await request(path)).status).toBe(200);
   });
 
   it('The fields are what was sent, and a blank scope omits SCOPE', async () => {
@@ -330,7 +345,7 @@ describe('launch API', () => {
     expect(await waitFor(join(log, 'sc.json'))).toEqual({ cwd: root, argv: ['--repo', worktree, '--headless', '--safety', 'on', '-m', BRIEF] });
     const [run] = await json(join(root, '.bindweed/runs.json'));
     expect(await text(run.out)).toContain('started');
-    expect(run).toMatchObject({ tool: SC.tool, settings: { safety: 'on', ammo: '', cartridge: '' } });
+    expect(run).toMatchObject({ tool: SC.tool, settings: { safety: 'on', ammo: '', cartridge: '' }, tasks: [] });
     expect(git(worktree, 'status', '--porcelain')).toBe('');
     expect(git(root, 'status', '--porcelain')).toBe('');
     expect(existsSync(join(log, 'overnight.json'))).toBe(false);

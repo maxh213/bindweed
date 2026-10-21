@@ -572,3 +572,29 @@ export function fetchLaunch(token: string, slug: string, fetcher: typeof fetch =
 export function postLaunch(token: string, slug: string, body: LaunchBody, fetcher: typeof fetch = fetch) {
   return answered(fetcher, `/api/plans/${slug}/launch`, sendingJson(token, 'POST', body), readWith(launchResultSchema));
 }
+
+const runSchema = z.object({
+  slug: z.string(),
+  planName: z.string(),
+  planExists: z.boolean(),
+  tool: z.string(),
+  branch: z.string().nullable(),
+  worktree: z.string(),
+  worktreeExists: z.boolean(),
+  pid: z.number().nullable(),
+  startedAt: z.string(),
+  state: z.enum(['running', 'stopped for a human', 'failed', 'done', 'dead', 'worktree removed']),
+  position: z.string(),
+  prs: z.array(z.string()),
+  logTail: z.array(z.string()),
+});
+
+export type RunCard = z.infer<typeof runSchema>;
+
+export function fetchRuns(token: string, fetcher: typeof fetch = fetch) {
+  return answered(fetcher, '/api/runs', bearer(token), readWith(z.object({ runs: z.array(runSchema) })));
+}
+
+export function forgetRun(token: string, worktree: string, fetcher: typeof fetch = fetch) {
+  return answered(fetcher, `/api/runs?worktree=${encodeURIComponent(worktree)}`, { ...bearer(token), method: 'DELETE' }, readWith(z.object({ ok: z.literal(true) })));
+}

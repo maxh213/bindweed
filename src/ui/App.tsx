@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactElement } from 'react';
 import { togglePath, type TreeEntry } from '../domain/tree.ts';
 import { ArchView } from './ArchView.tsx';
 import { fetchFile, fetchTree } from './client.ts';
 import { FilePanel } from './FilePanel.tsx';
+import { RunsPanel, useRuns } from './RunsPanel.tsx';
 import { TreeView } from './TreeView.tsx';
 import {
   applyPage,
@@ -47,7 +48,7 @@ function FileLoader(props: FileLoaderProps) {
   return <FilePanel state={panelFromQuery(props.path, fileQuery.data, fileQuery.isPending)} />;
 }
 
-function TabBar(props: Readonly<{ tab: Tab; onShowFiles: () => void; onShowArch: () => void }>) {
+function TabBar(props: Readonly<{ tab: Tab; running: number; onShowFiles: () => void; onShowArch: () => void; onShowRuns: () => void }>) {
   return (
     <div className="tabbar" role="tablist" aria-label="views">
       <button type="button" role="tab" aria-selected={props.tab === 'files'} onClick={props.onShowFiles}>
@@ -55,6 +56,10 @@ function TabBar(props: Readonly<{ tab: Tab; onShowFiles: () => void; onShowArch:
       </button>
       <button type="button" role="tab" aria-selected={props.tab === 'arch'} onClick={props.onShowArch}>
         Architecture
+      </button>
+      <button type="button" role="tab" aria-selected={props.tab === 'runs'} onClick={props.onShowRuns}>
+        Runs
+        {props.running > 0 && <span className="badge">{props.running}</span>}
       </button>
     </div>
   );
@@ -108,6 +113,7 @@ function BrowserApp(props: Readonly<AppProps>) {
   });
 
   const { root, entries } = treeParts(treeQuery.data);
+  const runs = useRuns(props.token, props.fetcher, tab === 'runs');
 
   useEffect(() => {
     applyTitle(document, root);
@@ -129,6 +135,17 @@ function BrowserApp(props: Readonly<AppProps>) {
   const showArch = () => {
     setTab('arch');
     writeHistory(props.historyApi, { kind: 'at', at, plan });
+  };
+
+  const showRuns = () => {
+    setTab('runs');
+    writeHistory(props.historyApi, { kind: 'runs' });
+  };
+
+  const openPlan = (slug: string) => {
+    setTab('arch');
+    setPlan(slug);
+    writeHistory(props.historyApi, { kind: 'at', at, plan: slug });
   };
 
   const drillTo = (dir: string) => {
@@ -155,23 +172,27 @@ function BrowserApp(props: Readonly<AppProps>) {
     setSelected(path);
   };
 
+  const panes: Record<Tab, () => ReactElement> = {
+    files: () => (
+      <FilesPane
+        token={props.token}
+        fetcher={props.fetcher}
+        root={root}
+        entries={entries}
+        expanded={expanded}
+        selected={selected}
+        onToggle={toggleDir}
+        onSelect={selectFile}
+      />
+    ),
+    arch: () => <ArchView token={props.token} at={at} plan={plan} fetcher={props.fetcher} onDrill={drillTo} onOpenFile={openFile} onPlanChange={changePlan} />,
+    runs: () => <RunsPanel runs={runs.runs} at={at} token={props.token} fetcher={props.fetcher} onOpenPlan={openPlan} onGone={runs.drop} />,
+  };
+
   return (
     <div className="page">
-      <TabBar tab={tab} onShowFiles={showFiles} onShowArch={showArch} />
-      {tab === 'files' ? (
-        <FilesPane
-          token={props.token}
-          fetcher={props.fetcher}
-          root={root}
-          entries={entries}
-          expanded={expanded}
-          selected={selected}
-          onToggle={toggleDir}
-          onSelect={selectFile}
-        />
-      ) : (
-        <ArchView token={props.token} at={at} plan={plan} fetcher={props.fetcher} onDrill={drillTo} onOpenFile={openFile} onPlanChange={changePlan} />
-      )}
+      <TabBar tab={tab} running={runs.running} onShowFiles={showFiles} onShowArch={showArch} onShowRuns={showRuns} />
+      {panes[tab]()}
     </div>
   );
 }

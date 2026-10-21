@@ -331,13 +331,17 @@ async function startStep(ctx: Context): Promise<void> {
   ctx.out = started.out;
 }
 
+function recordedTasks(ctx: Context): string[] {
+  return ctx.body.tool === 'marestail' ? ctx.tasks.map(task => `tasks/${task.file}`) : [];
+}
+
 async function recordStep(ctx: Context): Promise<void> {
   const file = runsFile(ctx.root);
   const raw = await readRuns(ctx.root);
   const runs = await exists(file) ? raw : [];
   if (!Array.isArray(runs)) throw new Error('runs.json is not a list');
   const { tool, ...settings } = ctx.body;
-  runs.push({ slug: ctx.doc.slug, tool, worktree: ctx.worktree, branch: ctx.branch, pid: ctx.answer.pid, startedAt: new Date().toISOString(), out: ctx.out, settings });
+  runs.push({ slug: ctx.doc.slug, tool, worktree: ctx.worktree, branch: ctx.branch, pid: ctx.answer.pid, startedAt: new Date().toISOString(), out: ctx.out, settings, tasks: recordedTasks(ctx) });
   await mkdir(dirname(file), { recursive: true });
   await writeFile(file, JSON.stringify(runs));
 }

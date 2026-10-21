@@ -1115,12 +1115,12 @@ describe('App with the Architecture tab', () => {
     const calls: Call[] = [];
     await renderApp(calls);
     await waitForText('tsconfig.json');
-    expect(Array.from(document.querySelectorAll('[role="tab"]')).map(el => el.textContent)).toEqual(['Files', 'Architecture']);
+    expect(Array.from(document.querySelectorAll('[role="tab"]')).map(el => el.textContent)).toEqual(['Files', 'Architecture', 'Runs']);
     expect(tabByName('Files').getAttribute('aria-selected')).toBe('true');
     expect(tabByName('Architecture').getAttribute('aria-selected')).toBe('false');
     expect(treeRows()).toEqual(['layered/', 'notes/', 'src/', 'tsconfig.json']);
     expect(document.querySelector('main')?.textContent).toBe('select a file');
-    expect(calls.map(call => call.url)).toEqual(['/api/tree']);
+    expect(calls.map(call => call.url)).toEqual(['/api/tree', '/api/runs']);
     const { act } = await import('react');
     await act(async () => {
       click(tabByName('Architecture'));

@@ -1,0 +1,357 @@
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { request as httpRequest } from 'node:http';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { bindApp } from './serve.ts';
+
+type Fixture = { tool: 'marestail' | 'slop-cannon'; pid: 'live' | 'dead'; at: string; tasks?: string[]; build: (dir: string) => Promise<void> };
+type Bound = Exclude<Awaited<ReturnType<typeof bindApp>>, { error: unknown }>;
+
+const SUMMARY = '.marestail/runs/overnight-20261021T1230.md';
+const HEAD = 'a'.repeat(40);
+let outer: string;
+let root: string;
+let runs: string;
+let bin: string;
+let app: Bound;
+let port: number;
+let live: number[];
+
+function stamp(at: string): Date {
+  return new Date(`2026-10-21T${at}:00.000Z`);
+}
+
+async function put(path: string, text: string, at = '12:00'): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, text);
+  await utimes(path, stamp(at), stamp(at));
+}
+
+function files(...names: string[]) {
+  return async (dir: string) => {
+    for (const name of names) await put(join(dir, 'tasks', `${name}.md`), '');
+  };
+}
+
+function log(dir: string, id: string, text: string, at: string): Promise<void> {
+  return put(join(dir, '.marestail/runs', id, 'pipeline.log'), text, at);
+}
+
+const QA_DONE = '== qa (09-qa) attempt 1\npipeline complete\n';
+
+const MARESTAIL: Record<string, Fixture> = {
+  done: { tool: 'marestail', pid: 'dead', at: '12:01', tasks: ['tasks/001-a.md', 'tasks/002-b.md'], build: async dir => {
+    await files('001-a', '002-b')(dir);
+    await log(dir, '001-a', QA_DONE, '12:10');
+    await log(dir, '002-b', QA_DONE, '12:20');
+    await put(join(dir, SUMMARY), '001-a ok\n002-b ok\nall tasks complete 2026-10-21 12:30:00\n', '12:30');
+  } },
+  stopped: { tool: 'marestail', pid: 'dead', at: '12:02', tasks: ['tasks/001-w.md', 'tasks/002-x.md'], build: async dir => {
+    await files('001-w', '002-x')(dir);
+    await log(dir, '001-w', 'pipeline complete\n', '12:10');
+    await log(dir, '002-x', '== coder (03-coder) attempt 2\ngate failed\nstopping for a human\n', '12:20');
+    await put(join(dir, SUMMARY), 'stopped: tasks/002-x.md exited 1\n', '12:30');
+  } },
+  failed: { tool: 'marestail', pid: 'dead', at: '12:03', tasks: ['tasks/001-f.md'], build: async dir => {
+    await files('001-f')(dir);
+    await log(dir, '001-f', '== coder (03-coder) attempt 1\nnpm ERR! boom\n', '12:10');
+    await put(join(dir, SUMMARY), 'stopped: tasks/001-f.md exited 2\n', '12:30');
+  } },
+  running: { tool: 'marestail', pid: 'live', at: '12:04', tasks: ['tasks/001-init.md', 'tasks/002-step.md', 'tasks/003-later.md'], build: async dir => {
+    await files('README', '000-old', '001-init', '002-step', '003-later')(dir);
+    await log(dir, '000-old', 'pipeline complete\n', '12:25');
+    await log(dir, '001-init', 'pipeline complete\n', '12:10');
+    await log(dir, '002-step', 'starting\n== coder (07-coder) attempt 2\n== hardener (07-hardener) attempt 1\n', '12:20');
+    await put(join(dir, '.marestail/runs/direct-001-20261021T1226.log'), 'x\n', '12:26');
+  } },
+  dead: { tool: 'marestail', pid: 'dead', at: '12:05', build: async dir => {
+    await files('README', '001-task')(dir);
+    await log(dir, '001-task', 'starting\n', '12:10');
+  } },
+  between: { tool: 'marestail', pid: 'live', at: '12:06', tasks: ['tasks/001-a.md', 'tasks/002-b.md'], build: async dir => {
+    await files('001-a', '002-b')(dir);
+    await log(dir, '001-a', QA_DONE, '12:10');
+  } },
+  fresh: { tool: 'marestail', pid: 'dead', at: '12:07', tasks: ['tasks/001-a.md'], build: files('001-a') },
+  unverified: { tool: 'marestail', pid: 'live', at: '12:08', tasks: ['tasks/001-a.md'], build: async dir => {
+    await files('001-a')(dir);
+    await log(dir, '001-a', '== qa (09-qa) attempt 1\npipeline complete, NOT verified by eye\n', '12:10');
+  } },
+  removed: { tool: 'marestail', pid: 'dead', at: '12:00', tasks: [], build: async dir => rm(dir, { recursive: true }) },
+};
+
+function status(name: string, text: string) {
+  return (dir: string) => put(join(dir, name), text);
+}
+
+const CANNON: Record<string, Fixture> = {
+  sc: { tool: 'slop-cannon', pid: 'live', at: '12:09', build: status('sc-status.json', JSON.stringify({ state: { phase: 'running' }, agents: [{ alive: true }, { alive: true }, { alive: true }, { alive: true }, { alive: false }], beads: { open: 7, done: 3 }, prs: [{ url: 'https://example.test/pull/41' }, { url: 'https://example.test/pull/42' }] })) },
+  'sc-one': { tool: 'slop-cannon', pid: 'live', at: '12:10', build: status('sc-status.json', JSON.stringify({ state: { phase: 'planning' }, agents: [{ alive: true }], beads: {}, prs: [{ url: 'https://example.test/pull/7' }] })) },
+  'sc-done': { tool: 'slop-cannon', pid: 'dead', at: '12:11', build: status('sc-status.json', JSON.stringify({ state: { phase: 'complete' }, agents: [], beads: { done: 5 }, prs: [] })) },
+  'sc-err': { tool: 'slop-cannon', pid: 'dead', at: '12:12', build: status('sc-status.err', 'no slop-cannon state here\nsecond line\n') },
+  'sc-slow': { tool: 'slop-cannon', pid: 'live', at: '12:13', build: status('sc-status.slow', '') },
+  'sc-junk': { tool: 'slop-cannon', pid: 'live', at: '12:14', build: status('sc-status.json', 'null') },
+  'sc-text': { tool: 'slop-cannon', pid: 'live', at: '12:15', build: status('sc-status.json', 'nope') },
+  'sc-quiet': { tool: 'slop-cannon', pid: 'dead', at: '12:16', build: status('sc-status.code', '') },
+  'sc-odd': { tool: 'slop-cannon', pid: 'live', at: '12:17', build: status('sc-status.json', JSON.stringify({ state: null, agents: 'x', beads: { open: 'many', done: 2 }, prs: [1, { url: 2 }, { url: 'https://example.test/pull/9' }] })) },
+  'sc-gone': { tool: 'slop-cannon', pid: 'dead', at: '12:19', build: status('sc-status.json', JSON.stringify({ state: { phase: 'running' } })) },
+  'sc-phase': { tool: 'slop-cannon', pid: 'dead', at: '12:18', build: status('sc-status.json', JSON.stringify({ state: { phase: 'done' } })) },
+};
+
+const FIXTURES: Record<string, Fixture> = { ...MARESTAIL, ...CANNON };
+
+function pidFor(kind: Fixture['pid']): number {
+  if (kind === 'dead') return Number(spawnSync('true').pid);
+  const child = spawn('sleep', ['900'], { stdio: 'ignore' });
+  live.push(Number(child.pid));
+  return Number(child.pid);
+}
+
+function worktreeOf(name: string): string {
+  return join(runs, `wt-${name}`);
+}
+
+function outOf(name: string): string {
+  return join(root, '.bindweed/runs', `plan-${name}.out`);
+}
+
+async function entry(name: string): Promise<Record<string, unknown>> {
+  const fixture = FIXTURES[name];
+  const dir = worktreeOf(name);
+  await mkdir(dir, { recursive: true });
+  await fixture.build(dir);
+  const base = { slug: `plan-${name}`, tool: fixture.tool, worktree: dir, branch: `bindweed/plan-${name}`, pid: pidFor(fixture.pid), startedAt: stamp(fixture.at).toISOString(), out: outOf(name), settings: {} };
+  return fixture.tasks === undefined && fixture.tool === 'marestail' ? base : { ...base, tasks: fixture.tasks ?? [] };
+}
+
+async function writeRuns(value: unknown): Promise<string> {
+  const text = JSON.stringify(value);
+  await put(join(root, '.bindweed/runs.json'), text);
+  return text;
+}
+
+async function runsText(): Promise<string> {
+  return readFile(join(root, '.bindweed/runs.json'), 'utf8');
+}
+
+async function plan(slug: string, name: string): Promise<void> {
+  await put(join(root, '.bindweed/plans', `${slug}.json`), JSON.stringify({ version: 1, name, slug, createdAt: '2026-10-21T12:00:00.000Z', baseCommit: HEAD, edits: [], redo: [] }));
+}
+
+async function bind(path = `${bin}:${process.env.PATH}`): Promise<void> {
+  const bound = await bindApp({ repoRoot: root, uiDir: join(outer, 'ui'), env: { ...process.env, PATH: path } }, { mode: 'fixed', port: 0 });
+  if ('error' in bound) throw new Error('bind failed');
+  app = bound;
+  port = (bound.server.address() as { port: number }).port;
+}
+
+async function call(path: string, method = 'GET', authorized = true): Promise<{ status: number; body: { runs: Record<string, unknown>[] } & Record<string, unknown> }> {
+  const response = await fetch(`http://127.0.0.1:${port}${path}`, { method, headers: authorized ? { Authorization: `Bearer ${app.token}` } : {} });
+  return { status: response.status, body: await response.json() };
+}
+
+function withHost(path: string, method: string, host: string): Promise<{ status: number; body: unknown }> {
+  return new Promise((done, failed) => {
+    const req = httpRequest({ host: '127.0.0.1', port, path, method, headers: { Host: host, Authorization: `Bearer ${app.token}` } }, res => {
+      let text = '';
+      res.on('data', chunk => { text += chunk; });
+      res.on('end', () => done({ status: Number(res.statusCode), body: JSON.parse(text) }));
+    });
+    req.on('error', failed);
+    req.end();
+  });
+}
+
+async function only(name: string): Promise<Record<string, unknown>> {
+  await writeRuns([await entry(name)]);
+  const before = await runsText();
+  const answer = await call('/api/runs');
+  expect(answer.status).toBe(200);
+  expect(await runsText()).toBe(before);
+  return answer.body.runs[0];
+}
+
+const SC_LINES = Array.from({ length: 25 }, (_, index) => `[sc] line ${index + 1}`);
+
+beforeEach(async () => {
+  live = [];
+  outer = await mkdtemp(join(tmpdir(), 'bw-runs-'));
+  root = join(outer, 'layered');
+  runs = join(outer, 'runs');
+  bin = join(outer, 'fakes/bin');
+  await mkdir(join(outer, 'ui/assets'), { recursive: true });
+  await writeFile(join(outer, 'ui/index.html'), '<title>bindweed</title>');
+  await mkdir(bin, { recursive: true });
+  await writeFile(join(bin, 'sc'), `#!/bin/sh
+d="$3"
+if [ -e "$d/sc-status.slow" ]; then sleep 15; fi
+if [ -e "$d/sc-status.err" ]; then cat "$d/sc-status.err" >&2; exit 1; fi
+if [ -e "$d/sc-status.code" ]; then exit 3; fi
+cat "$d/sc-status.json"
+`, { mode: 0o755 });
+  await put(outOf('sc'), `${SC_LINES.join('\n')}\n`);
+  await bind();
+});
+
+afterEach(async () => {
+  for (const pid of live) process.kill(pid, 'SIGKILL');
+  await new Promise<void>(done => app.server.close(() => done()));
+  await rm(outer, { recursive: true, force: true });
+});
+
+describe('GET /api/runs', () => {
+  it.each([
+    ['done', 'done', 'all tasks complete · 2 of 2 tasks', ['== qa (09-qa) attempt 1', 'pipeline complete']],
+    ['stopped', 'stopped for a human', 'task 002-x · coder · attempt 2 · 1 of 2 tasks', ['== coder (03-coder) attempt 2', 'gate failed', 'stopping for a human']],
+    ['failed', 'failed', 'task 001-f · coder · attempt 1 · 0 of 1 tasks', ['== coder (03-coder) attempt 1', 'npm ERR! boom']],
+    ['running', 'running', 'task 002-step · hardener · attempt 1 · 1 of 3 tasks', ['starting', '== coder (07-coder) attempt 2', '== hardener (07-hardener) attempt 1']],
+    ['dead', 'dead', 'task 001-task · 0 of 1 tasks', ['starting']],
+    ['between', 'running', 'task 001-a · finished · 1 of 2 tasks', ['== qa (09-qa) attempt 1', 'pipeline complete']],
+    ['fresh', 'dead', 'no task started · 0 of 1 tasks', []],
+    ['unverified', 'running', 'task 001-a · finished · 1 of 1 tasks', ['== qa (09-qa) attempt 1', 'pipeline complete, NOT verified by eye']],
+    ['removed', 'worktree removed', 'worktree removed', []],
+    ['sc', 'running', 'running · 4 agents · 7 open · 3 done · 2 PRs', SC_LINES.slice(5)],
+    ['sc-one', 'running', 'planning · 1 agent · 1 PR', []],
+    ['sc-done', 'done', 'complete · 0 agents · 5 done · 0 PRs', []],
+    ['sc-err', 'dead', 'sc status failed: no slop-cannon state here · pid gone', []],
+    ['sc-junk', 'running', 'sc status failed: not JSON · pid alive', []],
+    ['sc-text', 'running', 'sc status failed: not JSON · pid alive', []],
+    ['sc-quiet', 'dead', 'sc status failed: exited 3 · pid gone', []],
+    ['sc-odd', 'running', ' · 0 agents · 2 done · 1 PR', []],
+    ['sc-phase', 'done', 'done · 0 agents · 0 PRs', []],
+    ['sc-gone', 'dead', 'running · 0 agents · 0 PRs', []],
+  ])('Each run reports its state and position: %s', async (name, state, position, logTail) => {
+    expect(await only(name)).toMatchObject({ state, position, logTail });
+  });
+
+  it('Each run reports its state and position: sc-slow, and a slow sc does not hold the answer past its timeout', async () => {
+    const started = Date.now();
+    expect(await only('sc-slow')).toMatchObject({ state: 'running', position: 'sc status failed: timed out after 10s · pid alive', logTail: [] });
+    expect(Date.now() - started).toBeLessThan(12000);
+  }, 15000);
+
+  it('One run carries every field, and slop-cannon PRs are listed', async () => {
+    const sc = await entry('sc');
+    await writeRuns([sc, await entry('running')]);
+    await plan('plan-sc', 'Plan SC');
+    await put(join(root, '.bindweed/plans/plan-running.json'), '{"name":"Bad"}');
+    const { body } = await call('/api/runs');
+    expect(body.runs[0]).toEqual({ slug: 'plan-sc', planName: 'Plan SC', planExists: true, tool: 'slop-cannon', branch: 'bindweed/plan-sc', worktree: worktreeOf('sc'), worktreeExists: true, pid: sc.pid, startedAt: '2026-10-21T12:09:00.000Z', state: 'running', position: 'running · 4 agents · 7 open · 3 done · 2 PRs', prs: ['https://example.test/pull/41', 'https://example.test/pull/42'], logTail: SC_LINES.slice(5) });
+    expect(body.runs[1]).toMatchObject({ slug: 'plan-running', planName: 'plan-running', planExists: false, prs: [], worktreeExists: true });
+  });
+
+  it('Runs are ordered newest first and malformed elements are left out', async () => {
+    await writeRuns([await entry('done'), 7, { slug: 'x' }, await entry('dead'), await entry('removed')]);
+    const { body } = await call('/api/runs');
+    expect(body.runs.map(run => run.slug)).toEqual(['plan-dead', 'plan-done', 'plan-removed']);
+    expect(body.runs[2]).toMatchObject({ worktreeExists: false, prs: [] });
+  });
+
+  it('On a tie the later element comes first, and odd branch, pid and out read as null and no log', async () => {
+    const dead = await entry('dead');
+    await writeRuns([dead, { ...dead, slug: 'later', branch: 3, pid: 'x' }, { ...(await entry('sc')), out: 5 }]);
+    const { body } = await call('/api/runs');
+    expect(body.runs.map(run => run.slug)).toEqual(['plan-sc', 'later', 'plan-dead']);
+    expect(body.runs[0]).toMatchObject({ logTail: [] });
+    expect(body.runs[1]).toMatchObject({ branch: null, pid: null, state: 'dead' });
+  });
+
+  it('The newest summary decides, and a summary without a verdict leaves the pid to decide', async () => {
+    const done = await entry('done');
+    await put(join(worktreeOf('done'), '.marestail/runs/overnight-20261021T1300.md'), 'started\n', '13:00');
+    await writeRuns([done]);
+    expect((await call('/api/runs')).body.runs[0]).toMatchObject({ state: 'dead', position: 'task 002-b · finished · 2 of 2 tasks' });
+  });
+
+  it('A role line without an attempt gives the plain task form', async () => {
+    const dead = await entry('dead');
+    await log(worktreeOf('dead'), '001-task', '== something odd\n', '12:10');
+    await writeRuns([dead]);
+    expect((await call('/api/runs')).body.runs[0]).toMatchObject({ position: 'task 001-task · 0 of 1 tasks', logTail: ['== something odd'] });
+  });
+
+  it('An empty log has no lines', async () => {
+    const dead = await entry('dead');
+    await log(worktreeOf('dead'), '001-task', '', '12:10');
+    await writeRuns([dead]);
+    expect((await call('/api/runs')).body.runs[0]).toMatchObject({ position: 'task 001-task · 0 of 1 tasks', logTail: [] });
+  });
+
+  it('The current task is the newest log, whatever the task order', async () => {
+    await writeRuns([{ ...(await entry('running')), tasks: ['tasks/002-step.md', 'tasks/001-init.md'] }]);
+    expect((await call('/api/runs')).body.runs[0]).toMatchObject({ position: 'task 002-step · hardener · attempt 1 · 1 of 2 tasks' });
+  });
+
+  it('Without a tasks list the worktree\'s task files except README count', async () => {
+    const dead = await entry('dead');
+    await put(join(worktreeOf('dead'), 'tasks/000-z.md'), '');
+    await put(join(worktreeOf('dead'), 'tasks/notes.txt'), '');
+    await writeRuns([dead]);
+    expect((await call('/api/runs')).body.runs[0]).toMatchObject({ position: 'task 001-task · 0 of 2 tasks' });
+  });
+
+  it('A worktree without a tasks directory has no tasks', async () => {
+    const dead = await entry('dead');
+    await rm(join(worktreeOf('dead'), 'tasks'), { recursive: true });
+    await writeRuns([dead]);
+    expect((await call('/api/runs')).body.runs[0]).toMatchObject({ position: 'no task started · 0 of 0 tasks' });
+  });
+
+  it('sc missing from PATH is reported on the card', async () => {
+    await new Promise<void>(done => app.server.close(() => done()));
+    await bind(join(outer, 'nowhere'));
+    expect(await only('sc-one')).toMatchObject({ state: 'running', position: 'sc status failed: sc is not on PATH · pid alive' });
+  });
+
+  it('A sc that cannot be run for another reason shows the error', async () => {
+    await mkdir(join(outer, 'odd/sc'), { recursive: true });
+    await new Promise<void>(done => app.server.close(() => done()));
+    await bind(join(outer, 'odd'));
+    expect((await only('sc-one')).position).toMatch(/^sc status failed: Error: spawn sc EACCES · pid alive$/);
+  });
+
+  it.each([['missing', null], ['not json', 'not json'], ['an object', '{"a":1}'], ['empty', '[]']])('Missing or malformed runs.json answers no runs: %s', async (_name, text) => {
+    if (text !== null) await put(join(root, '.bindweed/runs.json'), text);
+    expect(await call('/api/runs')).toEqual({ status: 200, body: { runs: [] } });
+  });
+
+  it('GET /api/runs checks host and token', async () => {
+    expect(await call('/api/runs', 'GET', false)).toEqual({ status: 401, body: { error: 'missing or wrong token' } });
+    expect(await withHost('/api/runs', 'GET', 'evil.example:5000')).toEqual({ status: 403, body: { error: 'bad host' } });
+  });
+});
+
+describe('DELETE /api/runs', () => {
+  it('Forget drops the removed run and keeps the rest', async () => {
+    const [done, removed, dead] = [await entry('done'), await entry('removed'), await entry('dead')];
+    await writeRuns([done, removed, dead]);
+    expect(await call(`/api/runs?worktree=${worktreeOf('removed')}`, 'DELETE')).toEqual({ status: 200, body: { ok: true } });
+    expect(JSON.parse(await runsText())).toEqual([done, dead]);
+  });
+
+  it.each([
+    ['', 400, { error: 'missing worktree' }],
+    ['?worktree=WT/wt-done', 400, { error: 'worktree still exists' }],
+    ['?worktree=WT/wt-elsewhere', 404, { error: 'no such run' }],
+  ])('Forget refuses and leaves runs.json unchanged: %s', async (query, code, body) => {
+    const before = await writeRuns([await entry('done'), await entry('removed')]);
+    expect(await call(`/api/runs${query.replace('WT', runs)}`, 'DELETE')).toEqual({ status: code, body });
+    expect(await runsText()).toBe(before);
+  });
+
+  it('Forget answers no such run when runs.json is not a list', async () => {
+    const before = await writeRuns({ worktree: worktreeOf('removed') });
+    expect(await call(`/api/runs?worktree=${worktreeOf('removed')}`, 'DELETE')).toEqual({ status: 404, body: { error: 'no such run' } });
+    expect(await runsText()).toBe(before);
+  });
+
+  it('Forget checks host and token', async () => {
+    const before = await writeRuns([await entry('removed')]);
+    const url = `/api/runs?worktree=${worktreeOf('removed')}`;
+    expect(await call(url, 'DELETE', false)).toEqual({ status: 401, body: { error: 'missing or wrong token' } });
+    expect(await withHost(url, 'DELETE', 'evil.example:5000')).toEqual({ status: 403, body: { error: 'bad host' } });
+    expect(await runsText()).toBe(before);
+  });
+});

@@ -139,6 +139,7 @@ describe('tabFromLocation and atFromLocation', () => {
     expect(tabFromLocation(fakeLocation('http://127.0.0.1/'))).toBe('files');
     expect(tabFromLocation(fakeLocation('http://127.0.0.1/#file=src/a.ts'))).toBe('files');
     expect(tabFromLocation(fakeLocation('http://127.0.0.1/#at=src'))).toBe('arch');
+    expect(tabFromLocation(fakeLocation('http://127.0.0.1/#runs'))).toBe('runs');
     expect(atFromLocation(fakeLocation('http://127.0.0.1/'))).toBe('');
     expect(atFromLocation(fakeLocation('http://127.0.0.1/#at='))).toBe('');
     expect(atFromLocation(fakeLocation('http://127.0.0.1/#at=src/app'))).toBe('src/app');
@@ -223,6 +224,12 @@ describe('applyPage', () => {
     expect(actions.calls).toEqual(['tab:arch', 'at:src', 'plan:split-app']);
   });
 
+  it('applies a runs page without touching the view, plan or selection', () => {
+    const actions = recordingActions();
+    applyPage(actions, pageFromLocation(fakeLocation('http://127.0.0.1/#runs')));
+    expect(actions.calls).toEqual(['tab:runs']);
+  });
+
   it('applies a file page and opens its folders', () => {
     const actions = recordingActions();
     applyPage(actions, { tab: 'files', at: '', selected: 'src/lib/util.ts', plan: null });
@@ -269,8 +276,9 @@ describe('writeHistory', () => {
     writeHistory(historyApi, { kind: 'at', at: 'src', plan: '' });
     writeHistory(historyApi, { kind: 'file', path: 'src/domain/model.ts', mode: 'push' });
     writeHistory(historyApi, { kind: 'path', pathname: '/layered' });
-    expect(pushed).toEqual(['#at=src/app', '#at=', '#at=src&plan=split-app', '#at=&plan=split-app', '#at=src', '#at=src', '#file=src/domain/model.ts', '/layered']);
-    expect(titles).toEqual(['', '', '', '', '', '', '', '']);
+    writeHistory(historyApi, { kind: 'runs' });
+    expect(pushed).toEqual(['#at=src/app', '#at=', '#at=src&plan=split-app', '#at=&plan=split-app', '#at=src', '#at=src', '#file=src/domain/model.ts', '/layered', '#runs']);
+    expect(titles).toEqual(['', '', '', '', '', '', '', '', '']);
   });
 });
 
