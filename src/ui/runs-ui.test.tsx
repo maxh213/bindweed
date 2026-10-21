@@ -160,7 +160,7 @@ describe('Runs panel', () => {
     expect(within(cardOf('plan-dead')).queryAllByRole('link')).toHaveLength(0);
   });
 
-  it('A card\'s log tail, copy and plan link', async () => {
+  it("A card's log tail, copy and plan link", async () => {
     cards = [PANEL[3]];
     await open('#at=src');
     expect(tab('Runs').querySelector('.badge')?.textContent).toBe('1');
