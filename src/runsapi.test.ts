@@ -52,7 +52,9 @@ const BOUNCE_TAIL = [BOUNCE, 'pipeline stopped at hardener', ''];
 const REFUSED_TAIL = ['== qa (09-qa) attempt 1', 'pipeline complete', '', '## Config changes the agents asked for and were refused', 'Decide whether to make any of these yourself.'];
 const COMPLETE = 'pipeline complete\n\n';
 const SUMMARY_LINE = "   07-coder finished in 2.0 min: 'stopped treating pipeline complete as the last line'";
-const PERF_LINES = ['== qa (09-qa) attempt 1', 'pipeline complete', '', '## Performance changes', ...Array.from({ length: 25 }, (_, index) => `- degraded +1.0% \`bench ${index + 1} p50\``)];
+const PERF_TRAILER = ['## Performance changes', ...Array.from({ length: 25 }, (_, index) => `- degraded +1.0% \`bench ${index + 1} p50\``)];
+const PERF_LINES = ['== qa (09-qa) attempt 1', 'pipeline complete', '', ...PERF_TRAILER];
+const LONG_STOP = [...HUMAN_TAIL, ...PERF_TRAILER];
 const STEP_TAIL = ['starting', '== coder (07-coder) attempt 2', SUMMARY_LINE, '== hardener (07-hardener) attempt 1'];
 
 function logged(lines: string[]): string {
@@ -142,6 +144,11 @@ const MARESTAIL: Record<string, Fixture> = {
     await files('001-h')(dir);
     await log(dir, '001-h', logged(BOUNCE_TAIL), '12:10');
     await put(join(dir, SUMMARY), 'stopped: tasks/001-h.md exited 1\n', '12:30');
+  } },
+  longstop: { tool: 'marestail', pid: 'dead', at: '12:02', tasks: ['tasks/001-l.md'], build: async dir => {
+    await files('001-l')(dir);
+    await log(dir, '001-l', logged(LONG_STOP), '12:10');
+    await put(join(dir, SUMMARY), 'stopped: tasks/001-l.md exited 1\n', '12:30');
   } },
   'stopped-older': { tool: 'marestail', pid: 'dead', at: '12:02', tasks: ['tasks/001-w.md', 'tasks/002-x.md'], build: named(logged(HUMAN_TAIL), logged(BOOM_TAIL)) },
   'failed-older': { tool: 'marestail', pid: 'dead', at: '12:02', tasks: ['tasks/001-w.md', 'tasks/002-x.md'], build: named(logged(BOOM_TAIL), logged(HUMAN_TAIL)) },
@@ -393,6 +400,7 @@ describe('GET /api/runs', () => {
     ['unverified', 'running', 'task 001-a · finished · 1 of 1 tasks', UNVERIFIED_TAIL],
     ['harness', 'running', 'task 001-a · finished · 1 of 1 tasks', HARNESS_TAIL],
     ['nothing', 'running', 'task 001-a · finished · 1 of 1 tasks', NOTHING_TAIL],
+    ['longstop', 'stopped for a human', 'task 001-l · coder · attempt 2 · 0 of 1 tasks', LONG_STOP.slice(-20)],
     ['bouncing', 'stopped for a human', 'task 001-h · 0 of 1 tasks', BOUNCE_TAIL],
     ['removed', 'worktree removed', 'worktree removed', []],
     ['sc-removed', 'worktree removed', 'worktree removed', []],
@@ -675,6 +683,8 @@ describe('DELETE /api/runs', () => {
     await writeRuns([done, 7, null, [], removed, dead, relaunched, sibling]);
     expect(await call(`/api/runs?worktree=${worktreeOf('removed')}`, 'DELETE')).toEqual({ status: 200, body: { ok: true } });
     expect(JSON.parse(await runsText())).toEqual([done, 7, null, [], dead, sibling]);
+    expect(await call(`/api/runs?worktree=${encodeURIComponent(sibling.worktree)}`, 'DELETE')).toEqual({ status: 200, body: { ok: true } });
+    expect(JSON.parse(await runsText())).toEqual([done, 7, null, [], dead]);
   });
 
   it.each([
