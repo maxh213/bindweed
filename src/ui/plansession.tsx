@@ -668,11 +668,13 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
   const onRedo = (): void => {
     void redoEdit().then(asking.recheck);
   };
+  const onUndoKey = useEffectEvent(onUndo);
+  const onRedoKey = useEffectEvent(onRedo);
   const onDelete = useEffectEvent(deleteMarked);
   useEffect(() => {
     const run = (action: ReturnType<typeof keyActionOf>): void => {
-      if (action === 'undo') onUndo();
-      else if (action === 'redo') onRedo();
+      if (action === 'undo') onUndoKey();
+      else if (action === 'redo') onRedoKey();
       else if (action === 'delete') onDelete();
     };
     const onKey = (event: KeyboardEvent) => {
