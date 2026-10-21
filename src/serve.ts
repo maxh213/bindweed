@@ -4,6 +4,8 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { basename, dirname, extname, join } from 'node:path';
 import { z } from 'zod';
+import { launchBody, launchFocus, launchReason } from './domain/launch.ts';
+import { inspectLaunch, launchPlan } from './launch.ts';
 import type { CruiserFile } from './cruiser.ts';
 import { contractRules } from './domain/contract.ts';
 import { cycleTexts, edgePairs, graphView, nodeDetail, type GraphFlags, type GraphNode, type GraphView } from './domain/graph.ts';
@@ -22,7 +24,7 @@ export type PortChoice = { mode: 'fixed' | 'range'; port: number };
 
 type AppDeps = { repoRoot: string; uiDir: string; env?: NodeJS.ProcessEnv; limits?: Limits };
 
-type App = Required<AppDeps> & { token: string; runs: Map<string, AbortController> };
+type App = Required<AppDeps> & { token: string; runs: Map<string, AbortController>; launches: Set<string> };
 
 type ListenError = { kind: 'in-use'; port: number } | { kind: 'none-free'; from: number; to: number };
 
@@ -476,7 +478,7 @@ type PlanVerb = (app: App, req: IncomingMessage, res: ServerResponse, slug: stri
 const PLAN_DOC_VERBS: Record<string, PlanVerb> = { GET: getPlan, PUT: putPlan, DELETE: deletePlan };
 
 const PLANS_PREFIX = '/api/plans/';
-const PLAN_ACTION_PATH = /^\/api\/plans\/[^/]*\/(contract|generate|cancel|files|propose|chat|review)$/;
+const PLAN_ACTION_PATH = /^\/api\/plans\/[^/]*\/(contract|generate|cancel|files|propose|chat|review|launch)$/;
 const CLOSED_FLAGS: GraphFlags = { tests: false, external: false };
 
 type PlanAction = (app: App, graphs: GraphHolder, req: IncomingMessage, res: ServerResponse, doc: PlanDoc) => Promise<void>;
@@ -514,6 +516,49 @@ async function postContract(app: App, graphs: GraphHolder, req: IncomingMessage,
   const { rules, cruiser } = await contractFor(app, graphs, doc);
   const chosen = rules.filter(rule => names.includes(rule.name));
   sendJson(res, 200, cruiser.preview(chosen, await hasTsconfig(app.repoRoot)));
+}
+
+async function launchContract(app: App, graphs: GraphHolder, root: string, doc: PlanDoc, names: string[]): Promise<{ text: string } | { error: string }> {
+  const { readCruiser } = await import('./cruiser.ts');
+  const { rules } = await contractFor(app, graphs, doc);
+  const chosen = rules.filter(rule => names.includes(rule.name));
+  return readCruiser(await cruiserSource(root)).preview(chosen, await hasTsconfig(root));
+}
+
+async function getLaunch(app: App, graphs: GraphHolder, _req: IncomingMessage, res: ServerResponse, doc: PlanDoc): Promise<void> {
+  const scan = await readyScan(app, graphs);
+  const stale = planReport(scan, doc.edits, cycleTexts).stale;
+  const focus = launchFocus(scan.files.map(file => file.path), doc.edits, stale);
+  sendJson(res, 200, await inspectLaunch({ root: app.repoRoot, env: app.env }, doc.slug, focus));
+}
+
+function launchRules(doc: PlanDoc): ContractRule[] {
+  return doc.contract?.rules ?? [];
+}
+
+async function postLaunch(app: App, graphs: GraphHolder, req: IncomingMessage, res: ServerResponse, doc: PlanDoc): Promise<void> {
+  const body = launchBody(await readJsonBody(req));
+  if (body === undefined) {
+    sendJson(res, 400, { error: 'bad launch' });
+    return;
+  }
+  if (app.launches.has(doc.slug)) {
+    sendJson(res, 409, { error: 'already running' });
+    return;
+  }
+  app.launches.add(doc.slug);
+  try {
+    const place = { root: app.repoRoot, env: app.env };
+    const reason = launchReason(await inspectLaunch(place, doc.slug, ''), doc, body.tool);
+    if (reason !== null) {
+      sendJson(res, 409, { error: reason });
+      return;
+    }
+    const names = launchRules(doc).map(rule => rule.name);
+    sendJson(res, 200, await launchPlan(place, doc, body, root => launchContract(app, graphs, root, doc, names)));
+  } finally {
+    app.launches.delete(doc.slug);
+  }
 }
 
 async function serveConfig(app: App, res: ServerResponse): Promise<void> {
@@ -786,6 +831,8 @@ function routesFor(app: App, graphs: GraphHolder): Routes {
   router.get('/api/plans/<slug>/chat', (req, res, url) => servePlanAction(app, graphs, req, res, url, getChat));
   router.put('/api/plans/<slug>/chat', (req, res, url) => servePlanAction(app, graphs, req, res, url, putChat));
   router.post('/api/plans/<slug>/review', (req, res, url) => servePlanAction(app, graphs, req, res, url, postReview));
+  router.get('/api/plans/<slug>/launch', (req, res, url) => servePlanAction(app, graphs, req, res, url, getLaunch));
+  router.post('/api/plans/<slug>/launch', (req, res, url) => servePlanAction(app, graphs, req, res, url, postLaunch));
   router.get('/api/config', (_req, res) => serveConfig(app, res));
   router.put('/api/config', (req, res) => putConfig(app, req, res));
   router.get('/api/repo', async (_req, res) => sendJson(res, 200, { root: app.repoRoot }));
@@ -828,7 +875,7 @@ function createAppServer(app: App): Server {
 }
 
 export async function bindApp(deps: AppDeps, choice: PortChoice): Promise<Bound | { error: ListenError }> {
-  const app: App = { env: process.env, limits: DEFAULT_LIMITS, ...deps, token: newToken(), runs: new Map() };
+  const app: App = { env: process.env, limits: DEFAULT_LIMITS, ...deps, token: newToken(), runs: new Map(), launches: new Set() };
   const server = createAppServer(app);
   const listened = await listenForChoice(server, choice);
   if ('error' in listened) return { error: listened.error };

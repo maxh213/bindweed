@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { LaunchBody } from '../domain/launch.ts';
 import type { GraphView, NodeDetail } from '../domain/graph.ts';
 import { emptyLayout, parseLayout, type LayoutDoc } from '../domain/layout.ts';
 import { parseChat, type ChatTurn } from '../domain/chat.ts';
@@ -558,4 +559,16 @@ export function postFiles(token: string, slug: string, fetcher: typeof fetch = f
 
 export function fetchRepo(token: string, fetcher: typeof fetch = fetch): Promise<{ root: string } | { error: string }> {
   return answered(fetcher, '/api/repo', bearer(token), readWith(z.object({ root: z.string() })));
+}
+
+const launchLines = { worktree: z.string().optional(), branch: z.string().optional(), watch: z.string().optional() };
+const launchInfoSchema = z.object({ marestail: z.boolean(), sc: z.boolean(), alive: z.boolean(), focus: z.string(), ...launchLines });
+const launchResultSchema = z.object({ steps: z.array(z.object({ name: z.string(), ok: z.boolean(), error: z.string().optional() })), pid: z.number().optional(), ...launchLines });
+
+export function fetchLaunch(token: string, slug: string, fetcher: typeof fetch = fetch) {
+  return answered(fetcher, `/api/plans/${slug}/launch`, bearer(token), readWith(launchInfoSchema));
+}
+
+export function postLaunch(token: string, slug: string, body: LaunchBody, fetcher: typeof fetch = fetch) {
+  return answered(fetcher, `/api/plans/${slug}/launch`, sendingJson(token, 'POST', body), readWith(launchResultSchema));
 }

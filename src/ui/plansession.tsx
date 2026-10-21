@@ -14,6 +14,7 @@ import {
   type PlanEdit,
 } from '../domain/plan.ts';
 import { ContractPanel } from './ContractPanel.tsx';
+import { LaunchDialog } from './LaunchDialog.tsx';
 import { SettingsDialog } from './SettingsDialog.tsx';
 import { TasksPanel, type TasksRun } from './TasksPanel.tsx';
 import { useAsk } from './asksession.tsx';
@@ -156,6 +157,7 @@ function PlanToolbar(
     onNewPackage: () => void;
     onContract: () => void;
     onTasks: () => void;
+    onLaunch: () => void;
     onSettings: () => void;
   }>,
 ) {
@@ -178,6 +180,7 @@ function PlanToolbar(
           <button type="button" onClick={props.onTasks}>
             Tasks
           </button>
+          <button type="button" onClick={props.onLaunch}>Launch</button>
         </>
       )}
       <button type="button" aria-label="Settings" onClick={props.onSettings}>
@@ -338,6 +341,11 @@ function TasksSlot(
   );
 }
 
+function LaunchSlot(props: Readonly<{ open: boolean; doc: PlanDoc | null; token: string; fetcher: typeof fetch; onClose: () => void }>) {
+  if (!props.open || props.doc === null) return null;
+  return <LaunchDialog token={props.token} fetcher={props.fetcher} doc={props.doc} onClose={props.onClose} />;
+}
+
 function reopenedRun(run: TasksRun): TasksRun {
   return run.kind === 'running' ? run : { kind: 'idle' };
 }
@@ -419,6 +427,7 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
   const closeContract = (): void => setContractOpening(current => ({ ...current, open: false }));
   const [tasksOpening, setTasksOpening] = useState<PanelOpening>({ open: false, count: 0 });
   const [tasksRun, setTasksRun] = useState<TasksRun>({ kind: 'idle' });
+  const [launchOpen, setLaunchOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const docRef = useRef<PlanDoc | null>(null);
   const versionRef = useRef(0);
@@ -725,6 +734,7 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
           setTasksRun(reopenedRun);
           setTasksOpening(current => ({ open: true, count: current.count + 1 }));
         }}
+        onLaunch={() => setLaunchOpen(true)}
         onSettings={() => setSettingsOpen(true)}
       />
     ),
@@ -760,6 +770,7 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
           onRun={setTasksRun}
           onClose={() => setTasksOpening(current => ({ ...current, open: false }))}
         />
+        <LaunchSlot open={launchOpen} doc={doc} token={props.token} fetcher={props.fetcher} onClose={() => setLaunchOpen(false)} />
         {settingsOpen ? <SettingsDialog token={props.token} fetcher={props.fetcher} onClose={() => setSettingsOpen(false)} /> : null}
       </>
     ),
