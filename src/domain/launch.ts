@@ -90,11 +90,17 @@ function carried(path: string | null, edit: PlanEdit): string | null {
   return pathAfter(edit, path);
 }
 
+function plannedPath(file: string, active: PlanEdit[]): string | null {
+  let path: string | null = file;
+  for (const edit of active) path = carried(path, edit);
+  return path;
+}
+
 export function launchFocus(files: string[], edits: PlanEdit[], stale: (string | null)[]): string {
   const named = edits.flatMap(editPaths);
   const current = files.filter(file => named.some(path => within(path, file)));
   const active = edits.filter((_edit, index) => stale[index] === null);
-  const planned = current.map(file => active.reduce<string | null>(carried, file)).filter(path => path !== null);
+  const planned = current.map(file => plannedPath(file, active)).filter(path => path !== null);
   const created = active.flatMap(edit => edit.kind === 'create-package' ? [edit.path] : []);
   return [...new Set([...current, ...planned, ...created])].sort(byStrings).join(' ');
 }

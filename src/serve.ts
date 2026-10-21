@@ -4,7 +4,7 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { basename, dirname, extname, join } from 'node:path';
 import { z } from 'zod';
-import { launchBody, launchFocus, launchReason } from './domain/launch.ts';
+import { launchBody, launchFocus, launchReason, type LaunchBody } from './domain/launch.ts';
 import { inspectLaunch, launchPlan } from './launch.ts';
 import type { CruiserFile } from './cruiser.ts';
 import { contractRules } from './domain/contract.ts';
@@ -514,15 +514,17 @@ async function postContract(app: App, graphs: GraphHolder, req: IncomingMessage,
     return;
   }
   const { rules, cruiser } = await contractFor(app, graphs, doc);
-  const chosen = rules.filter(rule => names.includes(rule.name));
-  sendJson(res, 200, cruiser.preview(chosen, await hasTsconfig(app.repoRoot)));
+  sendJson(res, 200, cruiser.preview(chosenRules(rules, names), await hasTsconfig(app.repoRoot)));
+}
+
+function chosenRules(rules: ContractRule[], names: string[]): ContractRule[] {
+  return rules.filter(rule => names.includes(rule.name));
 }
 
 async function launchContract(app: App, graphs: GraphHolder, root: string, doc: PlanDoc, names: string[]): Promise<{ text: string } | { error: string }> {
   const { readCruiser } = await import('./cruiser.ts');
   const { rules } = await contractFor(app, graphs, doc);
-  const chosen = rules.filter(rule => names.includes(rule.name));
-  return readCruiser(await cruiserSource(root)).preview(chosen, await hasTsconfig(root));
+  return readCruiser(await cruiserSource(root)).preview(chosenRules(rules, names), await hasTsconfig(root));
 }
 
 async function getLaunch(app: App, graphs: GraphHolder, _req: IncomingMessage, res: ServerResponse, doc: PlanDoc): Promise<void> {
@@ -532,8 +534,19 @@ async function getLaunch(app: App, graphs: GraphHolder, _req: IncomingMessage, r
   sendJson(res, 200, await inspectLaunch({ root: app.repoRoot, env: app.env }, doc.slug, focus));
 }
 
-function launchRules(doc: PlanDoc): ContractRule[] {
-  return doc.contract?.rules ?? [];
+function savedRuleNames(doc: PlanDoc): string[] {
+  return (doc.contract?.rules ?? []).map(rule => rule.name);
+}
+
+async function launchOrRefuse(app: App, graphs: GraphHolder, res: ServerResponse, doc: PlanDoc, body: LaunchBody): Promise<void> {
+  const place = { root: app.repoRoot, env: app.env };
+  const reason = launchReason(await inspectLaunch(place, doc.slug, ''), doc, body.tool);
+  if (reason !== null) {
+    sendJson(res, 409, { error: reason });
+    return;
+  }
+  const names = savedRuleNames(doc);
+  sendJson(res, 200, await launchPlan(place, doc, body, root => launchContract(app, graphs, root, doc, names)));
 }
 
 async function postLaunch(app: App, graphs: GraphHolder, req: IncomingMessage, res: ServerResponse, doc: PlanDoc): Promise<void> {
@@ -548,14 +561,7 @@ async function postLaunch(app: App, graphs: GraphHolder, req: IncomingMessage, r
   }
   app.launches.add(doc.slug);
   try {
-    const place = { root: app.repoRoot, env: app.env };
-    const reason = launchReason(await inspectLaunch(place, doc.slug, ''), doc, body.tool);
-    if (reason !== null) {
-      sendJson(res, 409, { error: reason });
-      return;
-    }
-    const names = launchRules(doc).map(rule => rule.name);
-    sendJson(res, 200, await launchPlan(place, doc, body, root => launchContract(app, graphs, root, doc, names)));
+    await launchOrRefuse(app, graphs, res, doc, body);
   } finally {
     app.launches.delete(doc.slug);
   }
