@@ -105,6 +105,25 @@ export function graphStateOf(data: GraphView | { error: string } | undefined, pe
   return { kind: 'ok', view: data };
 }
 
+export type RunsView<T> =
+  | { kind: 'loading' }
+  | { kind: 'message'; message: string }
+  | { kind: 'ready'; cards: T[]; now: number };
+
+export function runsStateOf<T>(data: { runs: T[] } | { error: string } | undefined, pending: boolean, now: number): RunsView<T> {
+  if (pending || data === undefined) return { kind: 'loading' };
+  if ('error' in data) return { kind: 'message', message: data.error };
+  return { kind: 'ready', cards: data.runs, now };
+}
+
+export function nextRuns<T extends { worktree: string }>(
+  current: { runs: T[] } | { error: string } | undefined,
+  worktree: string,
+): { runs: T[] } | { error: string } | undefined {
+  if (current === undefined || !('runs' in current)) return current;
+  return { runs: current.runs.filter(card => card.worktree !== worktree) };
+}
+
 const FILE_HASH_PREFIX = '#file=';
 const RUNS_HASH = '#runs';
 const AT_HASH_PREFIX = '#at=';

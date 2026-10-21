@@ -1,3 +1,4 @@
+import { environmentManager } from '@tanstack/query-core';
 import { JSDOM } from 'jsdom';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -5,6 +6,8 @@ import { fireEvent, within } from '@testing-library/dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App.tsx';
 import type { RunCard } from './client.ts';
+
+const runsOnServer = typeof window === 'undefined' || 'Deno' in globalThis;
 
 const NOW = Date.parse('2026-10-21T13:00:00.000Z');
 let dom: JSDOM;
@@ -99,7 +102,8 @@ async function setVisibility(state: string): Promise<void> {
 }
 
 beforeEach(() => {
-  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+  environmentManager.setIsServer(() => false);
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
   vi.setSystemTime(NOW);
   cards = PANEL;
   runCalls = 0;
@@ -120,6 +124,7 @@ afterEach(async () => {
   await act(async () => { root.unmount(); });
   dom.window.close();
   vi.useRealTimers();
+  environmentManager.setIsServer(() => runsOnServer);
 });
 
 describe('Runs panel', () => {
@@ -226,6 +231,7 @@ describe('Runs panel', () => {
     runsAnswer = [500, { error: 'internal error' }];
     await open('#runs');
     expect(document.querySelector('.runs-panel')?.textContent).toBe('internal error');
+    expect(tab('Runs').querySelector('.badge')).toBeNull();
   });
 
   it('Polling stops on another tab and in a hidden browser tab', async () => {
@@ -262,6 +268,7 @@ describe('Runs panel', () => {
   it('No request starts while the last has not answered', async () => {
     holding = true;
     await open('#runs');
+    expect(document.querySelector('.runs-panel')?.textContent).toBe('Loading runs…');
     expect(runCalls).toBe(1);
     await click(tab('Files'));
     await click(tab('Runs'));

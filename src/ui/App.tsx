@@ -1,8 +1,8 @@
-import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
-import { useEffect, useState, type ReactElement } from 'react';
+import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { togglePath, type TreeEntry } from '../domain/tree.ts';
 import { ArchView } from './ArchView.tsx';
-import { fetchFile, fetchTree } from './client.ts';
+import { fetchFile, fetchRuns, fetchTree, type RunCard } from './client.ts';
 import { FilePanel } from './FilePanel.tsx';
 import { useRunsPane } from './RunsPanel.tsx';
 import { TreeView } from './TreeView.tsx';
@@ -11,6 +11,7 @@ import {
   applyTitle,
   atFromLocation,
   expandedFromLocation,
+  nextRuns,
   openSelection,
   pageFromLocation,
   panelFromQuery,
@@ -32,6 +33,43 @@ export type AppProps = {
 
 function makeQueryClient(): QueryClient {
   return new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false, networkMode: 'always' } } });
+}
+
+const RUNS_POLL_MS = 5000;
+
+type RunsAnswer = { runs: RunCard[] } | { error: string };
+
+function pageVisible(): boolean {
+  return document.visibilityState === 'visible';
+}
+
+function useRunsWatch(token: string, fetcher: typeof fetch, watching: boolean) {
+  const [visible, setVisible] = useState(() => pageVisible());
+  const polling = watching && visible;
+  const query = useQuery({
+    queryKey: ['runs', token] as const,
+    queryFn: () => fetchRuns(token, fetcher),
+    refetchInterval: polling ? RUNS_POLL_MS : false,
+    refetchIntervalInBackground: true,
+    retry: false,
+  });
+  const { refetch, data, isPending, dataUpdatedAt } = query;
+  const wasPolling = useRef(polling);
+  useEffect(() => {
+    const becameShown = polling && !wasPolling.current;
+    wasPolling.current = polling;
+    if (becameShown) void refetch({ cancelRefetch: false });
+  }, [polling, refetch]);
+  useEffect(() => {
+    const update = () => setVisible(pageVisible());
+    document.addEventListener('visibilitychange', update);
+    return () => document.removeEventListener('visibilitychange', update);
+  }, []);
+  const queryClient = useQueryClient();
+  const drop = (worktree: string) => {
+    queryClient.setQueryData<RunsAnswer>(['runs', token], current => nextRuns(current, worktree), { updatedAt: dataUpdatedAt });
+  };
+  return { data, pending: isPending, now: dataUpdatedAt, drop };
 }
 
 type FileLoaderProps = Readonly<{
@@ -118,7 +156,17 @@ function BrowserApp(props: Readonly<AppProps>) {
     setPlan(slug);
     writeHistory(props.historyApi, { kind: 'at', at, plan: slug });
   };
-  const runs = useRunsPane({ token: props.token, fetcher: props.fetcher, watching: tab === 'runs', at, onOpenPlan: openPlan });
+  const watch = useRunsWatch(props.token, props.fetcher, tab === 'runs');
+  const runs = useRunsPane({
+    data: watch.data,
+    pending: watch.pending,
+    now: watch.now,
+    at,
+    token: props.token,
+    fetcher: props.fetcher,
+    onOpenPlan: openPlan,
+    onGone: watch.drop,
+  });
 
   useEffect(() => {
     applyTitle(document, root);

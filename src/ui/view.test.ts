@@ -8,7 +8,9 @@ import {
   atFromLocation,
   expandedFromLocation,
   graphStateOf,
+  nextRuns,
   pageFromLocation,
+  runsStateOf,
   panelFromQuery,
   planFromLocation,
   selectedFromLocation,
@@ -289,5 +291,30 @@ describe('graphStateOf', () => {
     expect(graphStateOf({ error: 'no such directory' }, false)).toEqual({ kind: 'message', message: 'no such directory' });
     const view: GraphView = { at: '', crumbs: [{ name: 'r', at: '' }], nodes: [], edges: [], crapMax: 4, coverage: 'off', mutation: 'off' };
     expect(graphStateOf(view, false)).toEqual({ kind: 'ok', view });
+  });
+});
+
+describe('runsStateOf', () => {
+  const cards = [{ worktree: '/wt' }];
+
+  it('maps a runs query to one view', () => {
+    expect(runsStateOf(undefined, true, 5)).toEqual({ kind: 'loading' });
+    expect(runsStateOf(undefined, false, 5)).toEqual({ kind: 'loading' });
+    expect(runsStateOf({ runs: cards }, true, 5)).toEqual({ kind: 'loading' });
+    expect(runsStateOf({ error: 'internal error' }, false, 5)).toEqual({ kind: 'message', message: 'internal error' });
+    expect(runsStateOf({ runs: cards }, false, 5)).toEqual({ kind: 'ready', cards, now: 5 });
+  });
+});
+
+describe('nextRuns', () => {
+  const kept = { worktree: '/kept' };
+  const gone = { worktree: '/gone' };
+
+  it('drops the forgotten run and leaves every other cache value', () => {
+    const error = { error: 'bad' };
+    expect(nextRuns(undefined, '/gone')).toBeUndefined();
+    expect(nextRuns(error, '/gone')).toBe(error);
+    expect(nextRuns({ runs: [kept, gone] }, '/gone')).toEqual({ runs: [kept] });
+    expect(nextRuns({ runs: [kept] }, '/missing')).toEqual({ runs: [kept] });
   });
 });

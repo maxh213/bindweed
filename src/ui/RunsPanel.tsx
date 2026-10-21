@@ -1,11 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchRuns, forgetRun, type RunCard } from './client.ts';
-import { atHash } from './view.ts';
+import { useState, type ReactElement } from 'react';
+import { forgetRun, type RunCard } from './client.ts';
+import { atHash, runsStateOf, type RunsView } from './view.ts';
 
-type Runs = { cards: RunCard[]; now: number; note: string | null };
-
-const POLL_MS = 5000;
 const EMPTY = 'No runs launched from this repository yet.';
+const LOADING = 'Loading runs…';
 const PILLS: Record<RunCard['state'], string> = {
   running: 'pill-running',
   'stopped for a human': 'pill-stopped',
@@ -14,62 +12,6 @@ const PILLS: Record<RunCard['state'], string> = {
   dead: 'pill-dead',
   'worktree removed': 'pill-removed',
 };
-
-function isVisible(): boolean {
-  return document.visibilityState === 'visible';
-}
-
-function useVisible(): boolean {
-  const [visible, setVisible] = useState(isVisible);
-  useEffect(() => {
-    const update = () => setVisible(isVisible());
-    document.addEventListener('visibilitychange', update);
-    return () => document.removeEventListener('visibilitychange', update);
-  }, []);
-  return visible;
-}
-
-function repeat(read: () => Promise<void>): () => void {
-  let stopped = false;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const tick = async () => {
-    await read();
-    if (!stopped) timer = setTimeout(tick, POLL_MS);
-  };
-  void tick();
-  return () => {
-    stopped = true;
-    clearTimeout(timer);
-  };
-}
-
-function answered(answer: { runs: RunCard[] } | { error: string }): Runs {
-  if ('error' in answer) return { cards: [], now: Date.now(), note: answer.error };
-  return { cards: answer.runs, now: Date.now(), note: null };
-}
-
-function useRuns(token: string, fetcher: typeof fetch, watching: boolean) {
-  const [runs, setRuns] = useState<Runs>({ cards: [], now: 0, note: 'Loading runs…' });
-  const inflight = useRef<Promise<void> | null>(null);
-  const loaded = useRef(false);
-  const polling = useVisible() && watching;
-  const read = useCallback(() => {
-    inflight.current ??= fetchRuns(token, fetcher).then(answer => {
-      inflight.current = null;
-      setRuns(answered(answer));
-    });
-    return inflight.current;
-  }, [token, fetcher]);
-  useEffect(() => {
-    const first = !loaded.current;
-    loaded.current = true;
-    if (polling) return repeat(read);
-    if (first) void read();
-    return undefined;
-  }, [polling, read]);
-  const drop = useCallback((worktree: string) => setRuns(current => ({ ...current, cards: current.cards.filter(card => card.worktree !== worktree) })), []);
-  return { runs, drop, running: runs.cards.filter(card => card.state === 'running').length };
-}
 
 function elapsed(ms: number): string {
   const seconds = Math.max(0, Math.floor(ms / 1000));
@@ -149,25 +91,66 @@ function Card(props: CardProps) {
   );
 }
 
-type PanelProps = Readonly<{ runs: Runs; at: string; token: string; fetcher: typeof fetch; onOpenPlan: (slug: string) => void; onGone: (worktree: string) => void }>;
+type PanelProps = Readonly<{
+  state: RunsView<RunCard>;
+  at: string;
+  token: string;
+  fetcher: typeof fetch;
+  onOpenPlan: (slug: string) => void;
+  onGone: (worktree: string) => void;
+}>;
 
-function RunsPanel(props: PanelProps) {
-  const { runs, ...rest } = props;
-  if (runs.note !== null) return <main className="runs-panel">{runs.note}</main>;
-  if (runs.cards.length === 0) return <main className="runs-panel">{EMPTY}</main>;
+function RunsNote(props: Readonly<{ text: string }>) {
+  return <main className="runs-panel">{props.text}</main>;
+}
+
+function runningCard(card: RunCard): boolean {
+  return card.state === 'running';
+}
+
+function runningCount(state: RunsView<RunCard>): number {
+  if (state.kind !== 'ready') return 0;
+  return state.cards.filter(runningCard).length;
+}
+
+type ReadyProps = Omit<PanelProps, 'state'> & { state: Extract<RunsView<RunCard>, { kind: 'ready' }> };
+
+function RunsList(props: ReadyProps) {
+  const { state, ...rest } = props;
+  if (state.cards.length === 0) return <RunsNote text={EMPTY} />;
   return (
     <main className="runs-panel">
-      {runs.cards.map(card => (
-        <Card key={`${card.worktree}\n${card.startedAt}`} card={card} now={runs.now} {...rest} />
+      {state.cards.map(card => (
+        <Card key={`${card.worktree}\n${card.startedAt}`} card={card} now={state.now} {...rest} />
       ))}
     </main>
   );
 }
 
-type PaneProps = Readonly<{ token: string; fetcher: typeof fetch; watching: boolean; at: string; onOpenPlan: (slug: string) => void }>;
+function RunsPanel(props: PanelProps): ReactElement {
+  switch (props.state.kind) {
+    case 'loading':
+      return <RunsNote text={LOADING} />;
+    case 'message':
+      return <RunsNote text={props.state.message} />;
+    case 'ready':
+      return <RunsList {...props} state={props.state} />;
+  }
+}
+
+type PaneProps = Readonly<{
+  data: { runs: RunCard[] } | { error: string } | undefined;
+  pending: boolean;
+  now: number;
+  at: string;
+  token: string;
+  fetcher: typeof fetch;
+  onOpenPlan: (slug: string) => void;
+  onGone: (worktree: string) => void;
+}>;
 
 export function useRunsPane(props: PaneProps) {
-  const { runs, drop, running } = useRuns(props.token, props.fetcher, props.watching);
-  const pane = <RunsPanel runs={runs} at={props.at} token={props.token} fetcher={props.fetcher} onOpenPlan={props.onOpenPlan} onGone={drop} />;
-  return { running, pane };
+  const state = runsStateOf(props.data, props.pending, props.now);
+  const pane = <RunsPanel state={state} at={props.at} token={props.token} fetcher={props.fetcher} onOpenPlan={props.onOpenPlan} onGone={props.onGone} />;
+  return { running: runningCount(state), pane };
 }
