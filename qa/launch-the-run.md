@@ -79,7 +79,7 @@ Launch
 4. Click `Close`. In the first terminal press Ctrl-C, then run `PATH="$QA/fakes/nosh:$NODEBIN:/usr/bin:/bin" CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli CLAUDE_CONFIG_DIR=/tmp/qa/claude node $BW/src/cli.ts --port 5000`. Open the new address with `#at=src&plan=empty` and the new token. Click `Launch`.
    **Expect:** the dialog shows `marestail is not on PATH` and `Launch` is disabled. Choosing `slop-cannon` replaces that with `this plan has no brief`.
 
-5. Click `Close`. Press Ctrl-C and start bindweed again with the step 1 `PATH` and the same three `CLAUDE` variables. Open the new address with `#at=src` and the new token. Create a plan named `Gate`. Click the arrow from `app` to `domain` and press Delete. Click `Contract`, then `Save to plan`. Click `Contract`, then `Copy`, and in the second terminal save the clipboard into `$QA/preview.cjs` (for example `wl-paste -n > $QA/preview.cjs`). Then paste:
+5. Click `Close`. Press Ctrl-C and start bindweed again with the step 1 `PATH` and the same three `CLAUDE` variables. Open the new address with `#at=src` and the new token. Create a plan named `Gate`. Click the arrow from `app` to `domain` and press Delete. Click `Contract`, then `Save to plan`. Click `Contract`, then `Copy`, and in the second terminal save the clipboard into `$QA/preview.cjs` (for example `wl-paste -n > $QA/preview.cjs`). In that terminal, before the curl, `export TOKEN` to the token in the address this restart just printed (`?token=`). That replaces the step 1 value still in the shell. Do not use the step 4 token. Then paste:
 
 ```sh
 curl -s -H "Authorization: Bearer $TOKEN" $U/api/plans/gate > "$QA/gate.json"
@@ -159,12 +159,12 @@ cat "$QA/layered-bw-gate/.gitignore"
 echo "--- worktree ---"
 git -C "$QA/layered-bw-gate" status --porcelain
 echo "--- browsed ---"
-git -C "$QA/layered" status --porcelain && echo porcelain-empty
+test -z "$(git -C "$QA/layered" status --porcelain)" && echo porcelain-empty
 test ! -e "$QA/layered/.dependency-cruiser.cjs" && echo cruiser-not-here
 cat "$QA/log/marestail.log"
 ```
 
-   **Expect:** the subject is `bindweed: Gate`, then a blank line, then `src/app must not import src/domain (1 import)`, `Plan: gate` and `Base: ` plus 40 hex characters. The paths, in this order, are `.dependency-cruiser.cjs`, `.gitignore`, `marestail.toml`, `tasks/005-add-core.md`, `tasks/006-move-b.md`, `tasks/007-cut-app-domain.md` and `tasks/README.md`. `cruiser-matches` prints. The overnight line is `tasks/005-add-core.md tasks/006-move-b.md tasks/007-cut-app-domain.md`, then `dandelion/route-best | hard | src/app/a.ts src/domain/model.ts | qa | null | $QA/fakes/bin`. Both greps print `1`. The toml cat prints `installed=1`. The readme cat prints `qa tasks`. The ignore cat prints `qa-ignore`. The worktree status is exactly `?? .marestail/`. That line is the untracked directory holding the launch script and its `.out`. `porcelain-empty` and `cruiser-not-here` print. The log is the line `install .`.
+   **Expect:** the subject is `bindweed: Gate`, then a blank line, then `src/app must not import src/domain (1 import)`, `Plan: gate` and `Base: ` plus 40 hex characters. The paths, in this order, are `.dependency-cruiser.cjs`, `.gitignore`, `marestail.toml`, `tasks/005-add-core.md`, `tasks/006-move-b.md`, `tasks/007-cut-app-domain.md` and `tasks/README.md`. `cruiser-matches` prints. The overnight line is `tasks/005-add-core.md tasks/006-move-b.md tasks/007-cut-app-domain.md`, then `dandelion/route-best | hard | src/app/a.ts src/domain/model.ts | qa | null | $QA/fakes/bin`. Both greps print `1`. The toml cat prints `installed=1`. The readme cat prints `qa tasks`. The ignore cat prints `qa-ignore`. The worktree status is exactly `?? .marestail/`. That line is the untracked directory holding the launch script and its `.out`. The browsed command prints only `porcelain-empty`, with no lines before it. `cruiser-not-here` prints. The log is the line `install .`.
 
 10. Kill the run and the branch it left, then launch into a branch that already exists. Paste:
 
@@ -176,7 +176,7 @@ git -C "$QA/layered" branch bindweed/gate
 ```
 
    Click `Close`, then `Launch`, and click the dialog's `Launch`.
-   **Expect:** the dialog's `Launch` was enabled before the click. The only step is `Worktree a branch named 'bindweed/gate' already exists`, with no `✓` and no `Copy worktree`. The form is still there: `Tool` is `marestail`, the four fields are the defaults, and the dialog's `Launch` is enabled again. `test ! -e $QA/layered-bw-gate && git -C $QA/layered status --porcelain && echo clean` prints `clean`.
+   **Expect:** the dialog's `Launch` was enabled before the click. The only step is `Worktree a branch named 'bindweed/gate' already exists`, with no `✓` and no `Copy worktree`. The form is still there: `Tool` is `marestail`, the four fields are the defaults, and the dialog's `Launch` is enabled again. `test ! -e $QA/layered-bw-gate && test -z "$(git -C $QA/layered status --porcelain)" && echo clean` prints only `clean`, with no lines before it.
 
 ```
 Launch
@@ -191,7 +191,7 @@ Steps
 ```
 
 11. Paste `git -C "$QA/layered" branch -D bindweed/gate`. Stay in that dialog. Choose `slop-cannon`, leave `Safety` on and `Ammo` and `Cartridge` blank, and click the dialog's `Launch`. Click `Copy command` and paste it.
-   **Expect:** the five steps are ticked. The watch command, and the paste, is `sc status --repo $QA/layered-bw-gate`. In the second terminal, `node -e 'const o=require(process.argv[1]); console.log(o.cwd); console.log(o.argv.join(" "))' "$QA/log/sc.json"` prints `$QA/layered` and then `--repo $QA/layered-bw-gate --headless --safety on -m # Reshape layered` followed, after a blank line, by `Move b, then cut app from domain.` The worktree has no `tasks/005-add-core.md`. `git -C $QA/layered status --porcelain && echo clean` prints `clean`.
+   **Expect:** the five steps are ticked. The watch command, and the paste, is `sc status --repo $QA/layered-bw-gate`. In the second terminal, `node -e 'const o=require(process.argv[1]); console.log(o.cwd); console.log(o.argv.join(" "))' "$QA/log/sc.json"` prints `$QA/layered` and then `--repo $QA/layered-bw-gate --headless --safety on -m # Reshape layered` followed, after a blank line, by `Move b, then cut app from domain.` The worktree has no `tasks/005-add-core.md`. `test -z "$(git -C $QA/layered status --porcelain)" && echo clean` prints only `clean`, with no lines before it.
 
 12. In the second terminal take the last pid from `$QA/layered/.bindweed/runs.json` the same way as step 8 and run `kill -- -"$PID"`. Then `git -C "$QA/layered" worktree remove --force "$QA/layered-bw-gate"` and `git -C "$QA/layered" branch -D bindweed/gate`. In the first terminal press Ctrl-C. Run `git -C "$QA/layered" status --porcelain && git -C "$QA/layered" worktree list && echo clean`, then `cd ~ && rm -rf "$QA"`.
    **Expect:** one worktree line, the browsed repository, then `clean`.
