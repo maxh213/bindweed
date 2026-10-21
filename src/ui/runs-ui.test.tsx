@@ -236,6 +236,18 @@ describe('Runs panel', () => {
     expect(cardOf('plan-dead').textContent).toContain(`started ${startedAt} · ${elapsed}`);
   });
 
+  it('A done card shows the same elapsed and moves it when the poll returns', async () => {
+    const startedAt = new Date(NOW - 59_000).toISOString();
+    cards = [card('dead', 'dead', 'x', { startedAt }), card('done', 'done', 'all tasks complete · 2 of 2 tasks', { startedAt })];
+    await open('#runs');
+    expect(cardOf('plan-dead').textContent).toContain(`started ${startedAt} · 59s`);
+    expect(cardOf('plan-done').textContent).toContain(`started ${startedAt} · 59s`);
+    await advance(60_000);
+    expect(runCalls).toBeGreaterThan(1);
+    expect(cardOf('plan-dead').textContent).toContain(`started ${startedAt} · 1m`);
+    expect(cardOf('plan-done').textContent).toContain(`started ${startedAt} · 1m`);
+  });
+
   it('Forget removes the card, and a refused Forget keeps it', async () => {
     cards = [PANEL[6], PANEL[7]];
     deleteAnswers = [[400, { error: 'worktree still exists' }]];

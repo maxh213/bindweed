@@ -45,6 +45,9 @@ const DONE_TAIL = ['== qa (09-qa) attempt 1', 'pipeline complete', ''];
 const HUMAN_TAIL = ['== coder (03-coder) attempt 2', 'gate failed', H, 'pipeline stopped at coder', ''];
 const BOOM_TAIL = ['== coder (03-coder) attempt 1', 'npm ERR! boom', 'pipeline stopped at coder', ''];
 const UNVERIFIED_TAIL = ['== qa (09-qa) attempt 1', 'pipeline complete, NOT verified by eye', ''];
+const HARNESS_TAIL = ['== qa (09-qa) attempt 1', 'pipeline complete, NOT verified against the running app (qa ran against a harness)', ''];
+const BOUNCE = 'hardener still bouncing after 1 rounds; stopping for a human';
+const BOUNCE_TAIL = [BOUNCE, 'pipeline stopped at hardener', ''];
 const REFUSED_TAIL = ['== qa (09-qa) attempt 1', 'pipeline complete', '', '## Config changes the agents asked for and were refused', 'Decide whether to make any of these yourself.'];
 const COMPLETE = 'pipeline complete\n\n';
 const SUMMARY_LINE = "   07-coder finished in 2.0 min: 'stopped treating pipeline complete as the last line'";
@@ -126,6 +129,15 @@ const MARESTAIL: Record<string, Fixture> = {
     await files('001-a')(dir);
     await log(dir, '001-a', logged(UNVERIFIED_TAIL), '12:10');
   } },
+  harness: { tool: 'marestail', pid: 'live', at: '12:08', tasks: ['tasks/001-a.md'], build: async dir => {
+    await files('001-a')(dir);
+    await log(dir, '001-a', logged(HARNESS_TAIL), '12:10');
+  } },
+  bouncing: { tool: 'marestail', pid: 'dead', at: '12:02', tasks: ['tasks/001-h.md'], build: async dir => {
+    await files('001-h')(dir);
+    await log(dir, '001-h', logged(BOUNCE_TAIL), '12:10');
+    await put(join(dir, SUMMARY), 'stopped: tasks/001-h.md exited 1\n', '12:30');
+  } },
   'stopped-older': { tool: 'marestail', pid: 'dead', at: '12:02', tasks: ['tasks/001-w.md', 'tasks/002-x.md'], build: named(logged(HUMAN_TAIL), logged(BOOM_TAIL)) },
   'failed-older': { tool: 'marestail', pid: 'dead', at: '12:02', tasks: ['tasks/001-w.md', 'tasks/002-x.md'], build: named(logged(BOOM_TAIL), logged(HUMAN_TAIL)) },
   removed: { tool: 'marestail', pid: 'dead', at: '12:00', tasks: [], build: async dir => rm(dir, { recursive: true }) },
@@ -150,6 +162,7 @@ const CANNON: Record<string, Fixture> = {
   'sc-text': { tool: 'slop-cannon', pid: 'live', at: '12:15', build: status('sc-status.json', 'nope') },
   'sc-quiet': { tool: 'slop-cannon', pid: 'dead', at: '12:16', build: status('sc-status.code', '') },
   'sc-odd': { tool: 'slop-cannon', pid: 'live', at: '12:17', build: status('sc-status.json', JSON.stringify({ state: null, agents: 'x', beads: { open: 'many', done: 2 }, prs: [1, { url: 2 }, { url: 'https://example.test/pull/9' }] })) },
+  'sc-zero': { tool: 'slop-cannon', pid: 'live', at: '12:17', build: status('sc-status.json', JSON.stringify({ state: { phase: 'running' }, agents: [{ alive: true }], beads: { open: 0, done: 3 }, prs: [] })) },
   'sc-nulls': { tool: 'slop-cannon', pid: 'live', at: '12:17', build: status('sc-status.json', JSON.stringify({ state: { phase: 'running' }, agents: [null, { alive: true }], beads: {}, prs: [null, 1, { url: 2 }, { url: 'https://example.test/pull/9' }] })) },
   'sc-truthy': { tool: 'slop-cannon', pid: 'live', at: '12:19', build: status('sc-status.json', JSON.stringify({ state: { phase: 'running' }, agents: [{ alive: true }, { alive: 'true' }, { alive: 1 }], beads: {}, prs: [] })) },
   'sc-gone': { tool: 'slop-cannon', pid: 'dead', at: '12:19', build: status('sc-status.json', JSON.stringify({ state: { phase: 'running' } })) },
@@ -373,6 +386,8 @@ describe('GET /api/runs', () => {
     ['perf', 'running', 'task 001-a · finished · 1 of 2 tasks', PERF_LINES.slice(-20)],
     ['fresh', 'dead', 'no task started · 0 of 1 tasks', []],
     ['unverified', 'running', 'task 001-a · finished · 1 of 1 tasks', UNVERIFIED_TAIL],
+    ['harness', 'running', 'task 001-a · finished · 1 of 1 tasks', HARNESS_TAIL],
+    ['bouncing', 'stopped for a human', 'task 001-h · 0 of 1 tasks', BOUNCE_TAIL],
     ['removed', 'worktree removed', 'worktree removed', []],
     ['sc-removed', 'worktree removed', 'worktree removed', []],
     ['removed-live', 'worktree removed', 'worktree removed', []],
@@ -389,6 +404,7 @@ describe('GET /api/runs', () => {
     ['sc-string', 'running', 'sc status failed: not JSON · pid alive', []],
     ['sc-quiet', 'dead', 'sc status failed: exited 3 · pid gone', []],
     ['sc-odd', 'running', ' · 0 agents · 2 done · 1 PR', []],
+    ['sc-zero', 'running', 'running · 1 agent · 0 open · 3 done · 0 PRs', []],
     ['sc-nulls', 'running', 'running · 1 agent · 1 PR', []],
     ['sc-truthy', 'running', 'running · 1 agent · 0 PRs', []],
     ['sc-phase', 'done', 'done · 0 agents · 0 PRs', []],
