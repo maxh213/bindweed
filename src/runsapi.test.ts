@@ -46,6 +46,8 @@ const BOOM_TAIL = ['== coder (03-coder) attempt 1', 'npm ERR! boom', 'pipeline s
 const UNVERIFIED_TAIL = ['== qa (09-qa) attempt 1', 'pipeline complete, NOT verified by eye', ''];
 const REFUSED_TAIL = ['== qa (09-qa) attempt 1', 'pipeline complete', '', '## Config changes the agents asked for and were refused', 'Decide whether to make any of these yourself.'];
 const COMPLETE = 'pipeline complete\n\n';
+const SUMMARY_LINE = "   07-coder finished in 2.0 min: 'stopped treating pipeline complete as the last line'";
+const STEP_TAIL = ['starting', '== coder (07-coder) attempt 2', SUMMARY_LINE, '== hardener (07-hardener) attempt 1'];
 
 function logged(lines: string[]): string {
   return `${lines.join('\n')}\n`;
@@ -83,7 +85,8 @@ const MARESTAIL: Record<string, Fixture> = {
     await files('README', '000-old', '001-init', '002-step', '003-later')(dir);
     await log(dir, '000-old', 'pipeline complete\n', '12:25');
     await log(dir, '001-init', COMPLETE, '12:10');
-    await log(dir, '002-step', 'starting\n== coder (07-coder) attempt 2\n== hardener (07-hardener) attempt 1\n', '12:20');
+    await log(dir, '002-step', logged(STEP_TAIL), '12:20');
+    await log(dir, '003-later', `${SUMMARY_LINE}\n`, '12:15');
     await put(join(dir, '.marestail/runs/direct-001-20261021T1226.log'), 'x\n', '12:26');
   } },
   dead: { tool: 'marestail', pid: 'dead', at: '12:05', build: async dir => {
@@ -314,7 +317,7 @@ describe('GET /api/runs', () => {
     ['failed', 'failed', 'task 001-f · coder · attempt 1 · 0 of 1 tasks', BOOM_TAIL],
     ['stopped-older', 'stopped for a human', 'task 002-x · coder · attempt 1 · 0 of 2 tasks', BOOM_TAIL],
     ['failed-older', 'failed', 'task 002-x · coder · attempt 2 · 0 of 2 tasks', HUMAN_TAIL],
-    ['running', 'running', 'task 002-step · hardener · attempt 1 · 1 of 3 tasks', ['starting', '== coder (07-coder) attempt 2', '== hardener (07-hardener) attempt 1']],
+    ['running', 'running', 'task 002-step · hardener · attempt 1 · 1 of 3 tasks', STEP_TAIL],
     ['dead', 'dead', 'task 001-task · 0 of 1 tasks', ['starting']],
     ['between', 'running', 'task 001-a · finished · 1 of 2 tasks', DONE_TAIL],
     ['refused', 'running', 'task 001-a · finished · 1 of 2 tasks', REFUSED_TAIL],

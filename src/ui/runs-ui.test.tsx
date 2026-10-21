@@ -269,7 +269,9 @@ describe('Runs panel', () => {
     cards = [PANEL[3]];
     await open('#runs');
     expect(runCalls).toBe(1);
-    await advance(5000);
+    await advance(4999);
+    expect(runCalls).toBe(1);
+    await advance(1);
     expect(runCalls).toBe(2);
     await advance(5000);
     expect(runCalls).toBe(3);
@@ -285,7 +287,9 @@ describe('Runs panel', () => {
     expect(runCalls).toBe(4);
     await setVisibility('visible');
     expect(runCalls).toBe(5);
-    await advance(5000);
+    await advance(4999);
+    expect(runCalls).toBe(5);
+    await advance(1);
     expect(runCalls).toBe(6);
   });
 
