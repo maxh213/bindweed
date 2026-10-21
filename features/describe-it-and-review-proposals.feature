@@ -22,9 +22,17 @@ Feature: say what you dislike and review the proposed reshaping on the canvas
   Their sentences are "src/app must not import src/domain (1 import)",
   "Create package src/ports", "Move src/app/b.ts to src/ports",
   "Move src/no-such.ts to src/ports" and "src/domain should use src/app".
+  "The jobs edits" are, in this order,
+  {"kind":"split-package","package":"src/app","parts":[{"name":"scan","files":["src/app/a.ts"]},{"name":"jobs","files":["src/app/b.ts"]}]},
+  {"kind":"move-file","file":"src/app/scan/a.ts","to":"src/infra"},
+  {"kind":"fate","file":"src/infra/db.ts","fate":"delete"} and
+  {"kind":"note","target":{"node":"src/app"},"text":"three jobs"}. Their
+  sentences are "Split src/app into src/app/scan (1 file) and src/app/jobs (1 file)",
+  "Move src/app/scan/a.ts to src/infra", "Delete src/infra/db.ts" and
+  "Note on src/app: \"three jobs\"".
 
   "The fake" is the 008 fake from features/flesh-out-into-tasks-and-brief.feature,
-  with two rows checked after the SLEEP-NOW and BAD-ONCE rows and before
+  with three rows checked after the SLEEP-NOW and BAD-ONCE rows and before
   "Reply with slices now.". A row matches the current dislike only: the prompt
   contains the two-line needle "## What they dislike\n<phrase>\n". History is
   quoted as "They said:" and does not match. "keep scan where it is" is checked
@@ -32,7 +40,9 @@ Feature: say what you dislike and review the proposed reshaping on the canvas
   json block {"example":1}, the line "Proposed.", then a fenced json block of
   {"summary":"Pull scanning out of the ui so app has one job.","edits":<the four edits>}.
   The keep reply is a fenced json block of
-  {"summary":"Leave scanning in app.","edits":[<the keep edit>]}.
+  {"summary":"Leave scanning in app.","edits":[<the keep edit>]}. The jobs
+  reply, for "app is doing three jobs", is a fenced json block of
+  {"summary":"Give each job its own package.","edits":<the jobs edits>}.
 
   Background:
     Given bindweed's ui was built with "npm run build"
@@ -41,7 +51,7 @@ Feature: say what you dislike and review the proposed reshaping on the canvas
 
   Rule: Propose asks through the 008 backend and saves a chat beside the plan
     POST /api/plans/<slug>/propose takes exactly {"text":T,"at":A}. T is a
-    non-blank string and A is a view directory, "" allowed. Anything else,
+    non-blank string and may hold "\n". A is a view directory, "" allowed. Anything else,
     including a blank T or an A that is not a view, answers 400
     {"error":"bad propose"} and does not run the LLM. The backend, its 15 minute
     limit, the route fallback, Cancel, the retry and the error bodies are the
@@ -81,8 +91,8 @@ Feature: say what you dislike and review the proposed reshaping on the canvas
       type <n>", then " heritage <n>" when heritage is greater than 0, then
       " cycle <true|false>", then " text <cycleText>" when the edge has one.
       Tests and external packages are off. Redo is not applied.
-    - ## The plan's edits so far, then "none", or each sentence and then
-      JSON.stringify of the edits
+    - ## The plan's edits so far, then "none", or one line per edit with its
+      sentence and then one line of JSON.stringify of the edits
     - ## Edit JSON, then these lines, word for word:
       {"kind":"move-file","file":"<path>","to":"<dir>"}
       {"kind":"cut-edge","from":"<box>","to":"<box>","files":[["<file>","<file>"]]}
@@ -96,14 +106,19 @@ Feature: say what you dislike and review the proposed reshaping on the canvas
       {"kind":"split-package","package":"<path>","parts":[{"name":"<name>","files":["<path>"]}]}
       {"kind":"fate","file":"<path>","fate":"delete"}
       {"kind":"fate","file":"<path>","fate":"fold","into":"<path>"}
-    - ## Conversation so far, then "none", or for each turn "They said: <text>",
-      "Summary: <summary>", and "<index> <accepted|rejected|open>: <sentence>".
-      A missing decision is "open". A value that is not an edit uses
-      JSON.stringify of that value as its sentence.
+    - ## Conversation so far, then "none", or each saved turn in order, with
+      no blank line inside the section: "They said: <first line of text>",
+      then each further line of the text (split on "\n") after two spaces,
+      then "Summary: <summary>", then one line per edit
+      "<index> <accepted|rejected|open>: <sentence>". A missing decision is
+      "open". A value that is not an edit uses JSON.stringify of that value as
+      its sentence. A chat file that is not a chat document counts as no turns.
     - ## What to reply, then "Reply with exactly one JSON object, in a fenced json block."
       and {"summary":"<one paragraph>","edits":[<edit>]}
-    GET /api/plans/<slug>/chat answers the array, or [] when the file is
-    missing, and does not create it. PUT replaces the file with a chat
+    GET /api/plans/<slug>/chat answers the array, or 200 [] when the file is
+    missing or is not a chat document, and does not create or change it. A
+    usable reply over such a file writes a new file holding only the new
+    turn. PUT replaces the file with a chat
     document: an array of turns with exactly the keys at, text, summary, edits
     and decisions. at matches the plan createdAt pattern. text is non-empty.
     summary is one paragraph. edits is an array. decisions maps the decimal
@@ -111,8 +126,9 @@ Feature: say what you dislike and review the proposed reshaping on the canvas
     Anything else answers 400 {"error":"bad chat"} and leaves the bytes.
     POST /api/plans/<slug>/review takes exactly {"edits":[...]} and answers
     {"stale":[...]} by the same check, and writes nothing. The chat file is not
-    a plan: the list skips it, GET /api/plans/<slug> has no chat key, and
-    DELETE removes only <slug>.json.
+    a plan: the list skips it and GET /api/plans/<slug> has no chat key.
+    DELETE /api/plans/<slug> removes <slug>.json and, when present,
+    <slug>.chat.json, and answers as before.
 
     Scenario: The dislike is sent with the view, the schema and no plan change
       Given the plan "Gate" has no edits
@@ -173,6 +189,56 @@ Feature: say what you dislike and review the proposed reshaping on the canvas
       Then the body is {"stale":["not an edit"]}
       And no file exists under "/tmp/qa/layered/.bindweed/plans"
 
+    Scenario: The prompt quotes the plan's edits and every earlier turn
+      Given the plan "Gate" has the package cut
+      And I send "PUT /api/plans/gate/chat" with the token and these two turns:
+        | at                       | text                           | summary                                         | edits                                                         | decisions                                                 |
+        | 2026-10-21T09:00:00.000Z | the ui knows about the scanner | Pull scanning out of the ui so app has one job. | the four edits                                                | {"0":"accepted","1":"rejected","2":"rejected","3":"rejected"} |
+        | 2026-10-21T09:05:00.000Z | split it\nby job               | Split app.                                      | [<the keep edit>,{"kind":"fold","file":"src/app/a.ts"}]       | {"0":"rejected"}                                          |
+      When I send "POST /api/plans/gate/propose" with the token and {"text":"keep scan where it is","at":"src"}
+      Then the status is 200 and "chat" has three turns, the first two as sent
+      And /tmp/qa/log/1.prompt contains this block, followed by a blank line and "## Edit JSON":
+        """
+        ## The plan's edits so far
+        src/app must not import src/domain (1 import)
+        [{"kind":"cut-edge","from":"src/app","to":"src/domain","files":[["src/app/a.ts","src/domain/model.ts"]]}]
+        """
+      And it contains this block, followed by a blank line and "## What to reply":
+        """
+        ## Conversation so far
+        They said: the ui knows about the scanner
+        Summary: Pull scanning out of the ui so app has one job.
+        0 accepted: src/app must not import src/domain (1 import)
+        1 rejected: Create package src/ports
+        2 rejected: Move src/app/b.ts to src/ports
+        3 rejected: Move src/no-such.ts to src/ports
+        They said: split it
+          by job
+        Summary: Split app.
+        0 rejected: src/domain should use src/app
+        1 open: {"kind":"fold","file":"src/app/a.ts"}
+        """
+      And it contains "## What they dislike\nkeep scan where it is\n"
+
+    Scenario: Deleting a plan deletes its chat, so a new plan of the same name starts clean
+      Given the plan "Gate" has no edits
+      And I send "POST /api/plans/gate/propose" with the token and {"text":"the ui knows about the scanner","at":"src"}
+      When I send "DELETE /api/plans/gate" with the token
+      Then the body is {"ok":true} and neither "gate.json" nor "gate.chat.json" exists under "/tmp/qa/layered/.bindweed/plans"
+      When I send "POST /api/plans" with the token and {"name":"Gate"}
+      Then its slug is "gate" and "GET /api/plans/gate/chat" is []
+      And opening "http://127.0.0.1:5000/?token={token}#at=src&plan=gate" shows no "Conversation" button, no proposals region and no element with data-proposal "true"
+
+    Scenario: A chat file that is not a chat document reads as empty and is replaced by the next turn
+      Given the plan "Gate" has no edits
+      And "/tmp/qa/layered/.bindweed/plans/gate.chat.json" holds "{not json"
+      When I send "GET /api/plans/gate/chat" with the token
+      Then the status is 200 and the body is [] and the file still holds "{not json"
+      And opening the src planned view of "Gate" shows no "Conversation" button, no proposals region and no error
+      When I send "POST /api/plans/gate/propose" with the token and {"text":"keep scan where it is","at":"src"}
+      Then /tmp/qa/log/1.prompt contains "## Conversation so far\nnone"
+      And "gate.chat.json" parses as one turn with text "keep scan where it is" and the keep edit
+
     Scenario: A bad reply is retried once and Cancel kills the run
       Given the plan "Gate" has no edits
       When I send "POST /api/plans/gate/propose" with the token and {"text":"BAD-ONCE","at":"src"}
@@ -213,6 +279,7 @@ Feature: say what you dislike and review the proposed reshaping on the canvas
         | GET /api/plans/gate/chat      | the token                                                | 200    | []                                 |
         | POST /api/plans/gate/review   | {"edits":[]} and the token                               | 200    | {"stale":[]}                       |
         | PUT /api/plans/gate/chat      | [{"text":"x"}] and the token                             | 400    | {"error":"bad chat"}               |
+        | GET /api/plans/gate/chat      | the token, with gate.chat.json holding "[{\"at\":1}]"    | 200    | []                                 |
 
     Scenario: A 008 plan loads unchanged and the old routes still answer
       Given "/tmp/qa/layered/.bindweed/plans/old.json" holds a 007 plan with the package cut and a contract of one rule, plus "interview" [], "tasks" [] and "brief" "b"
@@ -272,18 +339,26 @@ Feature: say what you dislike and review the proposed reshaping on the canvas
     "Accept all" and "Reject all". Hovering a row sets data-highlight "true"
     on that edit's marks only; leaving clears it.
     Marks are drawn only while Planned is shown, in #7c3aed, with
-    data-proposal "true", and they are not the plan's own ghosts. A move whose
-    destination is a package in this view is a dashed row there, data-path the
-    destination path. A move into the current file view is a dashed box. A cut
-    whose ends are both in view is a #7c3aed "✂" (U+2702), data-from and
-    data-to set, and the real arrow stays. An added edge in view is a dashed
-    #7c3aed arrow. A new package whose parent is the current view, and each
-    part of a split, is a dashed box labelled with its last segment. A deletion
-    strikes that file's name through in #7c3aed and leaves it in place. A fold
-    does the same and adds no ghost. A rename strikes the old name and draws
-    the new package or file the way a create or a move would. A merge strikes
-    each source that is not the destination and ghosts the files into it. A
-    note is listed and not drawn.
+    data-proposal "true" and no data-ghost. Real boxes, rows and arrows stay
+    where they are. The proposal view is the planned graph of this view with
+    every applicable open proposal applied after the plan's edits, in order.
+    New box: a node id the proposal view has and the planned view lacks (a
+    created package, a split part, a renamed package, a file moved into this
+    file view) is a dashed box, data-id that id, labelled with its last
+    segment. New boxes are placed in the proposal view's node order. Each
+    starts at the spot the canvas layout gives it in the proposal view (its
+    pin, else x = order × 260, y = row × 140) and moves right by 260 while a
+    real box or an earlier new box holds that 260 × 140 cell. data-x and
+    data-y are the result. New row: a file the proposal view has directly
+    inside a box of this view, at a path the planned view lacks, is a dashed
+    row in that box, data-path that path. A cut whose ends are both in view is
+    a "✂" (U+2702), data-from and data-to set. An added edge in view is a
+    dashed arrow. Strike: the name of a deleted or folded file, of a
+    rename-file's old file, and of the box of a renamed package, of a merged
+    package other than "into", and of a split package, carries data-strike
+    "true" and a #7c3aed line-through. A move strikes nothing. A note is
+    listed and not drawn. A mark belongs to the proposal at which it first
+    appears when the proposals are applied in order.
     Accept appends the edit with the same write as a canvas edit, so redo
     becomes [], and interview, tasks, brief and contract stay. It does this
     only when the edit applies to the saved plan alone; otherwise the plan is
@@ -311,8 +386,9 @@ Feature: say what you dislike and review the proposed reshaping on the canvas
       And it shows "dropped: Move src/no-such.ts to src/ports — no such file src/no-such.ts" with "Reject Move src/no-such.ts to src/ports" and no Accept for it
       And the changes region lists no sentence
       And the planned canvas shows a #7c3aed "✂" with data-proposal "true", data-from "src/app" and data-to "src/domain", and the real arrow from "app" to "domain" remains
-      And it shows a dashed #7c3aed box "ports" with data-proposal "true" and, inside it, a dashed row "b.ts" with data-path "src/ports/b.ts"
-      And "app" still lists "a.ts" and "b.ts", and nothing is drawn for "src/no-such.ts"
+      And it shows a dashed #7c3aed box "ports" with data-proposal "true", data-id "src/ports", data-x "260" and data-y "0" and, inside it, a dashed row "b.ts" with data-path "src/ports/b.ts"
+      And the real boxes keep data-x "0" and data-y "0" for "app", "0" and "140" for "infra", "0" and "280" for "domain"
+      And "app" still lists "a.ts" and "b.ts", nothing carries data-strike, and nothing is drawn for "src/no-such.ts"
       When I hover "src/app must not import src/domain (1 import)"
       Then that "✂" has data-highlight "true" and the "ports" box does not
       When I click "Accept src/app must not import src/domain (1 import)"
@@ -362,6 +438,39 @@ Feature: say what you dislike and review the proposed reshaping on the canvas
       Then the canvas has no element with data-proposal "true"
       When I choose "Planned"
       Then the #7c3aed "✂" from "src/app" to "src/domain" is shown
+
+    Scenario: A split, a move into an existing package, a deletion and a note
+      Given the plan "Gate" has no edits and is open on the src planned view
+      When I type "app is doing three jobs" in "Ask" and click "Propose"
+      Then the proposals region shows "Give each job its own package." and lists the four jobs sentences, in order, each with Accept and Reject, and no dropped line
+      And the canvas shows dashed #7c3aed boxes "jobs" (data-id "src/app/jobs", data-x "260", data-y "0") and "scan" (data-id "src/app/scan", data-x "260", data-y "140"), both with data-proposal "true"
+      And "jobs" holds a dashed row "b.ts" with data-path "src/app/jobs/b.ts" and "scan" holds no row
+      And "infra" holds a dashed row "a.ts" with data-path "src/infra/a.ts" after its real row "db.ts"
+      And the name "db.ts" in "infra" and the name of the box "app" carry data-strike "true" and a #7c3aed line-through, and both stay in place
+      And "app" still lists "a.ts" and "b.ts", and those rows carry no data-strike
+      And no element with data-proposal "true" holds the text "three jobs"
+      When I hover "Note on src/app: \"three jobs\""
+      Then no element has data-highlight "true"
+      When I hover "Split src/app into src/app/scan (1 file) and src/app/jobs (1 file)"
+      Then exactly "jobs", "scan", the "src/app/jobs/b.ts" row and the "app" strike have data-highlight "true"
+      When I hover "Move src/app/scan/a.ts to src/infra"
+      Then exactly the "src/infra/a.ts" row has data-highlight "true"
+      When I click "Reject all"
+      Then the canvas has no element with data-proposal "true" and "GET /api/plans/gate" has edits []
+
+    Scenario Outline: Renames, merges, folds and moves into a file view are drawn
+      Given the plan "Gate" has no edits
+      And "PUT /api/plans/gate/chat" stored one turn with text "x", summary "y", edits [<edit>] and decisions {}
+      When I open "http://127.0.0.1:5000/?token={token}#at=<at>&plan=gate"
+      Then the proposals region lists "<sentence>" with Accept and Reject
+      And the marks with data-proposal "true" are exactly: <marks>
+      Examples:
+        | edit                                                                       | at      | sentence                                       | marks                                                                                                                |
+        | {"kind":"rename-package","from":"src/infra","to":"src/store"}              | src     | Rename src/infra to src/store                  | the struck name of "infra"; a dashed box "store" (data-id "src/store", data-x "260", data-y "140") holding a dashed row "db.ts" with data-path "src/store/db.ts" |
+        | {"kind":"merge-packages","packages":["src/infra","src/domain"],"into":"src/domain"} | src | Merge src/infra and src/domain into src/domain | the struck name of "infra"; a dashed row "db.ts" with data-path "src/domain/db.ts" in "domain"                         |
+        | {"kind":"rename-file","from":"src/infra/db.ts","to":"store.ts"}            | src     | Rename src/infra/db.ts to store.ts             | the struck row "db.ts" in "infra"; a dashed row "store.ts" with data-path "src/infra/store.ts" in "infra"              |
+        | {"kind":"fate","file":"src/app/b.ts","fate":"fold","into":"src/app/a.ts"}  | src     | Fold src/app/b.ts into src/app/a.ts            | the struck row "b.ts" in "app"                                                                                         |
+        | {"kind":"move-file","file":"src/infra/db.ts","to":"src/app"}               | src/app | Move src/infra/db.ts to src/app                | a dashed box "db.ts" (data-id "src/app/db.ts", data-x "0", data-y "140")                                               |
 
     Scenario: No plan means no Ask, and a failed reply leaves the proposals
       Given no plan is open on "http://127.0.0.1:5000/?token={token}#at=src"
