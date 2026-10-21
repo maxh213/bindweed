@@ -1614,9 +1614,11 @@ describe('the plan canvas over a real server', () => {
     await waitForText(() => expect(entrySentences()).toHaveLength(5));
     expect(entrySentences()[4]).toBe('Note on src/infra/save.ts: "keep the writer here"');
     await click(entryRow('Move src/app/save.ts to src/infra').querySelector('[aria-label="Remove"]') as Element);
-    await waitForText(() => expect(entrySentences()).toHaveLength(4));
+    await waitForText(() => {
+      expect(entrySentences()).toHaveLength(4);
+      expect(entryRow('Note on src/infra/save.ts: "keep the writer here"').getAttribute('data-stale')).toBe('true');
+    });
     const staleRow = entryRow('Note on src/infra/save.ts: "keep the writer here"');
-    expect(staleRow.getAttribute('data-stale')).toBe('true');
     expect(window.getComputedStyle(staleRow).backgroundColor).toBe('rgb(254, 249, 195)');
     expect(staleRow.querySelector('.change-reason')?.textContent).toBe('no such box src/infra/save.ts');
     expect(entryRow('src/app must not import src/domain (1 import)').getAttribute('data-stale')).toBeNull();
