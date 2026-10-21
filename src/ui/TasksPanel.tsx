@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useRef, useState, type FocusEvent } from 'react';
+import { useEffect, useState, type FocusEvent } from 'react';
 import { pendingRound, type PlanDoc, type PlanTask, type Question, type Round } from '../domain/plan.ts';
 import { editTasks, LAST_TASK_NUMBER, lastTaskNumber, markdownBlocks, type TaskEdit } from '../domain/tasks.ts';
 import { fetchRepo, postCancel, postFiles, postGenerate, type GenerateAnswer, type GenerateBody } from './client.ts';
@@ -10,6 +10,7 @@ type TasksPanelProps = {
   doc: PlanDoc;
   onPlan: (doc: PlanDoc) => void;
   onSave: (doc: PlanDoc) => Promise<void>;
+  idle: { readonly current: Promise<void> };
   onClose: () => void;
 };
 
@@ -326,14 +327,13 @@ export function TasksPanel(props: Readonly<TasksPanelProps>) {
   const [run, setRun] = useState<Run>({ kind: 'idle' });
   const [boxes, setBoxes] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState<string | null>(null);
-  const saving = useRef<Promise<void>>(Promise.resolve());
   const [seconds, restartTicker] = useTicker(run.kind === 'running');
   const pending = pendingOf(doc);
-  const store = (next: PlanDoc): void => {
-    saving.current = props.onSave(next);
+  const keep = (next: PlanDoc): void => {
+    void props.onSave(next);
   };
   const generate = async (step: GenerateBody['step']): Promise<void> => {
-    await whenSaved(saving);
+    await whenSaved(props.idle);
     restartTicker();
     setRun({ kind: 'running' });
     const answer = await postGenerate(props.token, doc.slug, bodyFor(step, typedAnswers(pending, boxes)), props.fetcher);
@@ -346,7 +346,7 @@ export function TasksPanel(props: Readonly<TasksPanelProps>) {
     setRun({ kind: 'done', ran: answer.ran, note: answer.note });
   };
   const saveFiles = async (): Promise<void> => {
-    await whenSaved(saving);
+    await whenSaved(props.idle);
     const result = await postFiles(props.token, doc.slug, props.fetcher);
     setSaved('error' in result ? result.error : `saved to ${result.dir}/tasks/`);
   };
@@ -358,8 +358,8 @@ export function TasksPanel(props: Readonly<TasksPanelProps>) {
           <Interview rounds={answeredRounds(doc.interview)} />
           <Questions round={pending} boxes={boxes} onType={(key, value) => setBoxes(current => ({ ...current, [key]: value }))} />
           <GenerateButtons pending={pending !== null} onRun={step => void generate(step)} />
-          <Slices tasks={tasksOf(doc)} onEdit={edit => store({ ...doc, tasks: editTasks(tasksOf(doc), edit) })} />
-          <Brief brief={doc.brief} onBrief={text => store({ ...doc, brief: text })} />
+          <Slices tasks={tasksOf(doc)} onEdit={edit => keep({ ...doc, tasks: editTasks(tasksOf(doc), edit) })} />
+          <Brief brief={doc.brief} onBrief={text => keep({ ...doc, brief: text })} />
           <BriefCommand token={props.token} fetcher={props.fetcher} slug={doc.slug} />
           <button type="button" onClick={() => void saveFiles()}>
             Save as files

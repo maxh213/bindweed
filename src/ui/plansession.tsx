@@ -33,7 +33,7 @@ import {
   SplitDialog,
 } from './PlanBar.tsx';
 import { FILE_DRAG_MIME, fieldTarget, keyActionOf, planDropTarget } from './plangesture.ts';
-import { arrowViewAt, entryTarget, planPicture, type Planning, type PlanInk, type ShownGraph } from './planpicture.ts';
+import { arrowViewAt, entryTarget, planPicture, type Planning, type ShownGraph } from './planpicture.ts';
 import { planRoster } from './planroster.ts';
 import { declaredPaths, nameEdit, nameTaken, splitEdit, splitRows, type NameAsk, type Reshaped } from './reshape.ts';
 
@@ -130,11 +130,6 @@ function reasonsOf(entries: Picture['entries']): (string | null)[] {
 
 function movedTo(dir: string): string {
   return dir === '' ? '.' : dir;
-}
-
-function planningOf(slug: string | null, ink: PlanInk, handlers: Omit<Planning, 'ink'>): Planning | null {
-  if (slug === null) return null;
-  return { ink, ...handlers };
 }
 
 function canUndoOf(doc: PlanDoc | null): boolean {
@@ -312,6 +307,7 @@ function TasksSlot(
     doc: PlanDoc | null;
     onPlan: (doc: PlanDoc) => void;
     onSave: (current: PlanDoc, next: PlanDoc) => Promise<void>;
+    idle: { readonly current: Promise<void> };
     onClose: () => void;
   }>,
 ) {
@@ -325,6 +321,7 @@ function TasksSlot(
       doc={doc}
       onPlan={props.onPlan}
       onSave={next => props.onSave(doc, next)}
+      idle={props.idle}
       onClose={props.onClose}
     />
   );
@@ -374,6 +371,16 @@ function sameDir(file: string, dir: string): boolean {
   return parentDir(file) === dir;
 }
 
+function overlayChanged(base: PlanDoc, from: PlanDoc, next: PlanDoc): PlanDoc {
+  return {
+    ...base,
+    tasks: next.tasks === from.tasks ? base.tasks : next.tasks,
+    brief: next.brief === from.brief ? base.brief : next.brief,
+  };
+}
+
+
+
 export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionView {
   const queryClient = useQueryClient();
   const slug = props.slug;
@@ -399,8 +406,9 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
   const closeContract = (): void => setContractOpening(current => ({ ...current, open: false }));
   const [tasksOpening, setTasksOpening] = useState<PanelOpening>({ open: false, count: 0 });
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const shownDoc = useRef<PlanDoc | null>(null);
-  const savedTail = useRef<Promise<void>>(Promise.resolve());
+  const docRef = useRef<PlanDoc | null>(null);
+  const versionRef = useRef(0);
+  const tailRef = useRef<Promise<void>>(Promise.resolve());
   const roster = planRoster(plansQuery.data, planQuery.data, slug, deleteTarget);
   const doc = roster.doc;
   const edits = editsOf(doc);
@@ -423,64 +431,61 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
   const entries = visibleEntries(props.ready, picture);
   const stale = reasonsOf(entries);
 
-  const savePlan = (next: PlanDoc): void => {
-    void putPlan(props.token, next, props.fetcher).then(async saved => {
-      if ('error' in saved) {
-        setNotice(saved.error);
-        return;
-      }
-      await queryClient.invalidateQueries({ queryKey: ['graph'] });
-      queryClient.setQueryData(['plan', props.token, slug], saved);
-    });
-  };
-  const withDoc = (action: (current: PlanDoc) => void): void => {
-    if (doc === null) return;
-    action(doc);
-  };
-  const editPlan = (edit: PlanEdit): void => {
-    withDoc(current => {
-      savePlan(withEdit(current, edit));
-      setNotice(null);
-    });
-  };
-  const undoEdit = (): void => {
-    withDoc(current => {
-      if (current.edits.length === 0) return;
-      savePlan(withUndo(current));
-      setNotice(null);
-    });
-  };
-  const redoEdit = (): void => {
-    withDoc(current => {
-      if (current.redo.length === 0) return;
-      savePlan(withRedo(current));
-      setNotice(null);
-    });
-  };
-  const removeEdit = (index: number): void => {
-    withDoc(current => {
-      savePlan(withoutEdit(current, index));
-      setNotice(null);
-    });
-  };
+  const baseDoc = (): PlanDoc | null => docRef.current ?? doc;
   const openPlan = (next: PlanDoc): void => {
-    shownDoc.current = next;
+    docRef.current = next;
     queryClient.setQueryData(['plan', props.token, slug], next);
   };
-  const putSaved = async (current: PlanDoc, next: PlanDoc): Promise<void> => {
-    const saved = await putPlan(props.token, next, props.fetcher);
-    if (!('error' in saved) || shownDoc.current !== next) return;
-    openPlan(current);
-    setNotice(saved.error);
-  };
-  const storeDoc = (current: PlanDoc, next: PlanDoc): Promise<void> => {
+  const publish = (next: PlanDoc): number => {
+    versionRef.current += 1;
     openPlan(next);
-    const run = savedTail.current.then(() => putSaved(current, next));
-    savedTail.current = run.then(() => undefined);
+    return versionRef.current;
+  };
+  const landed = async (id: number, previous: PlanDoc, next: PlanDoc): Promise<void> => {
+    const saved = await putPlan(props.token, next, props.fetcher);
+    if (versionRef.current !== id) return;
+    if ('error' in saved) {
+      publish(previous);
+      setNotice(saved.error);
+      return;
+    }
+    await queryClient.invalidateQueries({ queryKey: ['graph'] });
+  };
+  const enqueue = (previous: PlanDoc, next: PlanDoc): Promise<void> => {
+    const id = publish(next);
+    const run = tailRef.current.then(() => landed(id, previous, next));
+    tailRef.current = run.then(() => undefined);
     return run;
   };
+  const savePlan = (current: PlanDoc, next: PlanDoc): void => {
+    setNotice(null);
+    void enqueue(current, next);
+  };
+  const changePlan = (nextOf: (current: PlanDoc) => PlanDoc | null): void => {
+    const base = baseDoc();
+    if (base === null) return;
+    const next = nextOf(base);
+    if (next === null) return;
+    savePlan(base, next);
+  };
+  const editPlan = (edit: PlanEdit): void => {
+    changePlan(base => withEdit(base, edit));
+  };
+  const undoEdit = (): void => {
+    changePlan(base => (base.edits.length === 0 ? null : withUndo(base)));
+  };
+  const redoEdit = (): void => {
+    changePlan(base => (base.redo.length === 0 ? null : withRedo(base)));
+  };
+  const removeEdit = (index: number): void => {
+    changePlan(base => withoutEdit(base, index));
+  };
+  const storeDoc = (from: PlanDoc, next: PlanDoc): Promise<void> => {
+    const base = docRef.current ?? from;
+    return enqueue(base, overlayChanged(base, from, next));
+  };
   const saveContract = (rules: ContractRule[]): void => {
-    withDoc(current => void storeDoc(current, { ...current, contract: { rules } }));
+    changePlan(base => ({ ...base, contract: { rules } }));
     closeContract();
   };
   const moveFile = (file: string, dir: string): boolean => {
@@ -645,20 +650,24 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     return () => window.removeEventListener('keydown', onKey);
   });
 
-  const planning = planningOf(slug, picture.ink, {
-    mergeReady: selectedPackages(props.nodes, props.selection).length >= 2,
-    onDropFile: moveFile,
-    onDrawEdge: drawEdge,
-    onCutEdge: cutArrow,
-    onAddNote: setNoteTarget,
-    onOpenPlanned: openFile,
-    onRename: (id, kind) => ask({ mode: 'rename', id, kind }),
-    onSplit: pkg => void openSplit(pkg),
-    onMerge: () => ask({ mode: 'merge' }),
-    onDelete: file => editPlan({ kind: 'fate', file, fate: 'delete' }),
-    onFold: armFold,
-    onPickFile: foldInto,
-  });
+  const planning = ((): Planning | null => {
+    if (slug === null) return null;
+    return {
+      ink: picture.ink,
+      mergeReady: selectedPackages(props.nodes, props.selection).length >= 2,
+      onDropFile: moveFile,
+      onDrawEdge: drawEdge,
+      onCutEdge: cutArrow,
+      onAddNote: setNoteTarget,
+      onOpenPlanned: openFile,
+      onRename: (id, kind) => ask({ mode: 'rename', id, kind }),
+      onSplit: pkg => void openSplit(pkg),
+      onMerge: () => ask({ mode: 'merge' }),
+      onDelete: file => editPlan({ kind: 'fate', file, fate: 'delete' }),
+      onFold: armFold,
+      onPickFile: foldInto,
+    };
+  })();
 
   return {
     toolbar: (
@@ -717,6 +726,7 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
           doc={doc}
           onPlan={openPlan}
           onSave={storeDoc}
+          idle={tailRef}
           onClose={() => setTasksOpening(current => ({ ...current, open: false }))}
         />
         {settingsOpen ? <SettingsDialog token={props.token} fetcher={props.fetcher} onClose={() => setSettingsOpen(false)} /> : null}

@@ -735,11 +735,13 @@ describe('the page reshapes packages and files', () => {
       await key('z');
       await waitFor(() => expect(entries()).toHaveLength(left));
     }
-    await waitFor(() => expect(boxIds()).toContain('src/infra'));
+    await waitFor(() => {
+      expect(boxIds()).toContain('src/infra');
+      expect(boxIds()).not.toContain('src/ports');
+      expect(boxOf('src/app').textContent).toContain('3 files');
+      expect(boxOf('src/infra').textContent).toContain('2 files');
+    });
     expect(badge()).toBeNull();
-    expect(boxOf('src/app').textContent).toContain('3 files');
-    expect(boxOf('src/infra').textContent).toContain('2 files');
-    expect(boxIds()).not.toContain('src/ports');
     for (let count = 1; count <= 7; count += 1) {
       await key('Z', true);
       await waitFor(() => expect(entries()).toHaveLength(count));

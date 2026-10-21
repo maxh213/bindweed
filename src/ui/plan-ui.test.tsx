@@ -1125,8 +1125,11 @@ describe('the plan canvas over a real server', () => {
     await dropRow(crumb('src'), 'src/app/save.ts');
     await waitForText(() => expect(entrySentences()).toEqual(['Move src/app/save.ts to src']));
     await click(button('Undo'));
-    await waitForText(() => expect(entries()).toHaveLength(0));
-    const row = mustQuery(boxOf('src/app'), '.box-row[data-path="src/app/save.ts"]', 'missing row');
+    await waitForText(() => {
+      expect(entries()).toHaveLength(0);
+      expect(rowPathsOf('src/app')).toContain('src/app/save.ts');
+    });
+    const row = mustQuery(boxOf('src/app'), '.box-row[data-path="src/app/save.ts"]:not([data-ghost="true"])', 'missing row');
     const seen: string[][] = [];
     const { fireEvent } = await import('@testing-library/dom');
     await actRun(() => {
@@ -1194,8 +1197,10 @@ describe('the plan canvas over a real server', () => {
     const appViewPins = parseLayout((await api(token, 'GET', '/api/layout')).body)?.views['src/app'];
     expect(appViewPins).toBeUndefined();
     await click(button('Undo'));
-    await waitForText(() => expect(entries()).toHaveLength(0));
-    expect(nodeEls().map(node => node.dataset.node)).toEqual(['src/app/a.ts', 'src/app/b.ts', 'src/app/save.ts']);
+    await waitForText(() => {
+      expect(entries()).toHaveLength(0);
+      expect(nodeEls().map(node => node.dataset.node)).toEqual(['src/app/a.ts', 'src/app/b.ts', 'src/app/save.ts']);
+    });
     await dragBox('src/app/save.ts', [crumb('layered')]);
     await waitForText(() => expect(entrySentences()).toEqual(['Move src/app/save.ts to .']));
     await waitForDoc([{ kind: 'move-file', file: 'src/app/save.ts', to: '.' }]);
@@ -1265,12 +1270,14 @@ describe('the plan canvas over a real server', () => {
     await click(edgeBetween('src/app', 'src/domain'));
     expect(edgeBetween('src/app', 'src/domain').getAttribute('data-selected')).toBe('true');
     await key('Delete');
-    await waitForText(() => expect(entrySentences()).toEqual(['src/app must not import src/domain (1 import)']));
+    await waitForText(() => {
+      expect(entrySentences()).toEqual(['src/app must not import src/domain (1 import)']);
+      expect(edgeEls().filter(edge => edge.dataset.from === 'src/app' && edge.dataset.to === 'src/domain')).toEqual([]);
+    });
     expect(cutBetween('src/app', 'src/domain').getAttribute('data-cut')).toBe('true');
     expect(cutBetween('src/app', 'src/domain').textContent).toContain('✂');
     expect(pathStroke('cut:src/app->src/domain')).toBe('#94a3b8');
     expect(pathDash('cut:src/app->src/domain')).toBe('4 4');
-    expect(edgeEls().filter(edge => edge.dataset.from === 'src/app' && edge.dataset.to === 'src/domain')).toEqual([]);
     await waitForDoc([CUT]);
     expect(cutBetween('src/app', 'src/domain').getAttribute('data-selected')).toBe('false');
     await click(cutBetween('src/app', 'src/domain'));
@@ -1355,13 +1362,15 @@ describe('the plan canvas over a real server', () => {
     await showApp('#at=src&plan=split-app');
     await waitForText(() => expect(edgeBetween('src/app', 'src/infra')).not.toBeNull());
     await actRun(() => connect('src/infra', 'src/app'));
-    await waitForText(() => expect(entrySentences()).toEqual([
-      'Move src/app/save.ts to src/infra',
-      'src/app must not import src/domain (1 import)',
-      'src/infra should use src/app',
-    ]));
-    expect(boxOf('src/app').getAttribute('data-cycle')).toBe('true');
-    expect(boxOf('src/infra').getAttribute('data-cycle')).toBe('true');
+    await waitForText(() => {
+      expect(entrySentences()).toEqual([
+        'Move src/app/save.ts to src/infra',
+        'src/app must not import src/domain (1 import)',
+        'src/infra should use src/app',
+      ]);
+      expect(boxOf('src/app').getAttribute('data-cycle')).toBe('true');
+      expect(boxOf('src/infra').getAttribute('data-cycle')).toBe('true');
+    });
     expect(window.getComputedStyle(boxOf('src/app')).backgroundColor).toBe('rgb(254, 226, 226)');
     expect(window.getComputedStyle(boxOf('src/infra')).backgroundColor).toBe('rgb(254, 226, 226)');
     expect(boxOf('src/domain').getAttribute('data-cycle')).toBe('false');
@@ -1410,18 +1419,26 @@ describe('the plan canvas over a real server', () => {
   it('removes the add-edge edit when the planned arrow is cut, keeping redo', async () => {
     await setPlan([MOVE, CUT, ADD], [NOTE]);
     await showApp('#at=src&plan=split-app');
-    await waitForText(() => expect(entrySentences()).toHaveLength(3));
+    await waitForText(() => {
+      expect(entrySentences()).toHaveLength(3);
+      expect(edgeBetween('src/infra', 'src/app')).not.toBeNull();
+    });
     await click(edgeBetween('src/infra', 'src/app'));
     await key('Delete');
-    await waitForText(() => expect(entrySentences()).toEqual(['Move src/app/save.ts to src/infra', 'src/app must not import src/domain (1 import)']));
+    await waitForText(() => {
+      expect(entrySentences()).toEqual(['Move src/app/save.ts to src/infra', 'src/app must not import src/domain (1 import)']);
+      expect(cycleFlags()).not.toContain('true');
+      expect(edgeEls().filter(edge => edge.dataset.from === 'src/infra' && edge.dataset.to === 'src/app')).toEqual([]);
+    });
     expect(noticeText()).toBe('');
-    expect(cycleFlags()).not.toContain('true');
-    expect(edgeEls().filter(edge => edge.dataset.from === 'src/infra' && edge.dataset.to === 'src/app')).toEqual([]);
     await waitForDoc([MOVE, CUT], [NOTE]);
     await key('z', { ctrl: true, shift: true });
     await waitForText(() => expect(entrySentences()).toContain('Note on src/domain: "pull an interface out here"'));
     await actRun(() => connect('src/infra', 'src/app'));
-    await waitForText(() => expect(entrySentences()).toContain('src/infra should use src/app'));
+    await waitForText(() => {
+      expect(entrySentences()).toContain('src/infra should use src/app');
+      expect(edgeBetween('src/infra', 'src/app')).not.toBeNull();
+    });
     await waitForDoc([MOVE, CUT, NOTE, ADD]);
     await click(edgeBetween('src/infra', 'src/app'));
     const arrow = edgeBetween('src/infra', 'src/app');
@@ -1431,9 +1448,11 @@ describe('the plan canvas over a real server', () => {
     const cutItem = Array.from(arrow.querySelectorAll('[role="menu"] button')).find(el => el.textContent === 'Cut');
     if (cutItem === undefined) throw new Error('missing Cut');
     await click(cutItem);
-    await waitForText(() => expect(entrySentences()).toEqual(['Move src/app/save.ts to src/infra', 'src/app must not import src/domain (1 import)', 'Note on src/domain: "pull an interface out here"']));
+    await waitForText(() => {
+      expect(entrySentences()).toEqual(['Move src/app/save.ts to src/infra', 'src/app must not import src/domain (1 import)', 'Note on src/domain: "pull an interface out here"']);
+      expect(cycleFlags()).not.toContain('true');
+    });
     await waitForDoc([MOVE, CUT, NOTE]);
-    expect(cycleFlags()).not.toContain('true');
   });
 
   it('undoes and redoes by keys and buttons and a new edit clears redo', async () => {
@@ -1441,15 +1460,19 @@ describe('the plan canvas over a real server', () => {
     await showApp('#at=src&plan=split-app');
     await waitForText(() => expect(entrySentences()).toHaveLength(3));
     await key('z', { ctrl: true });
-    await waitForText(() => expect(entrySentences()).toHaveLength(2));
-    expect(cycleFlags()).not.toContain('true');
+    await waitForText(() => {
+      expect(entrySentences()).toHaveLength(2);
+      expect(cycleFlags()).not.toContain('true');
+    });
     expect(boxOf('src/app').getAttribute('data-y')).toBe('0');
     expect(boxOf('src/infra').getAttribute('data-y')).toBe('140');
     expect(boxOf('src/domain').getAttribute('data-y')).toBe('280');
     await waitForDoc([MOVE, CUT], [ADD]);
     await key('z', { ctrl: true, shift: true });
-    await waitForText(() => expect(entrySentences()).toHaveLength(3));
-    expect(boxOf('src/infra').getAttribute('data-cycle')).toBe('true');
+    await waitForText(() => {
+      expect(entrySentences()).toHaveLength(3);
+      expect(boxOf('src/infra').getAttribute('data-cycle')).toBe('true');
+    });
     await click(button('Undo'));
     await waitForText(() => expect(entrySentences()).toHaveLength(2));
     await click(button('Redo'));

@@ -417,6 +417,12 @@ describe('the Tasks and Settings dialogs', () => {
     for (const release of waiting) await fire(release);
   }
 
+  async function releaseOldest(): Promise<void> {
+    const release = world.heldPuts.shift();
+    if (release === undefined) throw new Error('no held put');
+    await fire(release);
+  }
+
   it('waits for the last list edit to be saved before generating or saving files', async () => {
     world.doc = freshDoc([PACKAGE_CUT], { tasks: THREE, brief: BRIEF });
     world.outcomes = ['hang'];
@@ -469,6 +475,81 @@ describe('the Tasks and Settings dialogs', () => {
     await remount();
     await openTasks();
     expect(slices()).toEqual(['005-cut-app-domain.md']);
+  });
+
+  it('keeps an undo made while a slice save is still writing', async () => {
+    const kept = ['005-move-b.md', '006-cut-app-domain.md'];
+    world.doc = freshDoc([PACKAGE_CUT], { tasks: THREE, brief: BRIEF });
+    world.holdPut = true;
+    await mount();
+    await openTasks();
+    await click(named('Delete 005-add-core.md'));
+    await settled(() => expect(slices()).toEqual(kept));
+    await settled(() => expect(world.heldPuts).toHaveLength(1));
+    await click(button('Close'));
+    await click(button('Undo'));
+    await settled(() => expect(changes()).toBe(0));
+    await releaseNewest();
+    expect(changes()).toBe(0);
+    expect(storedDoc().edits).toEqual([PACKAGE_CUT]);
+    expect(storedDoc().tasks?.map(task => task.file)).toEqual(kept);
+    await settled(() => expect(world.heldPuts).toHaveLength(1));
+    await releaseNewest();
+    await settled(() => expect(storedDoc().edits).toEqual([]));
+    expect(storedDoc().redo).toEqual([PACKAGE_CUT]);
+    expect(storedDoc().tasks?.map(task => task.file)).toEqual(kept);
+    await remount();
+    await settled(() => expect(changes()).toBe(0));
+    await openTasks();
+    expect(slices()).toEqual(kept);
+  });
+
+  it('a note save that finishes after a slice delete does not restore the slice', async () => {
+    const kept = ['005-move-b.md', '006-cut-app-domain.md'];
+    world.doc = freshDoc([PACKAGE_CUT], { tasks: THREE, brief: BRIEF });
+    world.holdPut = true;
+    await mount();
+    await click(button('Add note on domain'));
+    await type(field('Note'), 'X');
+    await click(button('Add'));
+    await settled(() => expect(changes()).toBe(2));
+    await settled(() => expect(world.heldPuts).toHaveLength(1));
+    await openTasks();
+    await click(named('Delete 005-add-core.md'));
+    await settled(() => expect(slices()).toEqual(kept));
+    await releaseOldest();
+    await settled(() => expect(slices()).toEqual(kept));
+    expect(changes()).toBe(2);
+    await settled(() => expect(world.heldPuts).toHaveLength(1));
+    await releaseNewest();
+    await settled(() => expect(storedDoc().tasks?.map(task => task.file)).toEqual(kept));
+    expect(storedDoc().edits).toEqual([PACKAGE_CUT, NOTE_X]);
+    expect(slices()).toEqual(kept);
+    await remount();
+    await settled(() => expect(changes()).toBe(2));
+    await openTasks();
+    expect(slices()).toEqual(kept);
+  });
+
+  it('waits to generate or save files until a canvas save has landed', async () => {
+    world.doc = freshDoc([PACKAGE_CUT]);
+    world.outcomes = [{ reply: SLICES }];
+    world.holdPut = true;
+    await mount();
+    await click(button('Add note on domain'));
+    await type(field('Note'), 'X');
+    await click(button('Add'));
+    await settled(() => expect(world.heldPuts).toHaveLength(1));
+    await openTasks();
+    await click(button('Save as files'));
+    await click(button('Just write it'));
+    expect([world.files, world.generated]).toEqual([[], []]);
+    await releaseNewest();
+    await settled(() => expect(world.generated).toEqual([{ step: 'write', answers: [] }]));
+    expect(world.files.map(saved => saved.edits)).toEqual([[PACKAGE_CUT, NOTE_X]]);
+    expect(storedDoc().edits).toEqual([PACKAGE_CUT, NOTE_X]);
+    expect(storedDoc().tasks?.map(task => task.file)).toEqual(['005-add-core.md', '006-move-b.md', '007-cut-app-domain.md']);
+    expect(storedDoc().brief).toBe(BRIEF);
   });
 
   it('Just write it with questions pending sends the typed answers', async () => {

@@ -24,7 +24,7 @@ export type CutMarkInk = { from: string; to: string };
 
 type NoteInk = { nodes: Map<string, string[]>; edges: Map<string, string[]> };
 
-export type PlanInk = {
+type PlanInk = {
   rows: Map<string, RowInk[]>;
   ghosts: GhostBoxInk[];
   cuts: CutMarkInk[];
