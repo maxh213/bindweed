@@ -127,6 +127,7 @@ const CANNON: Record<string, Fixture> = {
   'sc-text': { tool: 'slop-cannon', pid: 'live', at: '12:15', build: status('sc-status.json', 'nope') },
   'sc-quiet': { tool: 'slop-cannon', pid: 'dead', at: '12:16', build: status('sc-status.code', '') },
   'sc-odd': { tool: 'slop-cannon', pid: 'live', at: '12:17', build: status('sc-status.json', JSON.stringify({ state: null, agents: 'x', beads: { open: 'many', done: 2 }, prs: [1, { url: 2 }, { url: 'https://example.test/pull/9' }] })) },
+  'sc-truthy': { tool: 'slop-cannon', pid: 'live', at: '12:19', build: status('sc-status.json', JSON.stringify({ state: { phase: 'running' }, agents: [{ alive: true }, { alive: 'true' }, { alive: 1 }], beads: {}, prs: [] })) },
   'sc-gone': { tool: 'slop-cannon', pid: 'dead', at: '12:19', build: status('sc-status.json', JSON.stringify({ state: { phase: 'running' } })) },
   'sc-phase': { tool: 'slop-cannon', pid: 'dead', at: '12:18', build: status('sc-status.json', JSON.stringify({ state: { phase: 'done' } })) },
 };
@@ -333,6 +334,7 @@ describe('GET /api/runs', () => {
     ['sc-text', 'running', 'sc status failed: not JSON · pid alive', []],
     ['sc-quiet', 'dead', 'sc status failed: exited 3 · pid gone', []],
     ['sc-odd', 'running', ' · 0 agents · 2 done · 1 PR', []],
+    ['sc-truthy', 'running', 'running · 1 agent · 0 PRs', []],
     ['sc-phase', 'done', 'done · 0 agents · 0 PRs', []],
     ['sc-gone', 'dead', 'running · 0 agents · 0 PRs', []],
   ])('Each run reports its state and position: %s', async (name, state, position, logTail) => {
@@ -441,6 +443,35 @@ describe('GET /api/runs', () => {
     await put(join(worktreeOf('done'), '.marestail/runs/overnight-20261021T1300.md'), 'started\n', '13:00');
     await writeRuns([done]);
     expect((await call('/api/runs')).body.runs[0]).toMatchObject({ state: 'dead', position: 'task 002-b · finished · 2 of 2 tasks' });
+  });
+
+  it.each([
+    ['all tasks complete 2026-10-21 12:30:00\nstopped: tasks/002-x.md exited 1\n', 'stopped for a human'],
+    ['stopped: tasks/002-x.md exited 1\nall tasks complete 2026-10-21 12:30:00\n', 'done'],
+  ])('The last verdict line of a summary decides: %j', async (summary, state) => {
+    const stopped = await entry('stopped');
+    await put(join(worktreeOf('stopped'), SUMMARY), summary, '12:30');
+    await writeRuns([stopped]);
+    expect((await call('/api/runs')).body.runs[0]).toMatchObject({ state });
+  });
+
+  it('A pid that refuses kill -0 is alive', async () => {
+    const [dead, scErr] = [await entry('dead'), await entry('sc-err')];
+    const denied = new Set([dead.pid, scErr.pid]);
+    const real = process.kill.bind(process);
+    const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (denied.has(pid)) throw Object.assign(new Error('denied'), { code: 'EPERM' });
+      return real(pid, signal);
+    });
+    try {
+      await writeRuns([dead, scErr]);
+      expect((await call('/api/runs')).body.runs).toMatchObject([
+        { slug: 'plan-sc-err', state: 'running', position: 'sc status failed: no slop-cannon state here · pid alive' },
+        { slug: 'plan-dead', state: 'running', position: 'task 001-task · 0 of 1 tasks' },
+      ]);
+    } finally {
+      kill.mockRestore();
+    }
   });
 
   it.each<[string, string, string[]]>([

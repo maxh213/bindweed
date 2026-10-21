@@ -218,8 +218,14 @@ describe('Runs panel', () => {
 
   it.each([
     [42_000, '42s'],
+    [59_000, '59s'],
+    [60_000, '1m'],
     [90_000, '1m'],
+    [59 * 60_000, '59m'],
+    [60 * 60_000, '1h 0m'],
     [(3 * 60 + 5) * 60_000, '3h 5m'],
+    [(23 * 60 + 59) * 60_000, '23h 59m'],
+    [24 * 60 * 60_000, '1d 0h'],
     [((2 * 24 + 3) * 60 + 1) * 60_000, '2d 3h'],
     [-5_000, '0s'],
   ])('Elapsed time: %s ms', async (age, elapsed) => {
@@ -313,8 +319,21 @@ describe('Runs panel', () => {
     await act(async () => { held?.(); });
     await settle();
     expect(titles()).toHaveLength(8);
+    holding = true;
     await advance(5000);
     expect(runCalls).toBe(2);
+    await click(tab('Files'));
+    await click(tab('Runs'));
+    await settle();
+    expect(runCalls).toBe(2);
+    await setVisibility('hidden');
+    await setVisibility('visible');
+    expect(runCalls).toBe(2);
+    holding = false;
+    await act(async () => { held?.(); });
+    await settle();
+    await advance(5000);
+    expect(runCalls).toBe(3);
   });
 
   it('Back to #runs keeps the Architecture view for the plan link', async () => {
