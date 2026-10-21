@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
+import { closeSync, openSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -134,6 +135,11 @@ const CANNON: Record<string, Fixture> = {
   'sc-truthy': { tool: 'slop-cannon', pid: 'live', at: '12:19', build: status('sc-status.json', JSON.stringify({ state: { phase: 'running' }, agents: [{ alive: true }, { alive: 'true' }, { alive: 1 }], beads: {}, prs: [] })) },
   'sc-gone': { tool: 'slop-cannon', pid: 'dead', at: '12:19', build: status('sc-status.json', JSON.stringify({ state: { phase: 'running' } })) },
   'sc-phase': { tool: 'slop-cannon', pid: 'dead', at: '12:18', build: status('sc-status.json', JSON.stringify({ state: { phase: 'done' } })) },
+  'sc-removed': { tool: 'slop-cannon', pid: 'dead', at: '12:00', build: async dir => {
+    await put(join(dir, 'sc-status.json'), JSON.stringify({ state: { phase: 'running' }, agents: [{ alive: true }], beads: {}, prs: [{ url: 'https://example.test/pull/5' }] }));
+    await put(outOf('sc-removed'), 'sc said something\n');
+    await rm(dir, { recursive: true });
+  } },
 };
 
 const FIXTURES: Record<string, Fixture> = { ...MARESTAIL, ...CANNON };
@@ -336,6 +342,7 @@ describe('GET /api/runs', () => {
     ['fresh', 'dead', 'no task started · 0 of 1 tasks', []],
     ['unverified', 'running', 'task 001-a · finished · 1 of 1 tasks', UNVERIFIED_TAIL],
     ['removed', 'worktree removed', 'worktree removed', []],
+    ['sc-removed', 'worktree removed', 'worktree removed', []],
     ['sc', 'running', 'running · 4 agents · 7 open · 3 done · 2 PRs', SC_LINES.slice(5)],
     ['sc-one', 'running', 'planning · 1 agent · 1 PR', []],
     ['sc-done', 'done', 'complete · 0 agents · 5 done · 0 PRs', []],
@@ -360,6 +367,10 @@ describe('GET /api/runs', () => {
     expect(await only('sc-slow')).toMatchObject({ state: 'running', position: 'sc status failed: timed out after 10s · pid alive', logTail: [] });
     expect(Date.now() - started).toBeLessThan(12000);
   }, 15000);
+
+  it('A removed slop-cannon worktree reads worktree removed and is not asked', async () => {
+    expect(await only('sc-removed')).toMatchObject({ worktreeExists: false, state: 'worktree removed', position: 'worktree removed', logTail: [], prs: [] });
+  });
 
   it('Null agents and PRs from sc are skipped', async () => {
     expect(await only('sc-nulls')).toMatchObject({ state: 'running', position: 'running · 1 agent · 1 PR', prs: ['https://example.test/pull/9'] });
@@ -449,8 +460,11 @@ describe('GET /api/runs', () => {
 
   it('On a tie the later element comes first, and odd branch, pid and out read as null and no log', async () => {
     const dead = await entry('dead');
-    await writeRuns([dead, { ...dead, slug: 'later', branch: 3, pid: 'x' }, { ...(await entry('sc')), out: 5 }]);
-    const { body } = await call('/api/runs');
+    const secret = join(outer, 'secret.out');
+    await put(secret, 'secret\n');
+    const fd = openSync(secret, 'r');
+    await writeRuns([dead, { ...dead, slug: 'later', branch: 3, pid: 'x' }, { ...(await entry('sc')), out: fd }]);
+    const { body } = await call('/api/runs').finally(() => closeSync(fd));
     expect(body.runs.map(run => run.slug)).toEqual(['plan-sc', 'later', 'plan-dead']);
     expect(body.runs[0]).toMatchObject({ logTail: [] });
     expect(body.runs[1]).toMatchObject({ branch: null, pid: null, state: 'dead' });
