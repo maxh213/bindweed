@@ -47,7 +47,8 @@ chmod +x "$QA/fakes/bin/marestail" "$QA/fakes/bin/sc" "$QA/fakes/bin/systemd-inh
 cp "$QA/fakes/bin/sc" "$QA/fakes/bin/systemd-inhibit" "$QA/fakes/nosh/"
 cp -a "$BW/qa/fixtures/layered" "$QA/layered"
 cd "$QA/layered"
-git init -q && git add -A && git -c user.name=qa -c user.email=qa@example.test -c commit.gpgsign=false commit -qm fixture
+git init -q && git config user.name qa && git config user.email qa@example.test
+git add -A && git -c commit.gpgsign=false commit -qm fixture
 echo "export BW=$BW QA=$QA NODEBIN=$NODEBIN U=http://127.0.0.1:5000"
 ```
 
@@ -155,13 +156,15 @@ echo "--- readme ---"
 cat "$QA/layered-bw-gate/tasks/README.md"
 echo "--- ignore ---"
 cat "$QA/layered-bw-gate/.gitignore"
+echo "--- worktree ---"
+git -C "$QA/layered-bw-gate" status --porcelain
 echo "--- browsed ---"
 git -C "$QA/layered" status --porcelain && echo porcelain-empty
 test ! -e "$QA/layered/.dependency-cruiser.cjs" && echo cruiser-not-here
 cat "$QA/log/marestail.log"
 ```
 
-   **Expect:** the subject is `bindweed: Gate`, then a blank line, then `src/app must not import src/domain (1 import)`, `Plan: gate` and `Base: ` plus 40 hex characters. The paths, in this order, are `.dependency-cruiser.cjs`, `.gitignore`, `marestail.toml`, `tasks/005-add-core.md`, `tasks/006-move-b.md`, `tasks/007-cut-app-domain.md` and `tasks/README.md`. `cruiser-matches` prints. The overnight line is `tasks/005-add-core.md tasks/006-move-b.md tasks/007-cut-app-domain.md`, then `dandelion/route-best | hard | src/app/a.ts src/domain/model.ts | qa | null | $QA/fakes/bin`. Both greps print `1`. The toml cat prints `installed=1`. The readme cat prints `qa tasks`. The ignore cat prints `qa-ignore`. `porcelain-empty` and `cruiser-not-here` print. The log is the line `install .`.
+   **Expect:** the subject is `bindweed: Gate`, then a blank line, then `src/app must not import src/domain (1 import)`, `Plan: gate` and `Base: ` plus 40 hex characters. The paths, in this order, are `.dependency-cruiser.cjs`, `.gitignore`, `marestail.toml`, `tasks/005-add-core.md`, `tasks/006-move-b.md`, `tasks/007-cut-app-domain.md` and `tasks/README.md`. `cruiser-matches` prints. The overnight line is `tasks/005-add-core.md tasks/006-move-b.md tasks/007-cut-app-domain.md`, then `dandelion/route-best | hard | src/app/a.ts src/domain/model.ts | qa | null | $QA/fakes/bin`. Both greps print `1`. The toml cat prints `installed=1`. The readme cat prints `qa tasks`. The ignore cat prints `qa-ignore`. The worktree status is the one line `?? .marestail/`, the launch script and its `.out`. `porcelain-empty` and `cruiser-not-here` print. The log is the line `install .`.
 
 10. Kill the run and the branch it left, then launch into a branch that already exists. Paste:
 

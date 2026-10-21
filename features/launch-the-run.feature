@@ -74,7 +74,7 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
 
   Background:
     Given bindweed's ui was built with "npm run build"
-    And "/tmp/qa/layered" is the committed four-file fixture of features/plan-to-dependency-contract.feature, with git user.name "qa" and user.email "qa@example.test"
+    And "/tmp/qa/layered" is the committed four-file fixture of features/plan-to-dependency-contract.feature, where "git config user.name qa" and "git config user.email qa@example.test" were run in the repository before its commit, so they are its own config and not only "-c" on that commit
     And "/tmp/qa/log" is empty and the fakes above are in place
     And bindweed is serving it with "/tmp/qa/fakes/bin" first on PATH, and with CLAUDECODE=1, CLAUDE_CODE_ENTRYPOINT=cli and CLAUDE_CONFIG_DIR=/tmp/qa/claude
 
@@ -253,8 +253,12 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
     directory line. The path is the text after the status, and a line that
     contains " -> " contributes both paths. When nothing is to be added,
     git add is skipped and the commit is made with --allow-empty and the same
-    message. After a commit that succeeds, "git status --porcelain" in the
-    worktree is empty. When git config
+    message. After a commit that succeeds, and before Start writes anything,
+    "git status --porcelain" in the worktree is empty. A marestail Start then
+    writes its script and ".out" under ".marestail/runs", so after a finished
+    marestail launch that status is exactly "?? .marestail/"; bindweed makes
+    no second commit. A slop-cannon launch writes its ".out" under the served
+    root, so the worktree status stays empty. When git config
     --get user.name is unset or empty the step stops with "Author identity
     unknown" and does not commit; user.email is checked second, with that same
     error. Any other non-zero exit stops with git's stderr. The browsed
@@ -321,7 +325,7 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
       And its message is "bindweed: Gate", a blank line, "src/app must not import src/domain (1 import)", "Plan: gate" and "Base: " plus the plan's baseCommit
       And the paths it adds are exactly, in this order, ".dependency-cruiser.cjs", ".gitignore", "marestail.toml", "tasks/005-add-core.md", "tasks/006-move-b.md", "tasks/007-cut-app-domain.md" and "tasks/README.md"
       And each task file equals its body, "marestail.toml" is "installed=1\n", "tasks/README.md" is "qa tasks\n", ".gitignore" is "qa-ignore\n" and ".dependency-cruiser.cjs" equals "/tmp/qa/preview.cjs"
-      And "git status --porcelain" in the worktree is empty
+      And "git status --porcelain" in the worktree is exactly "?? .marestail/"
       And "/tmp/qa/log/marestail.log" is the line "install ."
       And within 5 seconds "/tmp/qa/log/overnight.json" has "argv" ["tasks/005-add-core.md","tasks/006-move-b.md","tasks/007-cut-app-domain.md"], "cwd" the worktree, "model" "dandelion/route-best", "scope" "hard", "focus" "src/app/a.ts src/domain/model.ts", "stop" "qa", "pathHead" "/tmp/qa/fakes/bin" and "claudecode", "entrypoint" and "configDir" null
       And the launch script's first line of output is "start pid=<that pid> model=dandelion/route-best scope=hard focus=src/app/a.ts src/domain/model.ts stop=qa"
@@ -412,6 +416,7 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
       And "/tmp/qa/log/sc.json" has "cwd" "/tmp/qa/layered" and "argv" ["--repo","/tmp/qa/layered-bw-gate","--headless","--safety","on","-m","# Reshape layered\n\nMove b, then cut app from domain.\n"]
       And within 5 seconds the run's ".out" under "/tmp/qa/layered/.bindweed/runs" contains "started"
       And the runs.json entry has tool "slop-cannon" and settings {"safety":"on","ammo":"","cartridge":""}
+      And "git status --porcelain" in the worktree is empty
       And "/tmp/qa/log/overnight.json" does not exist and "git status --porcelain" in "/tmp/qa/layered" is empty
       When I send "POST /api/plans/gate/launch" with the token and {"tool":"slop-cannon","safety":"off","ammo":"3","cartridge":"wide"}
       Then the status is 409 and the body is {"error":"a run for this plan is still alive"}
@@ -476,6 +481,7 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
       Then the status is 200 and the body is {"steps":[{"name":"Worktree","ok":true},{"name":"Files","ok":true},{"name":"Commit","ok":true},{"name":"Start","ok":false,"error":"could not create /tmp/qa/layered-bw-gate/.marestail/runs"}],"worktree":"/tmp/qa/layered-bw-gate","branch":"bindweed/gate"}
       And the worktree's ".marestail" is still the file "x\n" and ".marestail/runs" does not exist
       And the worktree has one commit of its own and "/tmp/qa/layered/.bindweed/runs.json" does not exist
+      And "git status --porcelain" in the worktree is empty
       And "/tmp/qa/log/overnight.json" does not exist and "git status --porcelain" in "/tmp/qa/layered" is empty
 
     Scenario: A second launch waits, and a recorded live pid blocks the next one
@@ -634,6 +640,7 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
       When I click the dialog's "Launch"
       Then the steps are all ✓ and the dialog shows "sc status --repo /tmp/qa/layered-bw-gate"
       And "/tmp/qa/log/sc.json" has "argv" ["--repo","/tmp/qa/layered-bw-gate","--headless","--safety","off","-m",the brief]
+      And "Tool" is still "slop-cannon", "Safety" is still "off", and "Ammo" and "Cartridge" are still blank
       When I click "Copy command"
       Then the clipboard is "sc status --repo /tmp/qa/layered-bw-gate"
 
