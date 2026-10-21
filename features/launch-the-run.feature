@@ -51,10 +51,12 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
   Each scenario starts from the Background again, which deletes
   "/tmp/qa/layered-bw-gate" when it is present, and kills any pid it launched.
   "The nosystemd directory" is "/tmp/qa/fakes/nosystemd", holding only
-  symlinks "node", "git", "bash", "setsid", "sh" and "sleep" to the absolute
-  paths those commands had before the restart, plus executable copies of the
-  fake "marestail" and the fake "sc", and no "systemd-inhibit". Restarting
-  bindweed on it sets PATH to exactly that directory.
+  symlinks "node", "git", "bash", "setsid", "sh" and "sleep" to the normalized
+  realpaths those commands had before the restart, plus executable copies of
+  the fake "marestail" and the fake "sc", and no "systemd-inhibit". "The bash
+  realpath" is the absolute target of that "bash" symlink, saved when the
+  directory is built. Restarting bindweed on it sets PATH to exactly that
+  directory.
 
   In a table, "(empty)" is the empty string and a written \n is a newline.
   "<baseCommit>" is that plan's baseCommit. "The marestail body" is
@@ -286,11 +288,16 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
     them, so a space, "$", a backtick and either quote reach overnight.sh
     unchanged, and the printed start line contains those same characters.
     "<marestail dir>" is the directory of the real path of that marestail.
+    The overnight path is the normalized absolute path of
+    "<marestail dir>/../tools/overnight.sh", that real directory's sibling,
+    not the sibling of the directory found on PATH.
     The overnight command sets MODEL, SCOPE, FOCUS and STOP_AT to those
     values, then runs "systemd-inhibit --what=idle --who=bindweed" with
     --why the text "bindweed <slug>", then bash and the overnight path, then
     the task paths in plan order. The script writes that bash path as its
-    normalized absolute path, inside single quotes. The directory put first
+    normalized absolute path, inside single quotes. A whitespace-delimited
+    word is bounded by the start, the end or whitespace, so a path that only
+    ends in bash is not the word bash. The directory put first
     on PATH is the directory of the first "marestail" on PATH, not the real
     path's directory. Blank scope omits SCOPE. When systemd-inhibit is not
     on PATH at launch, the same command omits systemd-inhibit and its three
@@ -353,6 +360,8 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
       And bindweed is restarted on the nosystemd directory
       When I send a marestail launch with the token
       Then the steps are all ok and the launch script does not contain "systemd-inhibit"
+      And the launch script contains a single quote, the bash realpath and a single quote, in that order with nothing between them, as the overnight interpreter
+      And the launch script does not contain the whitespace-delimited word bash
       And "/tmp/qa/log/overnight.json" has "argv" the three task paths and "model" "dandelion/route-best"
 
     Scenario: Typed values reach overnight.sh unchanged
@@ -378,10 +387,11 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
       Then the status is 200 and the body is {"steps":[{"name":"Worktree","ok":false,"error":"a branch named 'bindweed/gate' already exists"}]}
 
     Scenario: The overnight script is the real marestail's sibling, and PATH gets the directory that was found
-      Given "marestail" on PATH is a symlink to "/tmp/qa/fakes/real/marestail", a copy of the fake, and "overnight.sh" is still "/tmp/qa/fakes/tools/overnight.sh"
+      Given "/tmp/qa/real-install/bin/marestail" is an executable copy of the fake and "/tmp/qa/real-install/tools/overnight.sh" is an executable copy of the recording overnight.sh
+      And "/tmp/qa/fakes/bin/marestail" is a symlink to "/tmp/qa/real-install/bin/marestail"
       And the launch plan
       When I send a marestail launch with the token
-      Then the launch script contains "/tmp/qa/fakes/tools/overnight.sh" and not "/tmp/qa/fakes/real/../tools"
+      Then the launch script contains "'/tmp/qa/real-install/tools/overnight.sh'" and does not contain "/tmp/qa/fakes/tools/overnight.sh"
       And "/tmp/qa/log/overnight.json" has "pathHead" "/tmp/qa/fakes/bin"
 
     Scenario: An existing marestail.toml is left alone
@@ -586,10 +596,13 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
     GET focus and "qa". Slop-cannon shows "Safety" ("on" or "off", default
     "on"), "Ammo" and "Cartridge", the last two blank. Switching tools keeps
     what was typed and hides the other tool's fields. Opening the dialog
-    fills the fields from GET again. "Close" and Escape close it and launch
-    nothing. The dialog's "Launch" is disabled, with the reason as text, when
-    a reason applies. Otherwise it POSTs the visible fields. Until the answer,
-    that button is disabled. The Tool select and every field stay in the
+    fills the fields from GET again. A value typed over a field does not
+    survive Close: the next open shows the GET values. "Close" and Escape
+    close it and launch nothing. The dialog's "Launch" is disabled, with the
+    reason as text, when a reason applies. Otherwise it POSTs the visible
+    fields. Until that POST answers, the dialog's "Launch" stays disabled,
+    including while a GET would show no refusal reason, so this dialog does
+    not send a second POST. The Tool select and every field stay in the
     dialog and stay editable after the answer. Steps are added under them and
     do not replace them. Then an ordered list "Steps" shows each returned
     step: "<name> ✓" when ok (✓ is U+2713), or "<name> <error>" with no ✓ for
@@ -597,7 +610,10 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
     follows the refusal reasons again, from the open plan and from GET,
     including a run this answer just recorded. A failed step is not a reason,
     so Launch is enabled when none applies. The dialog uses that same
-    first-reason order. A 409 shows its "error" as text and no Steps list.
+    first-reason order. A 409 that is the only answer to the dialog's POST
+    shows its "error" as text and no Steps list. A duplicate 409 does not
+    replace the steps of a launch this dialog already sent: the steps that
+    show are that 200's steps, not the 409 text.
     What was typed survives switching tools and survives the answer. "Copy
     worktree" is shown when GET included a worktree, or when this answer's
     Worktree step is ok. "Copy branch" is shown only when that same source
@@ -614,9 +630,15 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
       Then the dialog is gone and "/tmp/qa/layered-bw-gate" does not exist
       When I click "Launch", then press Escape
       Then the dialog is gone and the directory still does not exist
-      When I click "Launch", then the dialog's "Launch"
+      When I click "Launch"
+      And I type "mine" over "MODEL" and "narrow" over "SCOPE"
+      And I click "Close"
+      And I click "Launch"
+      Then "MODEL" is "dandelion/route-best" and "SCOPE" is "hard" and "FOCUS" is "src/app/a.ts src/domain/model.ts" and "STOP_AT" is "qa"
+      When I click the dialog's "Launch"
       Then the steps read "Worktree ✓", "Files ✓", "Commit ✓", "Start ✓" and "Record ✓"
       And "Tool" is still "marestail", "MODEL" is still "dandelion/route-best", "SCOPE" is still "hard", "FOCUS" is still "src/app/a.ts src/domain/model.ts" and "STOP_AT" is still "qa"
+      And within 5 seconds "/tmp/qa/log/overnight.json" has "model" "dandelion/route-best", "scope" "hard", "focus" "src/app/a.ts src/domain/model.ts" and "stop" "qa"
       And the dialog's "Launch" is disabled and the dialog shows "a run for this plan is still alive"
       And the dialog shows "/tmp/qa/layered-bw-gate", "bindweed/gate" and "marestail watch"
       When I click "Copy worktree"
@@ -667,3 +689,11 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
       Then the steps read "Worktree ✓", "Files ✓", "Commit ✓", "Start ✓" and "Record ✓"
       And the dialog shows "sc status --repo /tmp/qa/layered-bw-gate"
       And "/tmp/qa/log/sc.json" has "argv" ["--repo","/tmp/qa/layered-bw-gate","--headless","--safety","on","-m",the brief]
+
+    Scenario: The dialog's Launch stays disabled until the answer, then the steps are the five ticks
+      Given the launch plan is open with the Launch dialog and "/tmp/qa/log/install.wait" exists
+      When I click the dialog's "Launch"
+      Then the dialog's "Launch" stays disabled until that launch answers, the dialog sends one POST to "/api/plans/gate/launch", and the dialog does not show "already running"
+      When "/tmp/qa/log/install.go" is created
+      Then the steps read "Worktree ✓", "Files ✓", "Commit ✓", "Start ✓" and "Record ✓"
+      And the dialog does not show "already running"
