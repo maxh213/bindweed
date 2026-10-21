@@ -178,6 +178,12 @@ const PACKAGE: PlanEdit = { kind: 'create-package', path: 'src/ports' };
 const MOVE: PlanEdit = { kind: 'move-file', file: 'src/app/b.ts', to: 'src/ports' };
 const MISSING: PlanEdit = { kind: 'move-file', file: 'src/no-such.ts', to: 'src/ports' };
 const KEEP: PlanEdit = { kind: 'add-edge', from: 'src/domain', to: 'src/app' };
+const KEPT_KEYS = {
+  interview: [{ round: 1, questions: [{ id: 'q1', text: 'Must a.ts keep exporting a?', why: 'Other code may import it.' }], answers: ['yes'] }],
+  tasks: [{ file: '005-add-core.md', title: 'Add core', body: '# 005 — Add core\n\nx\n' }],
+  brief: 'Keep it small.',
+  contract: { rules: [{ name: 'bindweed:r', severity: 'error', comment: 'C', from: {}, to: { circular: true } }] },
+};
 const FOUR: PlanEdit[] = [CUT, PACKAGE, MOVE, MISSING];
 const FOLD = { kind: 'fold', file: 'src/app/a.ts' };
 const JOBS: unknown[] = [
@@ -252,7 +258,7 @@ const chats = new Map<string, string>();
 let layout: LayoutDoc = emptyLayout();
 let running: ((body: unknown) => void) | null = null;
 
-const held: { fault: string; command: string; ran: number; dom?: JSDOM; reactRoot?: Root } = { fault: 'none', command: 'fake', ran: 0 };
+const held: { fault: string; command: string; ran: number; proposes: number; dom?: JSDOM; reactRoot?: Root } = { fault: 'none', command: 'fake', ran: 0, proposes: 0 };
 
 const FAULTS: Record<string, (method: string, path: string) => boolean> = {
   down: (method, path) => method === 'POST' && path.includes('/propose'),
@@ -272,6 +278,7 @@ function resetWorld(): void {
   held.fault = 'none';
   held.command = 'fake';
   held.ran = 0;
+  held.proposes = 0;
 }
 
 function missing(): Hit {
@@ -325,9 +332,9 @@ function baseScan(doc: PlanDoc | null): ScanShape {
   return planReport(SCAN, doc.edits, cycleTexts).scan;
 }
 
-function withProposals(scan: ScanShape, extra: PlanEdit[]): ScanShape {
-  if (extra.length === 0) return scan;
-  return applyPlan(scan, extra);
+function withProposals(doc: PlanDoc | null, report: Report | null, extra: PlanEdit[]): ScanShape {
+  if (extra.length === 0) return report === null ? SCAN : report.scan;
+  return applyPlan(SCAN, [...(doc === null ? [] : doc.edits), ...extra]);
 }
 
 function reportOf(doc: PlanDoc | null): Report | null {
@@ -347,7 +354,7 @@ function viewBody(view: GraphView, report: Report | null): GraphView {
 
 function drawnHit(url: URL, doc: PlanDoc | null): Hit {
   const report = reportOf(doc);
-  const scan = withProposals(report === null ? SCAN : report.scan, proposalEdits(url.searchParams.get('proposals')));
+  const scan = withProposals(doc, report, proposalEdits(url.searchParams.get('proposals')));
   const view = graphView(scan, queryText(url, 'at'), 'layered', flagsOf(url));
   if (view === null) return { status: 404, body: { error: 'no such directory' } };
   return { status: 200, body: viewBody(view, report) };
@@ -519,6 +526,7 @@ function openPropose(doc: PlanDoc, ask: { text: string; at: string }): Promise<H
 }
 
 function proposeHit(doc: PlanDoc, raw: unknown): Promise<Hit> {
+  held.proposes += 1;
   const ask = proposeFrom(raw);
   if (ask === undefined) return Promise.resolve({ status: 400, body: { error: 'bad propose' } });
   return openPropose(doc, ask);
@@ -1054,7 +1062,7 @@ function pokeFault(kind: string): void {
 type World = {
   read(path: string): Promise<Hit>;
   call(method: string, path: string, body?: unknown): Promise<Hit>;
-  plan(edits: PlanEdit[]): Promise<void>;
+  plan(edits: PlanEdit[], extra?: Record<string, unknown>): Promise<void>;
   propose(text: string, at?: string): Promise<Hit>;
   backend(command: string): Promise<void>;
 };
@@ -1068,13 +1076,13 @@ function worldFor(): () => World {
   return () => ({
     read: path => callHit('GET', path),
     call: (method, path, body) => callHit(method, path, body),
-    async plan(edits) {
+    async plan(edits, extra = {}) {
       if (!plans.has('gate')) {
         const created = await callHit('POST', '/api/plans', { name: 'Gate' });
         expect(created.status).toBe(201);
       }
       const current = plans.get('gate');
-      const put = await callHit('PUT', '/api/plans/gate', { ...current, edits, redo: [] });
+      const put = await callHit('PUT', '/api/plans/gate', { ...current, edits, redo: [], ...extra });
       expect(put.status).toBe(200);
     },
     propose: (text, at = 'src') => callHit('POST', '/api/plans/gate/propose', { text, at }),
@@ -1113,6 +1121,7 @@ function expectRename(): void {
   expectStrike(name);
   const store = box('src/store');
   expect(spot('src/store')).toBe('260,140');
+  expect(boxName('src/store').textContent).toBe('store');
   expect(store.getAttribute('data-proposal')).toBe('true');
   expectDashed(store);
   const row = pathRow('src/store', 'src/store/db.ts');
@@ -1181,6 +1190,7 @@ function expectScannerCanvas(): void {
   expect(realArrow('src/app', 'src/domain')).not.toBeNull();
   const ports = box('src/ports');
   expect(spot('src/ports')).toBe('260,0');
+  expect(boxName('src/ports').textContent).toBe('ports');
   expect(ports.getAttribute('data-proposal')).toBe('true');
   expectDashed(ports);
   const row = pathRow('src/ports', 'src/ports/b.ts');
@@ -1200,6 +1210,8 @@ function expectJobsCanvas(): void {
   const scan = box('src/app/scan');
   expect(spot('src/app/jobs')).toBe('260,0');
   expect(spot('src/app/scan')).toBe('260,140');
+  expect(boxName('src/app/jobs').textContent).toBe('jobs');
+  expect(boxName('src/app/scan').textContent).toBe('scan');
   expectDashed(jobs);
   expectDashed(scan);
   expect(pathRow('src/app/jobs', 'src/app/jobs/b.ts').textContent).toBe('b.ts');
@@ -1257,12 +1269,14 @@ describe('proposals on the planned canvas', () => {
     });
     await press(button('Propose'));
     await until(() => expect(askText()).toContain('write what you dislike'));
-    expect(held.ran).toBe(0);
+    expect(held.proposes).toBe(0);
     await typeAsk('the ui knows about the scanner');
     expect(pressedEnter(document.querySelector('textarea[aria-label="Ask"]') as HTMLElement)).toBe(true);
-    expect(held.ran).toBe(0);
+    expect(held.proposes).toBe(0);
     await press(button('Propose'));
     await until(() => {
+      expect(held.proposes).toBe(1);
+      expect(askBox().value).toBe('');
       expect(summaryText()).toBe(SUMMARY);
       expect(proposalTexts()).toEqual([CUT_SENTENCE, PACKAGE_SENTENCE, MOVE_SENTENCE, MISSING_LINE]);
       expect(buttonsOf(CUT_SENTENCE)).toEqual([`Accept ${CUT_SENTENCE}`, `Reject ${CUT_SENTENCE}`]);
@@ -1331,7 +1345,7 @@ describe('proposals on the planned canvas', () => {
   }, 30000);
 
   it('Accept all takes the three applicable edits, one undo each', async () => {
-    await world().plan([]);
+    await world().plan([], { redo: [KEEP], ...KEPT_KEYS });
     await show('#at=src&plan=gate');
     await until(() => expect(document.querySelector('textarea[aria-label="Ask"]')).not.toBeNull());
     await typeAsk('the ui knows about the scanner');
@@ -1343,6 +1357,7 @@ describe('proposals on the planned canvas', () => {
       expect(proposalTexts()).toEqual([MISSING_LINE]);
       expect((await savedPlan()).edits).toEqual([CUT, PACKAGE, MOVE]);
       expect((await savedPlan()).redo).toEqual([]);
+      expect(loose.parse((await world().read('/api/plans/gate')).body)).toMatchObject(KEPT_KEYS);
     });
     await press(button('Undo'));
     await until(async () => {
@@ -1443,6 +1458,13 @@ describe('proposals on the planned canvas', () => {
     await until(() => expect(proposalMarks()).toEqual([]));
     await chooseShown('Planned');
     await until(() => expect(scissors().getAttribute('data-proposal')).toBe('true'));
+    await typeAsk('keep scan where it is');
+    await press(button('Propose'));
+    await until(async () => {
+      expect(proposalTexts()).toEqual([KEEP_SENTENCE]);
+      expect(document.querySelector('g.proposal-cut[data-from="src/app"]')).toBeNull();
+      expect((await turnAt(0)).decisions).toEqual({ '1': 'rejected' });
+    });
   }, 30000);
 
   it('A split, a move into an existing package, a deletion and a note', async () => {
@@ -1515,6 +1537,12 @@ describe('proposals on the planned canvas', () => {
       expect(askButton('Propose').hasAttribute('disabled')).toBe(true);
     });
     await until(() => expect(askText()).toContain('running for 1 s'));
+    await press(button('Tasks'));
+    await until(() => {
+      expect(button('Generate').closest('fieldset')?.disabled).toBe(true);
+      expect(button('Just write it').closest('fieldset')?.disabled).toBe(true);
+    });
+    await press(button('Close'));
     await press(askButton('Cancel'));
     await until(() => expect(askText()).toContain('cancelled'));
     expect(proposalTexts()).toContain(STALE_CUT);

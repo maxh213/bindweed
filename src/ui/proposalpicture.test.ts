@@ -46,6 +46,7 @@ describe('proposalInk', () => {
       children: [{ id: 'src/ports', planned: null, proposed: view([placed('src/ports/b.ts', 'file', 0, 0)]) }],
     });
     expect(open.boxes).toEqual([{ id: 'src/ports', name: 'ports', x: 260, y: 0, highlight: true, rows: [{ path: 'src/ports/b.ts', name: 'b.ts', highlight: false }] }]);
+    expect(open.rows).toEqual([]);
     const pinned = ink({
       planned,
       pins: { 'src/ports': { x: 10, y: 20 } },
@@ -63,6 +64,116 @@ describe('proposalInk', () => {
       ['src/ports', 260, 0, true],
       ['src/extra', 520, 0, false],
     ]);
+  });
+
+  it('gives a new box to the first proposal that creates it, not to an earlier one', () => {
+    const ports = placed('src/ports', 'package', 0, 1);
+    const create: PlanEdit = { kind: 'create-package', path: 'src/ports' };
+    const owner = (edits: PlanEdit[], nodes: GraphNode[], hover: number) =>
+      ink({ planned: [app, infra], proposal: view([app, infra, ...nodes]), edits: edits.map((edit, index) => ({ index, edit })), hover }).boxes.map(box => [box.id, box.highlight]);
+    const move: PlanEdit = { kind: 'move-file', file: 'src/app/a.ts', to: 'src/infra' };
+    const split: PlanEdit = { kind: 'split-package', package: 'src/app', parts: [{ name: 'scan', files: ['src/app/a.ts'] }] };
+    const merge: PlanEdit = { kind: 'merge-packages', packages: ['src/app', 'src/infra'], into: 'src/infra' };
+    expect(owner([move, create], [ports], 0)).toEqual([['src/ports', false]]);
+    expect(owner([split, create], [ports], 0)).toEqual([['src/ports', false]]);
+    expect(owner([merge, create], [ports], 0)).toEqual([['src/ports', false]]);
+    expect(owner([merge, create], [ports], 1)).toEqual([['src/ports', true]]);
+    expect(owner([split], [placed('src/app/scan', 'package', 0, 1)], 0)).toEqual([['src/app/scan', true]]);
+    const db = placed('src/infra/db.ts', 'file', 0, 0);
+    const fold: PlanEdit = { kind: 'fate', file: 'src/infra/db.ts', fate: 'fold', into: 'src/infra/a.ts' };
+    const fileView = ink({
+      planned: [db],
+      proposal: view([db, placed('src/infra/a.ts', 'file', 0, 1)]),
+      edits: [{ index: 0, edit: fold }, { index: 1, edit: move }],
+      hover: 1,
+    });
+    expect(fileView.boxes.map(box => [box.id, box.highlight])).toEqual([['src/infra/a.ts', true]]);
+  });
+
+  it('draws a row for a file carried in from deeper down or out of the current view, and only for new file paths', () => {
+    const db = placed('src/infra/db.ts', 'file', 0, 0);
+    const deep: PlanEdit = { kind: 'move-file', file: 'src/app/sub/x.ts', to: 'src/infra' };
+    const fromDeep = ink({
+      planned: [app, infra],
+      proposal: view([app, infra]),
+      edits: [{ index: 0, edit: deep }],
+      hover: 0,
+      children: [
+        { id: 'src/app', planned: view([placed('src/app/sub', 'package', 0, 0)]), proposed: view([placed('src/app/sub', 'package', 0, 0)]) },
+        { id: 'src/infra', planned: view([db]), proposed: view([db, placed('src/infra/x.ts', 'file', 0, 1)]) },
+      ],
+    });
+    expect(fromDeep.rows).toEqual([{ boxId: 'src/infra', path: 'src/infra/x.ts', name: 'x.ts', highlight: true }]);
+    const split: PlanEdit = { kind: 'split-package', package: 'src/app', parts: [{ name: 'scan', files: ['src/app/a.ts'] }] };
+    const fromView = ink({
+      planned: [placed('src/app/a.ts', 'file', 0, 0)],
+      proposal: view([placed('src/app/scan', 'package', 0, 0)]),
+      edits: [{ index: 0, edit: split }],
+      children: [{ id: 'src/app/scan', planned: null, proposed: view([placed('src/app/scan/a.ts', 'file', 0, 0)]) }],
+    });
+    expect(fromView.boxes.map(box => box.rows.map(row => row.path))).toEqual([['src/app/scan/a.ts']]);
+    const renamed: PlanEdit = { kind: 'rename-package', from: 'src/infra/old', to: 'src/infra/new' };
+    const subpackage = ink({
+      planned: [infra],
+      proposal: view([infra]),
+      edits: [{ index: 0, edit: renamed }],
+      children: [{ id: 'src/infra', planned: view([placed('src/infra/old', 'package', 0, 0)]), proposed: view([placed('src/infra/new', 'package', 0, 0)]) }],
+    });
+    expect(subpackage.rows).toEqual([]);
+    const away: PlanEdit = { kind: 'move-file', file: 'src/infra/db.ts', to: 'src/app' };
+    const back: PlanEdit = { kind: 'move-file', file: 'src/app/db.ts', to: 'src/infra' };
+    const roundTrip = ink({
+      planned: [app, infra],
+      proposal: view([app, infra]),
+      edits: [{ index: 0, edit: away }, { index: 1, edit: back }],
+      children: [{ id: 'src/infra', planned: view([db]), proposed: view([db]) }],
+    });
+    expect(roundTrip.rows).toEqual([]);
+  });
+
+  it('keeps a new box\'s rows inside it and a row in a real box loose, and forgets a folded file', () => {
+    const db = placed('src/infra/db.ts', 'file', 0, 0);
+    const edits: PlanEdit[] = [
+      { kind: 'create-package', path: 'src/ports' },
+      { kind: 'move-file', file: 'src/app/b.ts', to: 'src/ports' },
+      { kind: 'move-file', file: 'src/app/a.ts', to: 'src/infra' },
+    ];
+    const both = ink({
+      planned: [app, infra],
+      proposal: view([app, infra, placed('src/ports', 'package', 0, 1)]),
+      edits: edits.map((edit, index) => ({ index, edit })),
+      children: [
+        { id: 'src/app', planned: view([placed('src/app/a.ts', 'file', 0, 0), placed('src/app/b.ts', 'file', 0, 1)]), proposed: view([]) },
+        { id: 'src/infra', planned: view([db]), proposed: view([db, placed('src/infra/a.ts', 'file', 0, 1)]) },
+        { id: 'src/ports', planned: null, proposed: view([placed('src/ports/b.ts', 'file', 0, 0)]) },
+      ],
+    });
+    expect(both.boxes.map(box => [box.id, box.rows.map(row => row.path)])).toEqual([['src/ports', ['src/ports/b.ts']]]);
+    expect(both.rows.map(row => [row.boxId, row.path])).toEqual([['src/infra', 'src/infra/a.ts']]);
+    const fold: PlanEdit = { kind: 'fate', file: 'src/app/b.ts', fate: 'fold', into: 'src/app/a.ts' };
+    const rename: PlanEdit = { kind: 'rename-package', from: 'src/infra', to: 'src/store' };
+    const folded = ink({
+      planned: [app, infra],
+      proposal: view([app, placed('src/store', 'package', 1, 0)]),
+      edits: [{ index: 0, edit: fold }, { index: 1, edit: rename }],
+      children: [
+        { id: 'src/app', planned: view([placed('src/app/a.ts', 'file', 0, 0), placed('src/app/b.ts', 'file', 0, 1)]), proposed: view([placed('src/app/a.ts', 'file', 0, 0)]) },
+        { id: 'src/infra', planned: view([db]), proposed: null },
+        { id: 'src/store', planned: null, proposed: view([placed('src/store/db.ts', 'file', 0, 0)]) },
+      ],
+    });
+    expect(folded.boxes.map(box => [box.id, box.rows.map(row => row.path)])).toEqual([['src/store', ['src/store/db.ts']]]);
+  });
+
+  it('draws an added arrow to a proposed box only while that box is proposed', () => {
+    const ports = placed('src/ports', 'package', 0, 1);
+    const create: PlanEdit = { kind: 'create-package', path: 'src/ports' };
+    const add: PlanEdit = { kind: 'add-edge', from: 'src/ports', to: 'src/domain' };
+    const planned = [app, infra, domain];
+    const both = ink({ planned, proposal: view([...planned, ports]), edits: [{ index: 0, edit: create }, { index: 1, edit: add }] });
+    expect(both.arrows).toEqual([{ from: 'src/ports', to: 'src/domain', highlight: false }]);
+    const alone = ink({ planned, proposal: view(planned), edits: [{ index: 1, edit: add }] });
+    expect(alone.arrows).toEqual([]);
   });
 
   it('draws a cut and an added arrow only when both ends are in view, and a strike once', () => {

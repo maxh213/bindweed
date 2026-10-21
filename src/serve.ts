@@ -278,8 +278,12 @@ function proposalParam(url: URL): PlanEdit[] {
   return planEditsOf(parsedJson(raw));
 }
 
-function drawnScan(scan: ScanResult, extra: PlanEdit[]): ScanResult {
-  return extra.length === 0 ? scan : applyPlan(scan, extra);
+function savedEdits(load: PlanLoad | null): PlanEdit[] {
+  return load !== null && load.ok === true ? load.doc.edits : [];
+}
+
+function drawnScan(scan: ScanResult, planned: ScanResult, saved: PlanEdit[], extra: PlanEdit[]): ScanResult {
+  return extra.length === 0 ? planned : applyPlan(scan, [...saved, ...extra]);
 }
 
 async function serveGraph(app: App, graphs: GraphHolder, res: ServerResponse, url: URL): Promise<void> {
@@ -290,7 +294,7 @@ async function serveGraph(app: App, graphs: GraphHolder, res: ServerResponse, ur
     return;
   }
   const plan = graphPlanOf(scan, load);
-  const planned = drawnScan(plan.scan, proposalParam(url));
+  const planned = drawnScan(scan, plan.scan, savedEdits(load), proposalParam(url));
   const view = graphView(planned, url.searchParams.get('at') ?? '', basename(app.repoRoot), graphFlags(url), healthOf(app.repoRoot, planned));
   if (view === null) {
     sendJson(res, 404, { error: 'no such directory' });

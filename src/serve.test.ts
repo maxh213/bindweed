@@ -537,6 +537,10 @@ describe('toPromptView', () => {
     expect(toPromptView(promptView([packageNode({ ca: 1, ce: 2 })]), 'src').nodes).toEqual([]);
     expect(toPromptView(promptView([packageNode({ ca: 1, ce: 2, i: '0.67' })]), 'src').nodes).toEqual([]);
     expect(toPromptView(promptView([packageNode({ ca: 1, ce: 2, i: '0.67', a: '0.00' })]), 'src').nodes).toEqual([]);
+    for (const field of ['ca', 'ce', 'i', 'a', 'd'] as const) {
+      const lacking: Metrics = { ...metrics, [field]: undefined };
+      expect(toPromptView(promptView([packageNode(lacking)]), 'src').nodes).toEqual([]);
+    }
     const external: GraphNode = { id: 'left-pad', kind: 'external', name: 'left-pad', path: 'left-pad', row: 1, order: 0, cycle: false };
     expect(toPromptView(promptView([packageNode(metrics), external]), 'src').nodes.map(node => node.id)).toEqual(['src/app']);
   });

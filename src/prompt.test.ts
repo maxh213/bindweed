@@ -296,6 +296,72 @@ describe('proposePrompt', () => {
     const quiet = proposePrompt(facts({ views: [{ at: 'src', nodes: [], edges: [edge()] }] }));
     expect(quiet).toContain('### src\nedge src/a -> src/b runtime 1 type 0 cycle false\ncycles none');
   });
+
+  it('joins the sections in the pinned order, with the edit JSON as one block', () => {
+    expect(proposePrompt(facts())).toBe([
+      'You are proposing edits to the plan "Gate". The developer says what they dislike; you propose edits they will accept or reject. You change nothing yourself.',
+      '',
+      '## What they dislike',
+      'the ui knows about the scanner',
+      '',
+      '## Current view',
+      'src',
+      '',
+      '## Planned graph',
+      'none',
+      '',
+      '## The plan\'s edits so far',
+      'none',
+      '',
+      '## Edit JSON',
+      '{"kind":"move-file","file":"<path>","to":"<dir>"}',
+      '{"kind":"cut-edge","from":"<box>","to":"<box>","files":[["<file>","<file>"]]}',
+      '{"kind":"add-edge","from":"<box>","to":"<box>"}',
+      '{"kind":"note","target":{"node":"<box>"},"text":"<text>"}',
+      '{"kind":"note","target":{"edge":["<box>","<box>"]},"text":"<text>"}',
+      '{"kind":"create-package","path":"<path>"}',
+      '{"kind":"rename-package","from":"<path>","to":"<path>"}',
+      '{"kind":"rename-file","from":"<path>","to":"<name>"}',
+      '{"kind":"merge-packages","packages":["<path>"],"into":"<path>"}',
+      '{"kind":"split-package","package":"<path>","parts":[{"name":"<name>","files":["<path>"]}]}',
+      '{"kind":"fate","file":"<path>","fate":"delete"}',
+      '{"kind":"fate","file":"<path>","fate":"fold","into":"<path>"}',
+      '',
+      '## Conversation so far',
+      'none',
+      '',
+      '## What to reply',
+      'Reply with exactly one JSON object, in a fenced json block.',
+      '{"summary":"<one paragraph>","edits":[<edit>]}',
+    ].join('\n'));
+  });
+
+  it('lists the smaller text of each cycle pair, sorted and joined by a bar', () => {
+    const prompt = proposePrompt(facts({
+      views: [{
+        at: 'src',
+        nodes: [],
+        edges: [
+          edge({ from: 'src/d', to: 'src/c', cycle: true, cycleText: 'd → c → d' }),
+          edge({ from: 'src/c', to: 'src/d', cycle: true, cycleText: 'c → d → c' }),
+          edge({ from: 'src/a', to: 'src/b', cycle: true, cycleText: 'b → a → b' }),
+          edge({ from: 'src/b', to: 'src/a', cycle: true, cycleText: 'a → b → a' }),
+        ],
+      }],
+    }));
+    expect(prompt.split('\n')).toContain('cycles a → b → a | c → d → c');
+    const apart = proposePrompt(facts({
+      views: [{
+        at: 'src',
+        nodes: [],
+        edges: [
+          edge({ from: 'a', to: 'bc', cycle: true, cycleText: 'a → bc → a' }),
+          edge({ from: 'ab', to: 'c', cycle: true, cycleText: 'ab → c → ab' }),
+        ],
+      }],
+    }));
+    expect(apart.split('\n')).toContain('cycles a → bc → a | ab → c → ab');
+  });
 });
 
 describe('readProposal', () => {

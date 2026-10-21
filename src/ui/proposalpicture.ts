@@ -83,21 +83,14 @@ function strikeIds(edit: PlanEdit): string[] {
   return fileStrike(edit);
 }
 
-function fileEditPath(edit: PlanEdit): string | undefined {
-  if (edit.kind === 'move-file') return edit.file;
-  if (edit.kind === 'rename-file') return edit.from;
-  if (edit.kind === 'fate') return edit.file;
-  return undefined;
-}
-
 function splitFiles(edit: PlanEdit): string[] {
   if (edit.kind !== 'split-package') return [];
   return edit.parts.flatMap(part => part.files);
 }
 
-function mentioned(edit: PlanEdit): string[] {
-  const one = fileEditPath(edit);
-  return one === undefined ? splitFiles(edit) : [one];
+function carriedFiles(edit: PlanEdit): string[] {
+  if (edit.kind === 'move-file') return [edit.file];
+  return splitFiles(edit);
 }
 
 function fileNodes(view: GraphView | null): GraphNode[] {
@@ -109,16 +102,17 @@ function addFiles(paths: Set<string>, nodes: GraphNode[]): void {
   for (const node of nodes) paths.add(node.id);
 }
 
-function seedPaths(planned: GraphNode[], children: ProposalChild[], edits: OpenProposal[]): string[] {
+function seedPaths(children: ProposalChild[], edits: OpenProposal[]): string[] {
   const paths = new Set<string>();
-  addFiles(paths, planned.filter(node => node.kind === 'file'));
   for (const child of children) addFiles(paths, fileNodes(child.planned));
-  for (const item of edits) for (const path of mentioned(item.edit)) paths.add(path);
+  for (const item of edits) for (const path of carriedFiles(item.edit)) paths.add(path);
   return [...paths];
 }
 
-function nextOwners(owners: Map<string, number>, item: OpenProposal): Map<string, number> {
-  const next = new Map<string, number>();
+type Owners = Map<string, number | undefined>;
+
+function nextOwners(owners: Owners, item: OpenProposal): Owners {
+  const next: Owners = new Map();
   for (const [path, index] of owners) {
     const moved = pathAfter(item.edit, path);
     if (moved === null) continue;
@@ -127,8 +121,8 @@ function nextOwners(owners: Map<string, number>, item: OpenProposal): Map<string
   return next;
 }
 
-function ownersOf(start: string[], edits: OpenProposal[]): Map<string, number> {
-  let owners = new Map(start.map(path => [path, -1]));
+function ownersOf(start: string[], edits: OpenProposal[]): Owners {
+  let owners: Owners = new Map(start.map(path => [path, undefined]));
   for (const item of edits) owners = nextOwners(owners, item);
   return owners;
 }
@@ -143,14 +137,16 @@ function freshFiles(planned: GraphView | null, proposed: GraphView | null): Grap
   return fileNodes(proposed).filter(node => !known.has(node.id));
 }
 
-function heldRow(boxId: string, node: GraphNode, owners: Map<string, number>): { boxId: string; path: string; name: string; index: number } | undefined {
+type HeldRow = { boxId: string; path: string; name: string; index: number };
+
+function heldRow(boxId: string, node: GraphNode, owners: Owners): HeldRow | undefined {
   const index = owners.get(node.id);
-  if (index === undefined || index < 0) return undefined;
+  if (index === undefined) return undefined;
   return { boxId, path: node.id, name: node.name, index };
 }
 
-function childRows(child: ProposalChild, owners: Map<string, number>): { boxId: string; path: string; name: string; index: number }[] {
-  const rows: { boxId: string; path: string; name: string; index: number }[] = [];
+function childRows(child: ProposalChild, owners: Owners): HeldRow[] {
+  const rows: HeldRow[] = [];
   for (const node of freshFiles(child.planned, child.proposed)) {
     const row = heldRow(child.id, node, owners);
     if (row !== undefined) rows.push(row);
@@ -158,21 +154,12 @@ function childRows(child: ProposalChild, owners: Map<string, number>): { boxId: 
   return rows;
 }
 
-function rowInk(row: { path: string; name: string; index: number }, hover: number | null): ProposalRow {
+function rowInk(row: HeldRow, hover: number | null): ProposalRow {
   return { path: row.path, name: row.name, highlight: row.index === hover };
 }
 
-type HeldRow = { boxId: string; path: string; name: string; index: number };
-
-function boxedRows(rows: HeldRow[], newIds: Set<string>, hover: number | null): Map<string, ProposalRow[]> {
-  const map = new Map<string, ProposalRow[]>();
-  for (const row of rows) {
-    if (!newIds.has(row.boxId)) continue;
-    const list = map.get(row.boxId) ?? [];
-    list.push(rowInk(row, hover));
-    map.set(row.boxId, list);
-  }
-  return map;
+function rowsIn(rows: HeldRow[], boxId: string, hover: number | null): ProposalRow[] {
+  return rows.filter(row => row.boxId === boxId).map(row => rowInk(row, hover));
 }
 
 function looseRows(rows: HeldRow[], newIds: Set<string>, hover: number | null): ProposalInk['rows'] {
@@ -193,13 +180,13 @@ function spotOf(node: GraphNode): { id: string; row: number; order: number } {
   return { id: node.id, row: node.row, order: node.order };
 }
 
-function placeBoxes(nodes: GraphNode[], planned: GraphNode[], pins: Record<string, Pin>, edits: OpenProposal[], hover: number | null, rows: Map<string, ProposalRow[]>): ProposalBox[] {
+function placeBoxes(nodes: GraphNode[], planned: GraphNode[], pins: Record<string, Pin>, edits: OpenProposal[], hover: number | null, rows: HeldRow[]): ProposalBox[] {
   const taken = takenCells(arrange(planned.map(spotOf), pins));
   const boxes: ProposalBox[] = [];
   for (const node of nodes) {
     const index = boxOwner(edits, node.id);
     if (index === undefined) continue;
-    boxes.push(placedBox(node, index, pins, taken, hover, rows.get(node.id) ?? []));
+    boxes.push(placedBox(node, index, pins, taken, hover, rowsIn(rows, node.id, hover)));
   }
   return boxes;
 }
@@ -245,11 +232,11 @@ function linkMarks(edits: OpenProposal[], kind: 'cut-edge' | 'add-edge', ids: Se
 export function proposalInk(input: ProposalInput): ProposalInk {
   if (input.shown !== 'planned') return noProposal();
   if (input.proposal === null) return noProposal();
-  const owners = ownersOf(seedPaths(input.planned, input.children, input.edits), input.edits);
+  const owners = ownersOf(seedPaths(input.children, input.edits), input.edits);
   const held = input.children.flatMap(child => childRows(child, owners));
   const missing = missingIds(input.planned, input.proposal.nodes);
-  const newIds = new Set(missing.filter(node => boxOwner(input.edits, node.id) !== undefined).map(node => node.id));
-  const boxes = placeBoxes(missing, input.planned, input.pins, input.edits, input.hover, boxedRows(held, newIds, input.hover));
+  const newIds = new Set(missing.map(node => node.id));
+  const boxes = placeBoxes(missing, input.planned, input.pins, input.edits, input.hover, held);
   const ids = new Set([...input.planned.map(node => node.id), ...boxes.map(box => box.id)]);
   return {
     boxes,

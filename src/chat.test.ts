@@ -40,9 +40,15 @@ describe('chat documents', () => {
       [turn({ edits: [cut], decisions: { '1': 'accepted' } })],
       [turn({ edits: [cut], decisions: { '0': 'open' } })],
       [turn({ edits: [cut], decisions: { '0': 1 } })],
+      [turn({ edits: [cut, cut], decisions: { '01': 'accepted' } })],
+      [turn({ edits: [cut], decisions: { '0x': 'accepted' } })],
+      [turn({ edits: [cut, cut], decisions: { 'x1': 'accepted' } })],
+      [turn({ text: ['x'] })],
       [turn(), null],
     ];
     for (const raw of bad) expect(parseChat(raw)).toBeUndefined();
+    const eleven = Array.from({ length: 11 }, () => cut);
+    expect(parseChat([turn({ edits: eleven, decisions: { '10': 'rejected', '1': 'accepted' } })])?.[0].decisions).toEqual({ '10': 'rejected', '1': 'accepted' });
   });
 
   it('quotes a turn the way the prompt does, including a value that is not an edit', () => {

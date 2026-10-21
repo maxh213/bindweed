@@ -346,6 +346,19 @@ describe('propose over the four-file fixture', () => {
     expect(await ids(JSON.stringify([{ kind: 'fold', file: 'src/app/a.ts' }, PACKAGE]))).toContain('src/ports');
   });
 
+  it('a proposals query applies the proposals after the plan, and a stale one adds nothing', async () => {
+    const ids = async (at: string): Promise<string[]> => {
+      const url = `/api/graph?at=${at}&plan=gate&proposals=${encodeURIComponent(JSON.stringify([MOVE]))}`;
+      const view = z.object({ nodes: z.array(z.object({ id: z.string() })) }).parse(json(await world().read(url)));
+      return view.nodes.map(node => node.id);
+    };
+    await world().plan([PACKAGE]);
+    expect(await ids('src/ports')).toEqual(['src/ports/b.ts']);
+    await world().plan([]);
+    expect(await ids('src')).toEqual(['src/app', 'src/infra', 'src/domain']);
+    expect(await ids('src/app')).toEqual(['src/app/a.ts', 'src/app/b.ts']);
+  });
+
   it('One level below the root is src, and a saved cut is the planned graph', async () => {
     await world().plan([CUT]);
     const sent = await world().propose('the ui knows about the scanner', '');
