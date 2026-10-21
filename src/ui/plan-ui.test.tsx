@@ -1200,6 +1200,7 @@ describe('the plan canvas over a real server', () => {
     await waitForText(() => {
       expect(entries()).toHaveLength(0);
       expect(nodeEls().map(node => node.dataset.node)).toEqual(['src/app/a.ts', 'src/app/b.ts', 'src/app/save.ts']);
+      expect(nodeById('src/app/save.ts').getAttribute('data-draggable')).toBe('true');
     });
     await dragBox('src/app/save.ts', [crumb('layered')]);
     await waitForText(() => expect(entrySentences()).toEqual(['Move src/app/save.ts to .']));

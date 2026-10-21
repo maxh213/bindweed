@@ -311,15 +311,45 @@ async function waitForBoxes(page: Page, names: string[]): Promise<void> {
   for (const name of names) await expect(box(page, name)).toBeVisible();
 }
 
+async function placement(page: Page, upper: string, lower: string): Promise<string> {
+  return page.locator('.box').evaluateAll((els, names) => {
+    const found = new Map<string, HTMLElement>();
+    for (const el of els) {
+      if (!(el instanceof HTMLElement)) continue;
+      const name = el.querySelector('.box-name')?.textContent ?? '';
+      found.set(name, el);
+    }
+    const a = found.get(names[0]);
+    const b = found.get(names[1]);
+    if (a === undefined || b === undefined) return 'missing';
+    const ar = a.getBoundingClientRect();
+    const br = b.getBoundingClientRect();
+    const ay = a.getAttribute('data-y');
+    const by = b.getAttribute('data-y');
+    return `screen=${Math.abs(ar.y - br.y).toFixed(1)} layout=${ay},${by} x=${ar.x.toFixed(1)},${br.x.toFixed(1)} h=${ar.height.toFixed(1)}`;
+  }, [upper, lower] as [string, string]);
+}
+
 async function expectAbove(page: Page, upper: string, lower: string): Promise<void> {
-  const placed = await centers(page);
-  expect(placed[upper].y + placed[upper].h).toBeLessThan(placed[lower].y);
+  await expect.poll(async () => {
+    const placed = await centers(page);
+    const top = placed[upper];
+    const bottom = placed[lower];
+    if (top === undefined || bottom === undefined) return 'missing';
+    if (top.y + top.h < bottom.y) return 'ok';
+    return await placement(page, upper, lower);
+  }, { timeout: 8000 }).toBe('ok');
 }
 
 async function expectSideBySide(page: Page, left: string, right: string): Promise<void> {
-  const placed = await centers(page);
-  expect(Math.abs(placed[left].y - placed[right].y)).toBeLessThan(12);
-  expect(placed[left].x).toBeLessThan(placed[right].x);
+  await expect.poll(async () => {
+    const placed = await centers(page);
+    const a = placed[left];
+    const b = placed[right];
+    if (a === undefined || b === undefined) return 'missing';
+    if (Math.abs(a.y - b.y) < 12 && a.x < b.x) return 'ok';
+    return await placement(page, left, right);
+  }, { timeout: 8000 }).toBe('ok');
 }
 
 async function mustBox(page: Page, name: string): Promise<PxBox> {
