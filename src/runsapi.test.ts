@@ -205,6 +205,7 @@ async function only(name: string): Promise<Record<string, unknown>> {
   return answer.body.runs[0];
 }
 
+const LONG = Array.from({ length: 25 }, (_, index) => `step ${index + 1}`);
 const SC_LINES = Array.from({ length: 25 }, (_, index) => `[sc] line ${index + 1}`);
 const wait = globalThis.setTimeout;
 
@@ -287,6 +288,10 @@ beforeEach(async () => {
   await writeFile(join(outer, 'ui/index.html'), '<title>bindweed</title>');
   await mkdir(bin, { recursive: true });
   await writeFile(join(bin, 'sc'), `#!/bin/sh
+if [ "$#" -ne 4 ] || [ "$1" != status ] || [ "$2" != --repo ] || [ "$4" != --json ]; then
+  echo 'usage: sc status --repo <dir> --json' >&2
+  exit 2
+fi
 d="$3"
 echo $$ > "$d/sc.pid"
 trap 'echo done > "$d/sc.ended"' EXIT
@@ -453,6 +458,23 @@ describe('GET /api/runs', () => {
     await put(join(worktreeOf('stopped'), SUMMARY), summary, '12:30');
     await writeRuns([stopped]);
     expect((await call('/api/runs')).body.runs[0]).toMatchObject({ state });
+  });
+
+  it('Agent text in a summary is not a verdict', async () => {
+    const running = await entry('running');
+    await put(join(worktreeOf('running'), SUMMARY), '#### timeline.md\n- qa checked that all tasks complete on the panel\n    stopped: tasks/001-init.md exited 1\nstopped: tasks/001-init.md exited 1, retried\n', '12:30');
+    await writeRuns([running]);
+    expect((await call('/api/runs')).body.runs[0]).toMatchObject({ state: 'running', position: 'task 002-step · hardener · attempt 1 · 1 of 3 tasks' });
+  });
+
+  it.each<[string, string[], string]>([
+    ['ending in a role line', [...LONG, '== coder (07-coder) attempt 3'], 'coder · attempt 3'],
+    ['whose role line is above the tail', ['== coder (07-coder) attempt 2', ...LONG], 'coder · attempt 2'],
+  ])('A long log shows its last 20 lines and its position from the whole log: %s', async (_name, lines, role) => {
+    const dead = await entry('dead');
+    await log(worktreeOf('dead'), '001-task', logged(lines), '12:10');
+    await writeRuns([dead]);
+    expect((await call('/api/runs')).body.runs[0]).toMatchObject({ position: `task 001-task · ${role} · 0 of 1 tasks`, logTail: lines.slice(-20) });
   });
 
   it('A pid that refuses kill -0 is alive', async () => {

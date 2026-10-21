@@ -299,6 +299,21 @@ describe('Runs panel', () => {
     expect(runCalls).toBe(6);
   });
 
+  it('A page opened at #runs in a hidden browser tab loads once and polls only once shown', async () => {
+    cards = [PANEL[3]];
+    visibility = 'hidden';
+    await open('#runs');
+    expect(runCalls).toBe(1);
+    await advance(15000);
+    expect(runCalls).toBe(1);
+    await setVisibility('visible');
+    expect(runCalls).toBe(2);
+    await advance(4999);
+    expect(runCalls).toBe(2);
+    await advance(1);
+    expect(runCalls).toBe(3);
+  });
+
   it('A load on another tab fetches once and never again until the Runs tab opens', async () => {
     await open('');
     expect(runCalls).toBe(1);
