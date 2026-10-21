@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useState, type FocusEvent } from 'react';
+import { useEffect, useState, type FocusEvent, type ReactNode } from 'react';
 import { pendingRound, type PlanDoc, type PlanTask, type Question, type Round } from '../domain/plan.ts';
 import { editTasks, LAST_TASK_NUMBER, lastTaskNumber, markdownBlocks, type TaskEdit } from '../domain/tasks.ts';
 import { fetchRepo, postCancel, postFiles, postGenerate, type GenerateAnswer, type GenerateBody } from './client.ts';
@@ -14,6 +14,7 @@ type TasksPanelProps = {
   onClose: () => void;
   held?: boolean;
   onRunning: (running: boolean) => void;
+  renderFeedback: (run: { raw?: string; ran?: string; note?: string }) => ReactNode;
 };
 
 function fieldsLocked(running: boolean, held: boolean | undefined): boolean {
@@ -109,25 +110,7 @@ function Running(props: Readonly<{ seconds: number; onCancel: () => void }>) {
   );
 }
 
-function RawOutput(props: Readonly<{ raw: string | undefined }>) {
-  if (props.raw === undefined) return null;
-  return (
-    <section aria-label="Raw output" className="contract-text">
-      <pre>{props.raw}</pre>
-    </section>
-  );
-}
-
-function RunNotes(props: Readonly<{ ran: string | undefined; note: string | undefined }>) {
-  return (
-    <>
-      {props.ran === undefined ? null : <output aria-label="ran">{props.ran}</output>}
-      {props.note === undefined ? null : <output aria-label="note">{props.note}</output>}
-    </>
-  );
-}
-
-function RunState(props: Readonly<{ run: Run; seconds: number; onCancel: () => void }>) {
+function RunState(props: Readonly<{ run: Run; seconds: number; onCancel: () => void; renderFeedback: TasksPanelProps['renderFeedback'] }>) {
   const run = props.run;
   switch (run.kind) {
     case 'idle':
@@ -138,12 +121,11 @@ function RunState(props: Readonly<{ run: Run; seconds: number; onCancel: () => v
       return (
         <>
           <p className="plan-dialog-error">{run.error}</p>
-          <RawOutput raw={run.raw} />
-          <RunNotes ran={run.ran} note={run.note} />
+          {props.renderFeedback(run)}
         </>
       );
     default:
-      return <RunNotes ran={run.ran} note={run.note} />;
+      return props.renderFeedback(run);
   }
 }
 
@@ -364,7 +346,7 @@ export function TasksPanel(props: Readonly<TasksPanelProps>) {
   return (
     <div className="plan-dialog-backdrop">
       <dialog open aria-label="Tasks" className="plan-dialog tasks-panel">
-        <RunState run={run} seconds={seconds} onCancel={() => void postCancel(props.token, doc.slug, props.fetcher)} />
+        <RunState run={run} seconds={seconds} onCancel={() => void postCancel(props.token, doc.slug, props.fetcher)} renderFeedback={props.renderFeedback} />
         <fieldset disabled={fieldsLocked(run.kind === 'running', props.held)} className="tasks-fields">
           <Interview rounds={answeredRounds(doc.interview)} />
           <Questions round={pending} boxes={boxes} onType={(key, value) => setBoxes(current => ({ ...current, [key]: value }))} />

@@ -18,6 +18,7 @@ import { SettingsDialog } from './SettingsDialog.tsx';
 import { TasksPanel } from './TasksPanel.tsx';
 import { invoke } from './ask.ts';
 import { useAsk } from './asksession.tsx';
+import { RunFeedback } from './RunFeedback.tsx';
 import { deletePlan, fetchGraph, fetchPairs, fetchPlan, fetchPlans, postPlan, putPlan } from './client.ts';
 import { parentDir } from './draw.ts';
 import {
@@ -284,6 +285,8 @@ function ReshapeDialogs(
 
 type PanelOpening = { open: boolean; count: number };
 
+type PlanChangeResult = PlanDoc | { error: string } | undefined;
+
 function ContractSlot(
   props: Readonly<{ opening: PanelOpening; token: string; fetcher: typeof fetch; doc: PlanDoc | null; onSave: (rules: ContractRule[]) => void; onClose: () => void }>,
 ) {
@@ -328,6 +331,7 @@ function TasksSlot(
       idle={props.idle}
       held={props.held}
       onRunning={props.onRunning}
+      renderFeedback={run => <RunFeedback {...run} rawClassName="contract-text" />}
       onClose={props.onClose}
     />
   );
@@ -384,8 +388,6 @@ function overlayChanged(base: PlanDoc, from: PlanDoc, next: PlanDoc): PlanDoc {
     brief: next.brief === from.brief ? base.brief : next.brief,
   };
 }
-
-
 
 export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionView {
   const queryClient = useQueryClient();
@@ -465,7 +467,7 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     tailRef.current = run.then(() => undefined);
     return run;
   };
-  const changePlan = (nextOf: (current: PlanDoc) => PlanDoc | null): Promise<PlanDoc | { error: string } | undefined> => {
+  const changePlan = (nextOf: (current: PlanDoc) => PlanDoc | null): Promise<PlanChangeResult> => {
     const base = baseDoc();
     if (base === null) return Promise.resolve(undefined);
     const next = nextOf(base);
@@ -476,8 +478,8 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
   const editPlan = (edit: PlanEdit): void => {
     void changePlan(base => withEdit(base, edit));
   };
-  const undoEdit = (): Promise<PlanDoc | { error: string } | undefined> => changePlan(base => (base.edits.length === 0 ? null : withUndo(base)));
-  const redoEdit = (): Promise<PlanDoc | { error: string } | undefined> => changePlan(base => (base.redo.length === 0 ? null : withRedo(base)));
+  const undoEdit = (): Promise<PlanChangeResult> => changePlan(base => (base.edits.length === 0 ? null : withUndo(base)));
+  const redoEdit = (): Promise<PlanChangeResult> => changePlan(base => (base.redo.length === 0 ? null : withRedo(base)));
   const removeEdit = (index: number): void => {
     void changePlan(base => withoutEdit(base, index));
   };

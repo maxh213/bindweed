@@ -1,8 +1,8 @@
 import { useQuery, useQueryClient, useQueries } from '@tanstack/react-query';
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from 'react';
 import type { GraphNode, GraphView } from '../domain/graph.ts';
-import { chatLines, decide, parsePlanEdit, rejectOpen, undecided, type ChatTurn, type PlanDoc, type PlanEdit } from '../domain/plan.ts';
-import { byStrings } from '../domain/plan.ts';
+import { byStrings, chatLines, decide, parsePlanEdit, rejectOpen, undecided, type ChatTurn, type PlanDoc, type PlanEdit } from '../domain/plan.ts';
+import { RunFeedback } from './RunFeedback.tsx';
 import {
   askTextOk,
   bumpTicket,
@@ -58,10 +58,6 @@ type AskProps = {
 function chatTurns(data: ChatTurn[] | { error: string } | undefined): ChatTurn[] {
   if (data === undefined || 'error' in data) return [];
   return data;
-}
-
-function asView(value: GraphView | { error: string }): GraphView | null {
-  return 'error' in value ? null : value;
 }
 
 function viewOf(data: GraphView | { error: string } | undefined): GraphView | null {
@@ -124,7 +120,8 @@ function proposedPackages(view: GraphView | null): string[] {
   return packageNodes(view.nodes);
 }
 
-function childQueries(token: string, fetcher: typeof fetch, tests: boolean, external: boolean, slug: string | null, proposals: string, nodes: GraphNode[], proposal: GraphView | null) {
+function childQueries(props: AskProps, proposals: string, proposal: GraphView | null) {
+  const { token, fetcher, tests, external, slug, nodes } = props;
   if (!wantProposal(slug, proposals)) return [];
   return unionIds(packageNodes(nodes), proposedPackages(proposal)).map(id => ({
     queryKey: ['graph', 'proposal-child', token, id, tests, external, slug, proposals] as const,
@@ -133,7 +130,7 @@ function childQueries(token: string, fetcher: typeof fetch, tests: boolean, exte
         fetchGraph(token, id, fetcher, { tests, external, plan: slug }),
         fetchGraph(token, id, fetcher, { tests, external, plan: slug, proposals }),
       ]);
-      return { id, planned: asView(planned), proposed: asView(proposed) };
+      return { id, planned: viewOf(planned), proposed: viewOf(proposed) };
     },
   }));
 }
@@ -178,12 +175,21 @@ function Proposals(props: Readonly<{ summary: string; rows: OpenRow[]; onHover: 
   );
 }
 
+function keyedLines(lines: string[]): { key: string; text: string }[] {
+  const occurrences = new Map<string, number>();
+  return lines.map(text => {
+    const occurrence = occurrences.get(text) ?? 0;
+    occurrences.set(text, occurrence + 1);
+    return { key: JSON.stringify([text, occurrence]), text };
+  });
+}
+
 function ConversationLines(props: Readonly<{ lines: string[] }>) {
   return (
     <div aria-label="conversation">
-      {props.lines.map((line, index) => (
-        <p key={index} className="chat-line">
-          {line}
+      {keyedLines(props.lines).map(line => (
+        <p key={line.key} className="chat-line">
+          {line.text}
         </p>
       ))}
     </div>
@@ -199,24 +205,6 @@ function Conversation(props: Readonly<{ lines: string[]; open: boolean; onToggle
       </button>
       {props.open ? <ConversationLines lines={props.lines} /> : null}
     </div>
-  );
-}
-
-function RawOutput(props: Readonly<{ raw: string | undefined }>) {
-  if (props.raw === undefined) return null;
-  return (
-    <section aria-label="Raw output">
-      <pre>{props.raw}</pre>
-    </section>
-  );
-}
-
-function RunNotes(props: Readonly<{ ran: string | undefined; note: string | undefined }>) {
-  return (
-    <>
-      {props.ran === undefined ? null : <output aria-label="ran">{props.ran}</output>}
-      {props.note === undefined ? null : <output aria-label="note">{props.note}</output>}
-    </>
   );
 }
 
@@ -236,12 +224,11 @@ function AskRun(props: Readonly<{ run: AskRun; seconds: number; onCancel: () => 
     return (
       <>
         <p className="plan-dialog-error">{run.error}</p>
-        <RawOutput raw={run.raw} />
-        <RunNotes ran={run.ran} note={run.note} />
+        <RunFeedback {...run} />
       </>
     );
   }
-  if (run.kind === 'done') return <RunNotes ran={run.ran} note={run.note} />;
+  if (run.kind === 'done') return <RunFeedback {...run} />;
   return null;
 }
 
@@ -249,7 +236,7 @@ function AskBox(props: Readonly<{ text: string; running: boolean; hint: string |
   return (
     <aside aria-label="ask">
       <label>
-        Ask
+        Ask{' '}
         <textarea aria-label="Ask" value={props.text} onChange={event => props.onText(event.currentTarget.value)} />
       </label>
       <button type="button" disabled={props.running} onClick={props.onPropose}>
@@ -305,7 +292,7 @@ export function useAsk(props: AskProps): AskModel {
   });
   const proposal = viewOf(proposalQuery.data);
   const childResults = useQueries({
-    queries: childQueries(props.token, props.fetcher, props.tests, props.external, slug, proposals, props.nodes, proposal),
+    queries: childQueries(props, proposals, proposal),
   });
   const picture: AskPicture = { proposal, children: childPairs(childResults), edits, hover };
   const replace = async (next: ChatTurn[]): Promise<ChatTurn[] | { error: string }> => {

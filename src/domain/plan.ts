@@ -781,7 +781,7 @@ export type ChatTurn = {
   decisions: Record<string, ChatDecision>;
 };
 
-const DECISION_INDEX = /^(0|[1-9][0-9]*)$/;
+const DECISION_INDEX = /^(0|[1-9]\d*)$/;
 
 function paragraphText(value: string): boolean {
   return value.trim() !== '' && !value.includes('\n') && !value.includes('\r');
