@@ -612,6 +612,25 @@ describe('the Tasks and Settings dialogs', () => {
     await settled(() => expect(panelText()).toContain('cancelled'));
   });
 
+  it('a run outlives a closed panel, holds Propose, and a fresh panel starts idle', async () => {
+    world.outcomes = ['hang'];
+    await mount();
+    await openTasks();
+    await click(button('Just write it'));
+    await settled(() => expect(panelText()).toContain('running for 0 s'));
+    await click(button('Close'));
+    expect(maybe('dialog[aria-label="Tasks"]')).toBeNull();
+    expect(button('Propose').disabled).toBe(true);
+    await openTasks();
+    expect(panelText()).toContain('running for 0 s');
+    await click(button('Cancel'));
+    await settled(() => expect(panelText()).toContain('cancelled'));
+    expect(button('Propose').disabled).toBe(false);
+    await click(button('Close'));
+    await openTasks();
+    expect(panelText()).not.toContain('cancelled');
+  });
+
   it('Settings opens with the saved config and refuses a blank command', async () => {
     await mount(null);
     await settled(() => expect(maybeButton('New plan…')).toBeDefined());

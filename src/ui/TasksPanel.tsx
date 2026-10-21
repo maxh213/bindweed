@@ -13,7 +13,8 @@ type TasksPanelProps = {
   idle: { readonly current: Promise<void> };
   onClose: () => void;
   held?: boolean;
-  onRunning: (running: boolean) => void;
+  run: TasksRun;
+  onRun: (run: TasksRun) => void;
   renderFeedback: (run: { raw?: string; ran?: string; note?: string }) => ReactNode;
 };
 
@@ -21,7 +22,7 @@ function fieldsLocked(running: boolean, held: boolean | undefined): boolean {
   return running || held === true;
 }
 
-type Run = { kind: 'idle' } | { kind: 'running' } | ({ kind: 'failed' } & Exclude<GenerateAnswer, { plan: PlanDoc }>) | { kind: 'done'; ran: string; note?: string };
+export type TasksRun = { kind: 'idle' } | { kind: 'running' } | ({ kind: 'failed' } & Exclude<GenerateAnswer, { plan: PlanDoc }>) | { kind: 'done'; ran: string; note?: string };
 
 type Listed<T> = { key: string; item: T; index: number };
 
@@ -110,7 +111,7 @@ function Running(props: Readonly<{ seconds: number; onCancel: () => void }>) {
   );
 }
 
-function RunState(props: Readonly<{ run: Run; seconds: number; onCancel: () => void; renderFeedback: TasksPanelProps['renderFeedback'] }>) {
+function RunState(props: Readonly<{ run: TasksRun; seconds: number; onCancel: () => void; renderFeedback: TasksPanelProps['renderFeedback'] }>) {
   const run = props.run;
   switch (run.kind) {
     case 'idle':
@@ -312,15 +313,11 @@ async function whenSaved(saving: { readonly current: Promise<void> }): Promise<v
 
 export function TasksPanel(props: Readonly<TasksPanelProps>) {
   const doc = props.doc;
-  const onRunning = props.onRunning;
-  const [run, setRun] = useState<Run>({ kind: 'idle' });
+  const run = props.run;
+  const setRun = props.onRun;
   const [boxes, setBoxes] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState<string | null>(null);
   const [seconds, restartTicker] = useTicker(run.kind === 'running');
-  useEffect(() => {
-    onRunning(run.kind === 'running');
-    return () => onRunning(false);
-  }, [run.kind, onRunning]);
   const pending = pendingOf(doc);
   const keep = (next: PlanDoc): void => {
     void props.onSave(next);

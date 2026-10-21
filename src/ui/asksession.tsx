@@ -1,23 +1,16 @@
-import { useQuery, useQueryClient, useQueries } from '@tanstack/react-query';
-import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from 'react';
+import { keepPreviousData, useQuery, useQueryClient, useQueries } from '@tanstack/react-query';
+import { useEffect, useState, type ReactNode } from 'react';
 import type { GraphNode, GraphView } from '../domain/graph.ts';
 import { chatLines, decide, rejectOpen, undecided, type ChatTurn } from '../domain/chat.ts';
 import { byStrings, parsePlanEdit, type PlanDoc, type PlanEdit } from '../domain/plan.ts';
-import { RunFeedback } from './RunFeedback.tsx';
-import { askTextOk, bumpTicket, openList, reviewIfCurrent, withTurn, type HeldDrop, type OpenRow } from './ask.ts';
+import { RunStatus, type LlmRun } from './RunFeedback.tsx';
+import { acceptance, askTextOk, openList, openRaws, withTurn, type HeldDrop, type OpenRow } from './ask.ts';
 import { fetchChat, fetchGraph, postCancel, postPropose, postReview, putChat, type ProposeAnswer } from './client.ts';
 import { proposalInk, type ProposalChild, type ProposalInk, type ProposalInput } from './proposalpicture.ts';
-
-type AskRun =
-  | { kind: 'idle' }
-  | { kind: 'running' }
-  | { kind: 'failed'; error: string; raw?: string; ran?: string; note?: string }
-  | { kind: 'done'; ran: string; note?: string };
 
 export type AskModel = {
   ink: ProposalInk;
   running: boolean;
-  onTasks: (running: boolean) => void;
   recheck: () => void;
   column: (changes: ReactNode) => ReactNode;
 };
@@ -32,6 +25,7 @@ type AskProps = {
   shown: ProposalInput['shown'];
   nodes: GraphNode[];
   pins: ProposalInput['pins'];
+  tasksRunning: boolean;
   commit: (edit: PlanEdit) => Promise<PlanDoc | { error: string }>;
   onError: (message: string) => void;
 };
@@ -67,13 +61,13 @@ function childPairs(results: readonly { data?: ProposalChild }[]): ProposalChild
   return results.flatMap(result => (result.data === undefined ? [] : [result.data]));
 }
 
-function askBusy(run: AskRun, tasks: boolean): boolean {
+function askBusy(run: LlmRun, tasks: boolean): boolean {
   return run.kind === 'running' || tasks;
 }
 
-function liveTurn(slug: string | null, current: ChatTurn | null): current is ChatTurn {
+function wantReview(slug: string | null, raws: unknown[]): boolean {
   if (slug === null) return false;
-  return current !== null;
+  return raws.length > 0;
 }
 
 function keptEdit(saved: PlanDoc | { error: string }, edit: PlanEdit): PlanEdit | null {
@@ -189,31 +183,7 @@ function Conversation(props: Readonly<{ lines: string[]; open: boolean; onToggle
   );
 }
 
-function AskRun(props: Readonly<{ run: AskRun; seconds: number; onCancel: () => void }>) {
-  const run = props.run;
-  if (run.kind === 'running') {
-    return (
-      <p>
-        running for {props.seconds} s{' '}
-        <button type="button" onClick={props.onCancel}>
-          Cancel
-        </button>
-      </p>
-    );
-  }
-  if (run.kind === 'failed') {
-    return (
-      <>
-        <p className="plan-dialog-error">{run.error}</p>
-        <RunFeedback {...run} />
-      </>
-    );
-  }
-  if (run.kind === 'done') return <RunFeedback {...run} />;
-  return null;
-}
-
-function AskBox(props: Readonly<{ text: string; running: boolean; hint: string | null; run: AskRun; seconds: number; onText: (text: string) => void; onPropose: () => void; onCancel: () => void }>) {
+function AskBox(props: Readonly<{ text: string; running: boolean; hint: string | null; run: LlmRun; seconds: number; onText: (text: string) => void; onPropose: () => void; onCancel: () => void }>) {
   return (
     <aside aria-label="ask">
       <label>
@@ -224,12 +194,12 @@ function AskBox(props: Readonly<{ text: string; running: boolean; hint: string |
         Propose
       </button>
       {props.hint === null ? null : <p className="plan-dialog-error">{props.hint}</p>}
-      <AskRun run={props.run} seconds={props.seconds} onCancel={props.onCancel} />
+      <RunStatus run={props.run} seconds={props.seconds} onCancel={props.onCancel} />
     </aside>
   );
 }
 
-function AskColumn(props: Readonly<{ slug: string | null; summary: string; rows: OpenRow[]; lines: string[]; open: boolean; text: string; running: boolean; hint: string | null; run: AskRun; seconds: number; changes: ReactNode; onHover: (index: number | null) => void; onAccept: (index: number) => void; onReject: (index: number) => void; onAcceptAll: () => void; onRejectAll: () => void; onToggle: () => void; onText: (text: string) => void; onPropose: () => void; onCancel: () => void }>) {
+function AskColumn(props: Readonly<{ slug: string | null; summary: string; rows: OpenRow[]; lines: string[]; open: boolean; text: string; running: boolean; hint: string | null; run: LlmRun; seconds: number; changes: ReactNode; onHover: (index: number | null) => void; onAccept: (index: number) => void; onReject: (index: number) => void; onAcceptAll: () => void; onRejectAll: () => void; onToggle: () => void; onText: (text: string) => void; onPropose: () => void; onCancel: () => void }>) {
   if (props.slug === null) return props.changes;
   return (
     <>
@@ -253,14 +223,29 @@ export function useAsk(props: AskProps): AskModel {
   const turns = chatTurns(chatQuery.data);
   const [text, setText] = useState('');
   const [hint, setHint] = useState<string | null>(null);
-  const [run, setRun] = useState<AskRun>({ kind: 'idle' });
+  const [run, setRun] = useState<LlmRun>({ kind: 'idle' });
   const [hover, setHover] = useState<number | null>(null);
   const [drop, setDrop] = useState<HeldDrop | null>(null);
-  const [stale, setStale] = useState<(string | null)[]>([]);
   const [open, setOpen] = useState(false);
-  const [tasksRunning, setTasksRunning] = useState(false);
   const [seconds, restartTicker] = useTicker(run.kind === 'running');
-  const { turn, stamp, rows, edits } = openList(turns, stale, drop);
+  const reviewPrefix = ['review', props.token, slug] as const;
+  const reviewKey = (next: ChatTurn[]) => {
+    const { stamp, raws } = openRaws(next);
+    return [...reviewPrefix, stamp, raws] as const;
+  };
+  const opened = openRaws(turns);
+  const reviewQuery = useQuery({
+    queryKey: reviewKey(turns),
+    queryFn: async (): Promise<(string | null)[]> => {
+      const result = await postReview(props.token, String(slug), opened.raws, props.fetcher);
+      if ('error' in result) throw new Error(result.error);
+      return result.stale;
+    },
+    enabled: wantReview(slug, opened.raws),
+    staleTime: Infinity,
+    placeholderData: keepPreviousData,
+  });
+  const { turn, stamp, rows, edits } = openList(turns, reviewQuery.data ?? [], drop);
   const proposals = proposalsParam(edits.map(item => item.edit));
   const proposalQuery = useQuery({
     queryKey: ['graph', 'proposal', props.token, props.at, props.tests, props.external, slug, proposals] as const,
@@ -281,13 +266,8 @@ export function useAsk(props: AskProps): AskModel {
   const store = (next: ChatTurn[]): void => {
     queryClient.setQueryData(chatKey, next);
   };
-  const tickets = useRef(0);
-  const recheck = async (current: ChatTurn | null): Promise<void> => {
-    if (!liveTurn(slug, current)) return;
-    const raws = undecided(current).map(index => current.edits[index]);
-    const ticket = bumpTicket(tickets);
-    if (raws.length === 0) return;
-    reviewIfCurrent(ticket, tickets.current, await postReview(props.token, String(slug), raws, props.fetcher), setStale);
+  const recheck = (): void => {
+    void queryClient.invalidateQueries({ queryKey: reviewPrefix });
   };
   const oneReason = async (raw: unknown): Promise<string | null | undefined> => {
     const result = await postReview(props.token, String(slug), [raw], props.fetcher);
@@ -301,7 +281,6 @@ export function useAsk(props: AskProps): AskModel {
       return;
     }
     setDrop(null);
-    await recheck(next);
   };
   const takeEdit = async (index: number, edit: PlanEdit, current: ChatTurn): Promise<void> => {
     const saved = await props.commit(edit);
@@ -315,11 +294,12 @@ export function useAsk(props: AskProps): AskModel {
       props.onError('cannot reach bindweed');
       return;
     }
-    if (reason !== null) {
-      setDrop({ stamp, forced: { index, reason } });
+    const verdict = acceptance(raw, reason);
+    if ('reason' in verdict) {
+      setDrop({ stamp, forced: { index, reason: verdict.reason } });
       return;
     }
-    await takeEdit(index, parsePlanEdit(raw) as PlanEdit, current);
+    await takeEdit(index, verdict.edit, current);
   };
   const commitOpen = async (raw: unknown): Promise<PlanEdit | null> => {
     const edit = parsePlanEdit(raw);
@@ -343,22 +323,15 @@ export function useAsk(props: AskProps): AskModel {
       current = step.turn;
     }
     setDrop(null);
-    await recheck(current);
+    recheck();
   };
-  const refresh = useEffectEvent(() => {
-    void recheck(turn);
-  });
-  useEffect(() => {
-    const timer = setTimeout(refresh, 0);
-    return () => clearTimeout(timer);
-  }, [slug, stamp]);
   const landed = (answer: ProposeAnswer): void => {
     if ('error' in answer) {
       setRun({ kind: 'failed', error: answer.error, raw: answer.raw, ran: answer.ran, note: answer.note });
       return;
     }
     setText('');
-    setStale(answer.stale);
+    queryClient.setQueryData(reviewKey(answer.chat), answer.stale);
     setDrop(null);
     store(answer.chat);
     setRun({ kind: 'done', ran: answer.ran, note: answer.note });
@@ -377,10 +350,7 @@ export function useAsk(props: AskProps): AskModel {
   return {
     ink,
     running: run.kind === 'running',
-    onTasks: setTasksRunning,
-    recheck: () => {
-      void recheck(turn);
-    },
+    recheck,
     column: changes => (
       <AskColumn
         slug={slug}
@@ -389,7 +359,7 @@ export function useAsk(props: AskProps): AskModel {
         lines={chatLines(turns)}
         open={open}
         text={text}
-        running={askBusy(run, tasksRunning)}
+        running={askBusy(run, props.tasksRunning)}
         hint={hint}
         run={run}
         seconds={seconds}

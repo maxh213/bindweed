@@ -28,20 +28,16 @@ function chatStamp(turns: ChatTurn[]): string {
   return last === undefined ? '' : `${turns.length}:${last.at}`;
 }
 
-export function bumpTicket(tickets: { current: number }): number {
-  tickets.current += 1;
-  return tickets.current;
+export function openRaws(turns: ChatTurn[]): { stamp: string; raws: unknown[] } {
+  const turn = latestTurn(turns);
+  const raws = turn === null ? [] : undecided(turn).map(index => turn.edits[index]);
+  return { stamp: chatStamp(turns), raws };
 }
 
-export function reviewIfCurrent(
-  ticket: number,
-  current: number,
-  result: { stale: (string | null)[] } | { error: string },
-  apply: (stale: (string | null)[]) => void,
-): void {
-  if (ticket !== current) return;
-  if ('error' in result) return;
-  apply(result.stale);
+export function acceptance(raw: unknown, reason: string | null): { edit: PlanEdit } | { reason: string } {
+  if (reason !== null) return { reason };
+  const edit = parsePlanEdit(raw);
+  return edit === undefined ? { reason: 'not an edit' } : { edit };
 }
 
 function keptDrop(drop: HeldDrop | null, stamp: string): ForcedDrop | null {

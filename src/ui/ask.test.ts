@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatTurn } from '../domain/chat.ts';
 import type { PlanEdit } from '../domain/plan.ts';
-import { askTextOk, bumpTicket, openList, reviewIfCurrent, withTurn } from './ask.ts';
+import { acceptance, askTextOk, openList, openRaws, withTurn } from './ask.ts';
 
 const cut: PlanEdit = { kind: 'cut-edge', from: 'src/app', to: 'src/domain', files: [['src/app/a.ts', 'src/domain/model.ts']] };
 const fold = { kind: 'fold', file: 'src/app/a.ts' };
@@ -40,14 +40,17 @@ describe('ask rows', () => {
     expect(openList([two], [], { stamp: '2:t', forced }).rows.map(row => row.stale)).toEqual([null, null]);
     expect(openList([two], [], { stamp, forced }).rows.map(row => row.stale)).toEqual([null, 'no such directory src/ports']);
     expect(openList([two], [], { stamp, forced }).edits.map(item => item.index)).toEqual([0]);
-    const tickets = { current: 0 };
-    expect(bumpTicket(tickets)).toBe(1);
-    expect(bumpTicket(tickets)).toBe(2);
-    const applied: (string | null)[][] = [];
-    reviewIfCurrent(1, 2, { stale: ['late'] }, stale => applied.push(stale));
-    reviewIfCurrent(2, 2, { error: 'down' }, stale => applied.push(stale));
-    reviewIfCurrent(2, 2, { stale: ['gone'] }, stale => applied.push(stale));
-    expect(applied).toEqual([['gone']]);
+  });
+
+  it('names the open raws of the latest turn by its stamp', () => {
+    expect(openRaws([])).toEqual({ stamp: '', raws: [] });
+    expect(openRaws([turn([cut]), turn([cut, fold], { '0': 'rejected' })])).toEqual({ stamp: '2:2026-10-21T09:00:00.000Z', raws: [fold] });
+  });
+
+  it('accepts only an applicable edit', () => {
+    expect(acceptance(cut, null)).toEqual({ edit: cut });
+    expect(acceptance(cut, 'no such file src/no-such.ts')).toEqual({ reason: 'no such file src/no-such.ts' });
+    expect(acceptance(fold, null)).toEqual({ reason: 'not an edit' });
   });
 });
 

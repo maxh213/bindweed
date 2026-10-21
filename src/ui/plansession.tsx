@@ -15,7 +15,7 @@ import {
 } from '../domain/plan.ts';
 import { ContractPanel } from './ContractPanel.tsx';
 import { SettingsDialog } from './SettingsDialog.tsx';
-import { TasksPanel } from './TasksPanel.tsx';
+import { TasksPanel, type TasksRun } from './TasksPanel.tsx';
 import { useAsk } from './asksession.tsx';
 import { RunFeedback } from './RunFeedback.tsx';
 import { deletePlan, fetchGraph, fetchPairs, fetchPlan, fetchPlans, postPlan, putPlan } from './client.ts';
@@ -313,7 +313,8 @@ function TasksSlot(
     onSave: (current: PlanDoc, next: PlanDoc) => Promise<void>;
     idle: { readonly current: Promise<void> };
     held: boolean;
-    onRunning: (running: boolean) => void;
+    run: TasksRun;
+    onRun: (run: TasksRun) => void;
     onClose: () => void;
   }>,
 ) {
@@ -329,11 +330,16 @@ function TasksSlot(
       onSave={next => props.onSave(doc, next)}
       idle={props.idle}
       held={props.held}
-      onRunning={props.onRunning}
+      run={props.run}
+      onRun={props.onRun}
       renderFeedback={run => <RunFeedback {...run} rawClassName="contract-text" />}
       onClose={props.onClose}
     />
   );
+}
+
+function reopenedRun(run: TasksRun): TasksRun {
+  return run.kind === 'running' ? run : { kind: 'idle' };
 }
 
 function kindOf(nodes: GraphNode[], id: string): GraphNode['kind'] | undefined {
@@ -412,6 +418,7 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
   const [contractOpening, setContractOpening] = useState<PanelOpening>({ open: false, count: 0 });
   const closeContract = (): void => setContractOpening(current => ({ ...current, open: false }));
   const [tasksOpening, setTasksOpening] = useState<PanelOpening>({ open: false, count: 0 });
+  const [tasksRun, setTasksRun] = useState<TasksRun>({ kind: 'idle' });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const docRef = useRef<PlanDoc | null>(null);
   const versionRef = useRef(0);
@@ -651,6 +658,7 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     shown: props.shown,
     nodes: props.nodes,
     pins: props.pins,
+    tasksRunning: tasksRun.kind === 'running',
     commit: commitEdit,
     onError: setNotice,
   });
@@ -711,7 +719,10 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
         onShown={props.onShown}
         onNewPackage={() => ask({ mode: 'create' })}
         onContract={() => setContractOpening(current => ({ open: true, count: current.count + 1 }))}
-        onTasks={() => setTasksOpening(current => ({ open: true, count: current.count + 1 }))}
+        onTasks={() => {
+          setTasksRun(reopenedRun);
+          setTasksOpening(current => ({ open: true, count: current.count + 1 }));
+        }}
         onSettings={() => setSettingsOpen(true)}
       />
     ),
@@ -743,7 +754,8 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
           onSave={storeDoc}
           idle={tailRef}
           held={asking.running}
-          onRunning={asking.onTasks}
+          run={tasksRun}
+          onRun={setTasksRun}
           onClose={() => setTasksOpening(current => ({ ...current, open: false }))}
         />
         {settingsOpen ? <SettingsDialog token={props.token} fetcher={props.fetcher} onClose={() => setSettingsOpen(false)} /> : null}
