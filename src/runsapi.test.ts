@@ -41,6 +41,18 @@ function log(dir: string, id: string, text: string, at: string): Promise<void> {
 
 const QA_DONE = '== qa (09-qa) attempt 1\npipeline complete\n';
 
+const HUMAN = '== coder (03-coder) attempt 2\ngate failed\nstopping for a human\n';
+const BOOM = '== coder (03-coder) attempt 1\nnpm ERR! boom\n';
+
+function named(stoppedLog: string, newerLog: string) {
+  return async (dir: string) => {
+    await files('001-w', '002-x')(dir);
+    await log(dir, '001-w', stoppedLog, '12:10');
+    await log(dir, '002-x', newerLog, '12:20');
+    await put(join(dir, SUMMARY), 'stopped: tasks/001-w.md exited 1\n', '12:30');
+  };
+}
+
 const MARESTAIL: Record<string, Fixture> = {
   done: { tool: 'marestail', pid: 'dead', at: '12:01', tasks: ['tasks/001-a.md', 'tasks/002-b.md'], build: async dir => {
     await files('001-a', '002-b')(dir);
@@ -79,6 +91,8 @@ const MARESTAIL: Record<string, Fixture> = {
     await files('001-a')(dir);
     await log(dir, '001-a', '== qa (09-qa) attempt 1\npipeline complete, NOT verified by eye\n', '12:10');
   } },
+  'stopped-older': { tool: 'marestail', pid: 'dead', at: '12:02', tasks: ['tasks/001-w.md', 'tasks/002-x.md'], build: named(HUMAN, BOOM) },
+  'failed-older': { tool: 'marestail', pid: 'dead', at: '12:02', tasks: ['tasks/001-w.md', 'tasks/002-x.md'], build: named(BOOM, HUMAN) },
   removed: { tool: 'marestail', pid: 'dead', at: '12:00', tasks: [], build: async dir => rm(dir, { recursive: true }) },
 };
 
@@ -93,6 +107,7 @@ const CANNON: Record<string, Fixture> = {
   'sc-err': { tool: 'slop-cannon', pid: 'dead', at: '12:12', build: status('sc-status.err', 'no slop-cannon state here\nsecond line\n') },
   'sc-slow': { tool: 'slop-cannon', pid: 'live', at: '12:13', build: status('sc-status.slow', '') },
   'sc-junk': { tool: 'slop-cannon', pid: 'live', at: '12:14', build: status('sc-status.json', 'null') },
+  'sc-list': { tool: 'slop-cannon', pid: 'live', at: '12:15', build: status('sc-status.json', '[]') },
   'sc-text': { tool: 'slop-cannon', pid: 'live', at: '12:15', build: status('sc-status.json', 'nope') },
   'sc-quiet': { tool: 'slop-cannon', pid: 'dead', at: '12:16', build: status('sc-status.code', '') },
   'sc-odd': { tool: 'slop-cannon', pid: 'live', at: '12:17', build: status('sc-status.json', JSON.stringify({ state: null, agents: 'x', beads: { open: 'many', done: 2 }, prs: [1, { url: 2 }, { url: 'https://example.test/pull/9' }] })) },
@@ -206,6 +221,8 @@ describe('GET /api/runs', () => {
     ['done', 'done', 'all tasks complete · 2 of 2 tasks', ['== qa (09-qa) attempt 1', 'pipeline complete']],
     ['stopped', 'stopped for a human', 'task 002-x · coder · attempt 2 · 1 of 2 tasks', ['== coder (03-coder) attempt 2', 'gate failed', 'stopping for a human']],
     ['failed', 'failed', 'task 001-f · coder · attempt 1 · 0 of 1 tasks', ['== coder (03-coder) attempt 1', 'npm ERR! boom']],
+    ['stopped-older', 'stopped for a human', 'task 002-x · coder · attempt 1 · 0 of 2 tasks', ['== coder (03-coder) attempt 1', 'npm ERR! boom']],
+    ['failed-older', 'failed', 'task 002-x · coder · attempt 2 · 0 of 2 tasks', ['== coder (03-coder) attempt 2', 'gate failed', 'stopping for a human']],
     ['running', 'running', 'task 002-step · hardener · attempt 1 · 1 of 3 tasks', ['starting', '== coder (07-coder) attempt 2', '== hardener (07-hardener) attempt 1']],
     ['dead', 'dead', 'task 001-task · 0 of 1 tasks', ['starting']],
     ['between', 'running', 'task 001-a · finished · 1 of 2 tasks', ['== qa (09-qa) attempt 1', 'pipeline complete']],
@@ -217,6 +234,7 @@ describe('GET /api/runs', () => {
     ['sc-done', 'done', 'complete · 0 agents · 5 done · 0 PRs', []],
     ['sc-err', 'dead', 'sc status failed: no slop-cannon state here · pid gone', []],
     ['sc-junk', 'running', 'sc status failed: not JSON · pid alive', []],
+    ['sc-list', 'running', 'sc status failed: not JSON · pid alive', []],
     ['sc-text', 'running', 'sc status failed: not JSON · pid alive', []],
     ['sc-quiet', 'dead', 'sc status failed: exited 3 · pid gone', []],
     ['sc-odd', 'running', ' · 0 agents · 2 done · 1 PR', []],

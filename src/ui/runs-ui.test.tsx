@@ -54,8 +54,16 @@ function deleteResponse(path: string): Response {
   return response(body, status);
 }
 
+const PLANS = { plans: [{ name: 'Plan Running', slug: 'plan-running', editCount: 0, createdAt: '2026-10-21T12:00:00.000Z' }] };
+
+const GETS: Record<string, () => Response | Promise<Response>> = {
+  '/api/runs': runsResponse,
+  '/api/plans': () => response(PLANS),
+};
+
 const fetcher = (async (path: string, init?: RequestInit) => {
-  if (path === '/api/runs') return runsResponse();
+  const answer = GETS[path];
+  if (answer !== undefined) return answer();
   if (init?.method === 'DELETE') return deleteResponse(path);
   return response({ error: 'not found' }, 404);
 }) as typeof fetch;
@@ -183,6 +191,10 @@ describe('Runs panel', () => {
     await click(link);
     expect(window.location.hash).toBe('#at=src&plan=plan-running');
     expect(tab('Architecture').getAttribute('aria-selected')).toBe('true');
+    await settle();
+    const select = document.querySelector('select[aria-label="Plan"]') as HTMLSelectElement;
+    expect(select.value).toBe('plan-running');
+    expect(select.selectedOptions[0].textContent).toBe('Plan Running');
   });
 
   it.each([

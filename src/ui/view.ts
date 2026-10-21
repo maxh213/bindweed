@@ -110,16 +110,18 @@ export type RunsView<T> =
   | { kind: 'message'; message: string }
   | { kind: 'ready'; cards: T[]; now: number };
 
-export function runsStateOf<T>(data: { runs: T[] } | { error: string } | undefined, pending: boolean, now: number): RunsView<T> {
+type RunsData<T> = { runs: T[] } | { error: string } | undefined;
+
+export function runsStateOf<T>(data: RunsData<T>, pending: boolean, now: number): RunsView<T> {
   if (pending || data === undefined) return { kind: 'loading' };
   if ('error' in data) return { kind: 'message', message: data.error };
   return { kind: 'ready', cards: data.runs, now };
 }
 
 export function nextRuns<T extends { worktree: string }>(
-  current: { runs: T[] } | { error: string } | undefined,
+  current: RunsData<T>,
   worktree: string,
-): { runs: T[] } | { error: string } | undefined {
+): RunsData<T> {
   if (current === undefined || !('runs' in current)) return current;
   return { runs: current.runs.filter(card => card.worktree !== worktree) };
 }
