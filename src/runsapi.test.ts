@@ -123,6 +123,8 @@ const CANNON: Record<string, Fixture> = {
   'sc-err': { tool: 'slop-cannon', pid: 'dead', at: '12:12', build: status('sc-status.err', 'no slop-cannon state here\nsecond line\n') },
   'sc-slow': { tool: 'slop-cannon', pid: 'live', at: '12:13', build: status('sc-status.slow', '') },
   'sc-pause': { tool: 'slop-cannon', pid: 'live', at: '12:13', build: status('sc-status.pause', JSON.stringify({ state: { phase: 'planning' }, agents: [{ alive: true }], beads: {}, prs: [{ url: 'https://example.test/pull/7' }] })) },
+  'sc-split': { tool: 'slop-cannon', pid: 'live', at: '12:13', build: status('sc-status.split', JSON.stringify({ state: { phase: 'planning' }, agents: [{ alive: true }], beads: {}, prs: [{ url: 'https://example.test/pull/7' }] })) },
+  'sc-errsplit': { tool: 'slop-cannon', pid: 'dead', at: '12:12', build: status('sc-status.errsplit', '') },
   'sc-junk': { tool: 'slop-cannon', pid: 'live', at: '12:14', build: status('sc-status.json', 'null') },
   'sc-list': { tool: 'slop-cannon', pid: 'live', at: '12:15', build: status('sc-status.json', '[]') },
   'sc-text': { tool: 'slop-cannon', pid: 'live', at: '12:15', build: status('sc-status.json', 'nope') },
@@ -304,6 +306,8 @@ if [ -e "$d/sc-status.hold" ]; then
 fi
 if [ -e "$d/sc-status.slow" ]; then sleep 15; fi
 if [ -e "$d/sc-status.pause" ]; then sleep 3; cat "$d/sc-status.pause"; exit 0; fi
+if [ -e "$d/sc-status.split" ]; then head -c 20 "$d/sc-status.split"; sleep 0.2; tail -c +21 "$d/sc-status.split"; exit 0; fi
+if [ -e "$d/sc-status.errsplit" ]; then echo 'first problem' >&2; sleep 0.2; echo second >&2; exit 1; fi
 if [ -e "$d/sc-status.err" ]; then cat "$d/sc-status.err" >&2; exit 1; fi
 if [ -e "$d/sc-status.code" ]; then exit 3; fi
 cat "$d/sc-status.json"
@@ -336,6 +340,8 @@ describe('GET /api/runs', () => {
     ['sc-one', 'running', 'planning · 1 agent · 1 PR', []],
     ['sc-done', 'done', 'complete · 0 agents · 5 done · 0 PRs', []],
     ['sc-err', 'dead', 'sc status failed: no slop-cannon state here · pid gone', []],
+    ['sc-split', 'running', 'planning · 1 agent · 1 PR', []],
+    ['sc-errsplit', 'dead', 'sc status failed: first problem · pid gone', []],
     ['sc-junk', 'running', 'sc status failed: not JSON · pid alive', []],
     ['sc-list', 'running', 'sc status failed: not JSON · pid alive', []],
     ['sc-text', 'running', 'sc status failed: not JSON · pid alive', []],
@@ -526,6 +532,13 @@ describe('GET /api/runs', () => {
     await put(join(worktreeOf('dead'), 'tasks/notes.txt'), '');
     await writeRuns([dead]);
     expect((await call('/api/runs')).body.runs[0]).toMatchObject({ position: 'task 001-task · 0 of 2 tasks' });
+  });
+
+  it('A tasks list holding a non-string falls back to the worktree\'s task files', async () => {
+    await writeRuns([{ ...(await entry('dead')), tasks: ['tasks/001-task.md', 5] }]);
+    const answer = await call('/api/runs');
+    expect(answer.status).toBe(200);
+    expect(answer.body.runs[0]).toMatchObject({ state: 'dead', position: 'task 001-task · 0 of 1 tasks', logTail: ['starting'] });
   });
 
   it('A worktree without a tasks directory has no tasks', async () => {
