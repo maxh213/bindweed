@@ -693,6 +693,48 @@ module.exports = {
       comment: 'The dialog shows the shared refusal and posts through the client. It does not spawn, scan or draw',
       from: { path: '^src/ui/LaunchDialog\\.tsx$' },
       to: { path: ['^src/', 'node_modules/(@xyflow|zod)'], pathNot: '^src/(domain/(plan|launch)|ui/client)\\.ts$' }
+    },
+    {
+      name: 'run-standing-is-pure',
+      severity: 'error',
+      comment: 'How a marestail log or an sc status becomes a state and a position is pure text. It imports nothing',
+      from: { path: '^src/domain/runs\\.ts$' },
+      to: { path: '.' }
+    },
+    {
+      name: 'only-the-runs-procedure-reads-standing',
+      severity: 'error',
+      comment: 'The procedure is the only production reader of a run standing. Serve lists runs through it and does not interpret logs',
+      from: { pathNot: '^src/(runs\\.ts|domain/runs\\.ts|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/domain/runs\\.ts$' }
+    },
+    {
+      name: 'only-serve-lists-runs',
+      severity: 'error',
+      comment: 'The ledger, the worktree and sc are one procedure. Only serve composes it among production files',
+      from: { pathNot: '^src/(serve\\.ts|runs\\.ts|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/runs\\.ts$' }
+    },
+    {
+      name: 'the-runs-procedure-reads-standing-only',
+      severity: 'error',
+      comment: 'The procedure asks the filesystem and sc, then the standing rules. It does not scan, serve, read a plan or launch',
+      from: { path: '^src/runs\\.ts$' },
+      to: { path: '^src/', pathNot: '^src/domain/runs\\.ts$' }
+    },
+    {
+      name: 'only-the-page-mounts-the-runs-pane',
+      severity: 'error',
+      comment: 'The page mounts the runs pane. Polling, the cards and Forget stay inside it',
+      from: { pathNot: '^src/ui/(App\\.tsx|RunsPanel\\.tsx|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/ui/RunsPanel\\.tsx$' }
+    },
+    {
+      name: 'the-runs-pane-asks-the-server',
+      severity: 'error',
+      comment: 'The pane polls and forgets through the client and links with the page hash. It does not decide a run standing or draw the canvas',
+      from: { path: '^src/ui/RunsPanel\\.tsx$' },
+      to: { path: ['^src/', 'node_modules/(@xyflow|zod|@tanstack)'], pathNot: '^src/ui/(client|view)\\.ts$' }
     }
   ],
   options: {

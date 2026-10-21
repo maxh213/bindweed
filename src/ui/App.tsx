@@ -4,7 +4,7 @@ import { togglePath, type TreeEntry } from '../domain/tree.ts';
 import { ArchView } from './ArchView.tsx';
 import { fetchFile, fetchTree } from './client.ts';
 import { FilePanel } from './FilePanel.tsx';
-import { RunsPanel, useRuns } from './RunsPanel.tsx';
+import { useRunsPane } from './RunsPanel.tsx';
 import { TreeView } from './TreeView.tsx';
 import {
   applyPage,
@@ -113,7 +113,12 @@ function BrowserApp(props: Readonly<AppProps>) {
   });
 
   const { root, entries } = treeParts(treeQuery.data);
-  const runs = useRuns(props.token, props.fetcher, tab === 'runs');
+  const openPlan = (slug: string) => {
+    setTab('arch');
+    setPlan(slug);
+    writeHistory(props.historyApi, { kind: 'at', at, plan: slug });
+  };
+  const runs = useRunsPane({ token: props.token, fetcher: props.fetcher, watching: tab === 'runs', at, onOpenPlan: openPlan });
 
   useEffect(() => {
     applyTitle(document, root);
@@ -140,12 +145,6 @@ function BrowserApp(props: Readonly<AppProps>) {
   const showRuns = () => {
     setTab('runs');
     writeHistory(props.historyApi, { kind: 'runs' });
-  };
-
-  const openPlan = (slug: string) => {
-    setTab('arch');
-    setPlan(slug);
-    writeHistory(props.historyApi, { kind: 'at', at, plan: slug });
   };
 
   const drillTo = (dir: string) => {
@@ -186,7 +185,7 @@ function BrowserApp(props: Readonly<AppProps>) {
       />
     ),
     arch: <ArchView token={props.token} at={at} plan={plan} fetcher={props.fetcher} onDrill={drillTo} onOpenFile={openFile} onPlanChange={changePlan} />,
-    runs: <RunsPanel runs={runs.runs} at={at} token={props.token} fetcher={props.fetcher} onOpenPlan={openPlan} onGone={runs.drop} />,
+    runs: runs.pane,
   };
 
   return (

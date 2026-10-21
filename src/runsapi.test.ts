@@ -344,9 +344,9 @@ describe('GET /api/runs', () => {
 describe('DELETE /api/runs', () => {
   it('Forget drops the removed run and keeps the rest', async () => {
     const [done, removed, dead] = [await entry('done'), await entry('removed'), await entry('dead')];
-    await writeRuns([done, removed, dead]);
+    await writeRuns([done, 7, null, [], removed, dead]);
     expect(await call(`/api/runs?worktree=${worktreeOf('removed')}`, 'DELETE')).toEqual({ status: 200, body: { ok: true } });
-    expect(JSON.parse(await runsText())).toEqual([done, dead]);
+    expect(JSON.parse(await runsText())).toEqual([done, 7, null, [], dead]);
   });
 
   it.each([

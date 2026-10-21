@@ -48,7 +48,7 @@ function answered(answer: { runs: RunCard[] } | { error: string }): Runs {
   return { cards: answer.runs, now: Date.now(), note: null };
 }
 
-export function useRuns(token: string, fetcher: typeof fetch, watching: boolean) {
+function useRuns(token: string, fetcher: typeof fetch, watching: boolean) {
   const [runs, setRuns] = useState<Runs>({ cards: [], now: 0, note: 'Loading runs…' });
   const inflight = useRef<Promise<void> | null>(null);
   const loaded = useRef(false);
@@ -151,7 +151,7 @@ function Card(props: CardProps) {
 
 type PanelProps = Readonly<{ runs: Runs; at: string; token: string; fetcher: typeof fetch; onOpenPlan: (slug: string) => void; onGone: (worktree: string) => void }>;
 
-export function RunsPanel(props: PanelProps) {
+function RunsPanel(props: PanelProps) {
   const { runs, ...rest } = props;
   if (runs.note !== null) return <main className="runs-panel">{runs.note}</main>;
   if (runs.cards.length === 0) return <main className="runs-panel">{EMPTY}</main>;
@@ -162,4 +162,12 @@ export function RunsPanel(props: PanelProps) {
       ))}
     </main>
   );
+}
+
+type PaneProps = Readonly<{ token: string; fetcher: typeof fetch; watching: boolean; at: string; onOpenPlan: (slug: string) => void }>;
+
+export function useRunsPane(props: PaneProps) {
+  const { runs, drop, running } = useRuns(props.token, props.fetcher, props.watching);
+  const pane = <RunsPanel runs={runs} at={props.at} token={props.token} fetcher={props.fetcher} onOpenPlan={props.onOpenPlan} onGone={drop} />;
+  return { running, pane };
 }

@@ -3,24 +3,20 @@ import { accessSync, constants, existsSync, statSync } from 'node:fs';
 import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, delimiter, join, resolve } from 'node:path';
 import { z } from 'zod';
+import { cannonStanding, marestailStanding, type Standing } from './domain/runs.ts';
 
 type Place = { root: string; env: NodeJS.ProcessEnv };
 type PlanNamer = (slug: string) => Promise<string | undefined>;
 type Tool = 'marestail' | 'slop-cannon';
 type Entry = { slug: string; tool: Tool; worktree: string; startedAt: string; branch: string | null; pid: number | null; out?: unknown; tasks?: unknown };
-type Standing = { state: string; position: string; prs: string[]; logTail: string[] };
 type Log = { id: string; lines: string[]; mtime: number };
 type Sc = { ok: true; stdout: string } | { ok: false; reason: string };
-type Verdict = { done: true } | { done: false; path: string };
 type Answer = { status: number; body: unknown };
+type Removed = { state: 'worktree removed'; position: string; prs: string[]; logTail: string[] };
 
-const SC_TIMEOUT = 10000;
-const TAIL = 20;
 const DENIED = z.object({ code: z.literal('EPERM') });
 const ENTRY = z.object({ slug: z.string(), tool: z.enum(['marestail', 'slop-cannon']), worktree: z.string(), startedAt: z.string(), branch: z.unknown().optional(), pid: z.unknown().optional(), out: z.unknown().optional(), tasks: z.unknown().optional() });
-const STOPPED = /^stopped: (.+) exited -?\d+$/;
-const ATTEMPT = 'attempt ';
-const REMOVED: Standing = { state: 'worktree removed', position: 'worktree removed', prs: [], logTail: [] };
+const REMOVED: Removed = { state: 'worktree removed', position: 'worktree removed', prs: [], logTail: [] };
 
 function runsFile(root: string): string {
   return join(root, '.bindweed/runs.json');
@@ -52,10 +48,6 @@ function linesOf(text: string): string[] {
 async function readLines(path: unknown): Promise<string[]> {
   if (typeof path !== 'string') return [];
   return readFile(path, 'utf8').then(linesOf, () => []);
-}
-
-function tailOf(lines: string[]): string[] {
-  return lines.slice(-TAIL);
 }
 
 function entryOf(raw: unknown): Entry | undefined {
@@ -104,104 +96,30 @@ async function readLog(worktree: string, id: string): Promise<Log | undefined> {
   }
 }
 
-function lastOf(lines: string[]): string {
-  return lines.at(-1) ?? '';
-}
-
-function completes(line: string): boolean {
-  return line.startsWith('pipeline complete');
-}
-
-function newest<T extends { mtime: number }>(items: T[]): T | undefined {
-  return items.reduce<T | undefined>((best, item) => (best === undefined || item.mtime > best.mtime ? item : best), undefined);
+function laterSummary(left: { mtime: number }, right: { mtime: number }): number {
+  return right.mtime - left.mtime;
 }
 
 async function summaryLines(worktree: string): Promise<string[]> {
   const dir = join(worktree, '.marestail/runs');
   const names = (await readdir(dir).catch(() => [])).filter(name => name.startsWith('overnight-') && name.endsWith('.md'));
   const dated = await Promise.all(names.map(async name => ({ name, mtime: (await stat(join(dir, name))).mtimeMs })));
-  const chosen = newest(dated);
+  const chosen = dated.toSorted(laterSummary)[0];
   return chosen === undefined ? [] : readLines(join(dir, chosen.name));
 }
 
-function verdictOf(line: string): Verdict | undefined {
-  if (line.startsWith('all tasks complete')) return { done: true };
-  const stopped = STOPPED.exec(line);
-  return stopped === null ? undefined : { done: false, path: stopped[1] };
-}
-
-async function stoppedState(worktree: string, path: string): Promise<string> {
-  const log = await readLines(logPath(worktree, taskId(path)));
-  return lastOf(log).includes('stopping for a human') ? 'stopped for a human' : 'failed';
-}
-
-async function marestailState(entry: Entry): Promise<string> {
-  const verdict = (await summaryLines(entry.worktree)).map(verdictOf).findLast(found => found !== undefined);
-  if (verdict === undefined) return alive(entry.pid) ? 'running' : 'dead';
-  if (verdict.done) return 'done';
-  return stoppedState(entry.worktree, verdict.path);
-}
-
-function boundaryBefore(line: string, at: number): boolean {
-  return at === 0 || /^\W/.test(line.charAt(at - 1));
-}
-
-function leadingDigits(text: string): string {
-  return /^\d+/.exec(text)?.[0] ?? '';
-}
-
-type Attempt = { at: number; attempt: string };
-
-function attemptMatches(line: string): Attempt[] {
-  const found: Attempt[] = [];
-  let at = line.indexOf(ATTEMPT);
-  while (at >= 0) {
-    const digits = leadingDigits(line.slice(at + ATTEMPT.length));
-    if (boundaryBefore(line, at) && digits !== '') found.push({ at, attempt: digits });
-    at = line.indexOf(ATTEMPT, at + ATTEMPT.length);
-  }
-  return found;
-}
-
-function chosenAttempt(line: string): Attempt | undefined {
-  return attemptMatches(line).findLast(match => match.at > '== '.length);
-}
-
-function roleFrom(line: string): string | undefined {
-  const token = /^== (\S+)/.exec(line)?.[1];
-  if (token === undefined) return undefined;
-  const chosen = chosenAttempt(line);
-  if (chosen === undefined) return undefined;
-  const role = line.slice('== '.length, Math.min(chosen.at, '== '.length + token.length));
-  return `${role} · attempt ${chosen.attempt}`;
-}
-
-function rolePart(log: Log): string | undefined {
-  const line = log.lines.findLast(item => item.startsWith('== '));
-  if (line === undefined) return undefined;
-  return roleFrom(line);
-}
-
-function currentPart(log: Log): string {
-  if (completes(lastOf(log.lines))) return `task ${log.id} · finished`;
-  const role = rolePart(log);
-  return role === undefined ? `task ${log.id}` : `task ${log.id} · ${role}`;
-}
-
-function marestailPosition(state: string, current: Log | undefined, counts: string): string {
-  if (state === 'done') return `all tasks complete · ${counts}`;
-  if (current === undefined) return `no task started · ${counts}`;
-  return `${currentPart(current)} · ${counts}`;
-}
-
-async function marestailStanding(entry: Entry): Promise<Standing> {
+async function marestailOf(entry: Entry): Promise<Standing> {
   const tasks = await runTasks(entry);
-  const logs = (await Promise.all(tasks.map(path => readLog(entry.worktree, taskId(path))))).filter(log => log !== undefined);
-  const done = logs.filter(log => log.lines.some(completes)).length;
-  const current = newest(logs);
-  const state = await marestailState(entry);
-  const position = marestailPosition(state, current, `${done} of ${tasks.length} tasks`);
-  return { state, position, prs: [], logTail: tailOf(current?.lines ?? []) };
+  const read = tasks.map(path => readLog(entry.worktree, taskId(path)));
+  const logs = (await Promise.all(read)).filter(log => log !== undefined);
+  const summary = await summaryLines(entry.worktree);
+  return marestailStanding({
+    alive: alive(entry.pid),
+    summary,
+    logs,
+    taskCount: tasks.length,
+    stoppedLines: path => readLines(logPath(entry.worktree, taskId(path))),
+  });
 }
 
 function pathDirs(env: NodeJS.ProcessEnv): string[] {
@@ -261,7 +179,7 @@ function watchSc(bin: string, worktree: string, place: Place, done: (result: Sc)
   const timer = setTimeout(() => {
     child.kill('SIGKILL');
     done({ ok: false, reason: 'timed out after 10s' });
-  }, SC_TIMEOUT);
+  }, 10000);
   child.once('error', error => settle(done, { ok: false, reason: shownError(error, bin) }, timer));
   child.once('close', code => settle(done, closedSc(code, stdout, stderr), timer));
 }
@@ -272,73 +190,23 @@ function runSc(place: Place, worktree: string): Promise<Sc> {
   return new Promise(done => watchSc(bin, worktree, place, done));
 }
 
-function isRecord(raw: unknown): raw is Record<string, unknown> {
-  return typeof raw === 'object' && raw !== null && !Array.isArray(raw);
+async function cannonOf(place: Place, entry: Entry): Promise<Standing> {
+  const [answer, out] = await Promise.all([runSc(place, entry.worktree), readLines(entry.out)]);
+  return cannonStanding({ alive: alive(entry.pid), answer, out });
 }
 
-function objectOf(raw: unknown): Record<string, unknown> {
-  return isRecord(raw) ? raw : {};
-}
-
-function listOf(raw: unknown): Record<string, unknown>[] {
-  return Array.isArray(raw) ? raw.map(objectOf) : [];
-}
-
-function parsedObject(text: string): Record<string, unknown> | undefined {
-  try {
-    const raw: unknown = JSON.parse(text);
-    return isRecord(raw) ? raw : undefined;
-  } catch {
-    return undefined;
+async function byTool(place: Place, entry: Entry): Promise<Standing> {
+  switch (entry.tool) {
+    case 'marestail':
+      return marestailOf(entry);
+    case 'slop-cannon':
+      return cannonOf(place, entry);
   }
 }
 
-function counted(count: number, word: string): string {
-  return count === 1 ? `1 ${word}` : `${count} ${word}s`;
-}
-
-function phaseOf(status: Record<string, unknown>): string {
-  const phase = objectOf(status.state).phase;
-  return typeof phase === 'string' ? phase : '';
-}
-
-function beadParts(status: Record<string, unknown>): string[] {
-  return Object.entries(objectOf(status.beads)).filter(([, count]) => typeof count === 'number').map(([name, count]) => `${count} ${name}`);
-}
-
-function prsOf(status: Record<string, unknown>): string[] {
-  return listOf(status.prs).map(pr => pr.url).filter(url => typeof url === 'string');
-}
-
-function scState(phase: string, pid: number | null): string {
-  if (phase === 'done' || phase === 'complete') return 'done';
-  return alive(pid) ? 'running' : 'dead';
-}
-
-function scFailure(reason: string, pid: number | null): Pick<Standing, 'state' | 'position'> {
-  const living = alive(pid);
-  return { state: living ? 'running' : 'dead', position: `sc status failed: ${reason} · pid ${living ? 'alive' : 'gone'}` };
-}
-
-function scReading(sc: Sc, pid: number | null): Pick<Standing, 'state' | 'position' | 'prs'> {
-  if (!sc.ok) return { ...scFailure(sc.reason, pid), prs: [] };
-  const status = parsedObject(sc.stdout);
-  if (status === undefined) return { ...scFailure('not JSON', pid), prs: [] };
-  const phase = phaseOf(status);
-  const agents = listOf(status.agents).filter(agent => agent.alive === true).length;
-  const prs = prsOf(status);
-  const position = [phase, counted(agents, 'agent'), ...beadParts(status), counted(prs.length, 'PR')].join(' · ');
-  return { state: scState(phase, pid), position, prs };
-}
-
-async function cannonStanding(place: Place, entry: Entry): Promise<Standing> {
-  const [sc, lines] = await Promise.all([runSc(place, entry.worktree), readLines(entry.out)]);
-  return { ...scReading(sc, entry.pid), logTail: tailOf(lines) };
-}
-
-async function standingOf(place: Place, entry: Entry): Promise<Standing> {
+async function standingOf(place: Place, entry: Entry): Promise<Standing | Removed> {
   if (!await exists(entry.worktree)) return REMOVED;
-  return entry.tool === 'marestail' ? marestailStanding(entry) : cannonStanding(place, entry);
+  return byTool(place, entry);
 }
 
 async function viewOf(place: Place, namer: PlanNamer, entry: Entry): Promise<Record<string, unknown>> {
@@ -353,8 +221,12 @@ export async function listRuns(place: Place, namer: PlanNamer): Promise<Record<s
   return Promise.all(entries.map(entry => viewOf(place, namer, entry)));
 }
 
+function isRecord(raw: unknown): raw is Record<string, unknown> {
+  return typeof raw === 'object' && raw !== null && !Array.isArray(raw);
+}
+
 function worktreeIs(raw: unknown, worktree: string): boolean {
-  return objectOf(raw).worktree === worktree;
+  return isRecord(raw) && raw.worktree === worktree;
 }
 
 async function forgetFrom(root: string, worktree: string): Promise<Answer> {
