@@ -155,6 +155,7 @@ describe('Runs panel', () => {
     expect(tab('Runs').querySelector('.badge')?.textContent).toBe('2');
     expect(document.querySelectorAll('.badge.pill')).toHaveLength(0);
     expect(titles()).toEqual(['plan-sc-err', 'plan-sc', 'plan-dead', 'Plan Running', 'plan-failed', 'plan-stopped', 'plan-done', 'plan-removed']);
+    expect(within(cardOf('Plan Running')).getByRole('link', { name: 'Plan Running' }).getAttribute('href')).toBe('#at=&plan=plan-running');
     expect(Array.from(document.querySelectorAll('.pill')).map(pill => `${pill.className} ${pill.textContent}`)).toEqual([
       'pill pill-dead dead', 'pill pill-running running', 'pill pill-dead dead', 'pill pill-running running', 'pill pill-failed failed', 'pill pill-stopped stopped for a human', 'pill pill-done done', 'pill pill-removed worktree removed',
     ]);

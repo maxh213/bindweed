@@ -46,6 +46,7 @@ const HUMAN_TAIL = ['== coder (03-coder) attempt 2', 'gate failed', H, 'pipeline
 const BOOM_TAIL = ['== coder (03-coder) attempt 1', 'npm ERR! boom', 'pipeline stopped at coder', ''];
 const UNVERIFIED_TAIL = ['== qa (09-qa) attempt 1', 'pipeline complete, NOT verified by eye', ''];
 const HARNESS_TAIL = ['== qa (09-qa) attempt 1', 'pipeline complete, NOT verified against the running app (qa ran against a harness)', ''];
+const NOTHING_TAIL = ['== qa (09-qa) attempt 1', 'pipeline complete, NOT verified against the running app (qa ran against nothing)', ''];
 const BOUNCE = 'hardener still bouncing after 1 rounds; stopping for a human';
 const BOUNCE_TAIL = [BOUNCE, 'pipeline stopped at hardener', ''];
 const REFUSED_TAIL = ['== qa (09-qa) attempt 1', 'pipeline complete', '', '## Config changes the agents asked for and were refused', 'Decide whether to make any of these yourself.'];
@@ -132,6 +133,10 @@ const MARESTAIL: Record<string, Fixture> = {
   harness: { tool: 'marestail', pid: 'live', at: '12:08', tasks: ['tasks/001-a.md'], build: async dir => {
     await files('001-a')(dir);
     await log(dir, '001-a', logged(HARNESS_TAIL), '12:10');
+  } },
+  nothing: { tool: 'marestail', pid: 'live', at: '12:08', tasks: ['tasks/001-a.md'], build: async dir => {
+    await files('001-a')(dir);
+    await log(dir, '001-a', logged(NOTHING_TAIL), '12:10');
   } },
   bouncing: { tool: 'marestail', pid: 'dead', at: '12:02', tasks: ['tasks/001-h.md'], build: async dir => {
     await files('001-h')(dir);
@@ -387,6 +392,7 @@ describe('GET /api/runs', () => {
     ['fresh', 'dead', 'no task started · 0 of 1 tasks', []],
     ['unverified', 'running', 'task 001-a · finished · 1 of 1 tasks', UNVERIFIED_TAIL],
     ['harness', 'running', 'task 001-a · finished · 1 of 1 tasks', HARNESS_TAIL],
+    ['nothing', 'running', 'task 001-a · finished · 1 of 1 tasks', NOTHING_TAIL],
     ['bouncing', 'stopped for a human', 'task 001-h · 0 of 1 tasks', BOUNCE_TAIL],
     ['removed', 'worktree removed', 'worktree removed', []],
     ['sc-removed', 'worktree removed', 'worktree removed', []],
