@@ -3,10 +3,13 @@ import { constants } from 'node:fs';
 import { access, mkdir, open, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { z } from 'zod';
 import { recordOf, sentenceOf, type PlanDoc } from './domain/plan.ts';
 import type { LaunchBody, LaunchInfo, LaunchResult } from './domain/launch.ts';
 
 const execute = promisify(execFile);
+const DENIED = z.object({ code: z.literal('EPERM') });
+const COMMAND_FAILURE = z.object({ stderr: z.string(), code: z.number() });
 type Place = { root: string; env: NodeJS.ProcessEnv };
 type Merge = (root: string) => Promise<{ text: string } | { error: string }>;
 type Marestail = Extract<LaunchBody, { tool: 'marestail' }>;
@@ -51,7 +54,7 @@ function alive(pid: unknown): boolean {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
+    return DENIED.safeParse(error).success;
   }
 }
 
@@ -72,18 +75,19 @@ function liveEntry(raw: unknown, slug: string): Record<string, unknown> | undefi
   return raw.map(recordOf).findLast(entry => entry?.slug === slug && alive(entry.pid));
 }
 
-function watch(tool: LaunchBody['tool'], worktree: string): string {
-  return tool === 'marestail' ? 'marestail watch' : `sc status --repo ${worktree}`;
-}
+const WATCH: Record<LaunchBody['tool'], (worktree: string) => string> = {
+  marestail: () => 'marestail watch',
+  'slop-cannon': worktree => `sc status --repo ${worktree}`,
+};
 
 function knownTool(tool: unknown): tool is LaunchBody['tool'] {
-  return tool === 'marestail' || tool === 'slop-cannon';
+  return typeof tool === 'string' && Object.hasOwn(WATCH, tool);
 }
 
 function liveLines(entry: Record<string, unknown>): Partial<LaunchInfo> {
   if (typeof entry.worktree !== 'string') return {};
   if (!knownTool(entry.tool)) return {};
-  const lines: Partial<LaunchInfo> = { worktree: entry.worktree, watch: watch(entry.tool, entry.worktree) };
+  const lines: Partial<LaunchInfo> = { worktree: entry.worktree, watch: WATCH[entry.tool](entry.worktree) };
   if (typeof entry.branch === 'string') lines.branch = entry.branch;
   return lines;
 }
@@ -108,8 +112,9 @@ function lastLine(text: string): string {
 }
 
 function commandError(error: unknown, fallback: string): Error {
-  const failure = error as { stderr: string; code: number };
-  return new Error(failure.stderr.trim() || `${fallback} exited with code ${failure.code}`);
+  const failure = COMMAND_FAILURE.safeParse(error);
+  if (!failure.success) return new Error(errorText(error));
+  return new Error(failure.data.stderr.trim() || `${fallback} exited with code ${failure.data.code}`);
 }
 
 async function command(place: Place, bin: string, args: string[], fallback: string): Promise<string> {
@@ -287,10 +292,21 @@ async function marestailStart(ctx: Context, body: Marestail, time: string): Prom
   return { args: ['bash', file], out: join(dir, `launch-${time}.out`) };
 }
 
+function assertNever(value: never): never {
+  throw new Error(`unexpected launch ${JSON.stringify(value)}`);
+}
+
 function preparedStart(ctx: Context): Promise<Started> {
   const time = stamp();
-  if (ctx.body.tool === 'slop-cannon') return cannonStart(ctx, ctx.body, time);
-  return marestailStart(ctx, ctx.body, time);
+  const body = ctx.body;
+  switch (body.tool) {
+    case 'marestail':
+      return marestailStart(ctx, body, time);
+    case 'slop-cannon':
+      return cannonStart(ctx, body, time);
+    default:
+      return assertNever(body);
+  }
 }
 
 async function detached(ctx: Context, { args, out }: Started): Promise<number> {
@@ -311,7 +327,7 @@ async function detached(ctx: Context, { args, out }: Started): Promise<number> {
 async function startStep(ctx: Context): Promise<void> {
   const started = await preparedStart(ctx);
   ctx.answer.pid = await detached(ctx, started);
-  ctx.answer.watch = watch(ctx.body.tool, ctx.worktree);
+  ctx.answer.watch = WATCH[ctx.body.tool](ctx.worktree);
   ctx.out = started.out;
 }
 

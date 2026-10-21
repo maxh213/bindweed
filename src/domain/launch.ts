@@ -1,4 +1,4 @@
-import { byStrings, noExtraKeys, pathAfter, pathsOf, recordOf, within, type PlanDoc, type PlanEdit } from './plan.ts';
+import { byStrings, pathAfter, pathsOf, within, type PlanDoc, type PlanEdit } from './plan.ts';
 
 export type LaunchBody =
   | { tool: 'marestail'; model: string; scope: string; focus: string; stopAt: string }
@@ -7,42 +7,26 @@ export type LaunchBody =
 export type LaunchInfo = { marestail: boolean; sc: boolean; alive: boolean; focus: string; worktree?: string; branch?: string; watch?: string };
 export type LaunchResult = { steps: { name: string; ok: boolean; error?: string }[]; worktree?: string; branch?: string; watch?: string; pid?: number };
 
-const FIELDS = new Map<string, string[]>([['marestail', ['model', 'scope', 'focus', 'stopAt']], ['slop-cannon', ['safety', 'ammo', 'cartridge']]]);
-
-function fieldsOk(rec: Record<string, unknown>, fields: string[]): boolean {
-  return noExtraKeys(rec, ['tool', ...fields]) && fields.every(field => typeof rec[field] === 'string');
+function assertNever(value: never): never {
+  throw new Error(`unexpected tool ${JSON.stringify(value)}`);
 }
 
-function safetyOk(rec: Record<string, unknown>): boolean {
-  return rec.tool !== 'slop-cannon' || ['on', 'off'].includes(String(rec.safety));
-}
-
-function bodyFieldsOk(rec: Record<string, unknown>, fields: string[]): boolean {
-  return fieldsOk(rec, fields) && safetyOk(rec);
-}
-
-function toolFields(rec: Record<string, unknown>): string[] | undefined {
-  return typeof rec.tool === 'string' ? FIELDS.get(rec.tool) : undefined;
-}
-
-export function launchBody(raw: unknown): LaunchBody | undefined {
-  const rec = recordOf(raw);
-  if (rec === undefined) return undefined;
-  const fields = toolFields(rec);
-  if (fields === undefined || !bodyFieldsOk(rec, fields)) return undefined;
-  return Object.fromEntries(Object.entries(rec).map(([key, value]) => [key, String(value).trim()])) as LaunchBody;
+function toolNeeds(doc: PlanDoc, tool: LaunchBody['tool']): ['marestail' | 'sc', string | null] {
+  switch (tool) {
+    case 'marestail':
+      return ['marestail', tasksReason(doc.tasks)];
+    case 'slop-cannon':
+      return ['sc', briefReason(doc.brief)];
+    default:
+      return assertNever(tool);
+  }
 }
 
 export function launchReason(info: LaunchInfo, doc: PlanDoc, tool: LaunchBody['tool']): string | null {
-  const command = tool === 'marestail' ? 'marestail' : 'sc';
+  const [command, content] = toolNeeds(doc, tool);
   if (!info[command]) return `${command} is not on PATH`;
   if (info.alive) return 'a run for this plan is still alive';
-  return contentReason(doc, tool);
-}
-
-function contentReason(doc: PlanDoc, tool: LaunchBody['tool']): string | null {
-  if (tool === 'marestail') return tasksReason(doc.tasks);
-  return briefReason(doc.brief);
+  return content;
 }
 
 function tasksReason(tasks: PlanDoc['tasks']): string | null {

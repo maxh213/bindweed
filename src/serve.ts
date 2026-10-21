@@ -4,7 +4,7 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { basename, dirname, extname, join } from 'node:path';
 import { z } from 'zod';
-import { launchBody, launchFocus, launchReason, type LaunchBody } from './domain/launch.ts';
+import { launchFocus, launchReason, type LaunchBody } from './domain/launch.ts';
 import { inspectLaunch, launchPlan } from './launch.ts';
 import type { CruiserFile } from './cruiser.ts';
 import { contractRules } from './domain/contract.ts';
@@ -53,6 +53,10 @@ const NO_SUCH_PLAN = { error: 'no such plan' };
 const NO_SUCH_FILE: FileResult = { status: 404, body: { error: 'no such file' } };
 const TOO_LARGE: FileResult = { status: 413, body: { error: 'file too large to show' } };
 const ADDR_IN_USE = z.object({ code: z.literal('EADDRINUSE') });
+const LAUNCH_BODY = z.discriminatedUnion('tool', [
+  z.strictObject({ tool: z.literal('marestail'), model: z.string().trim(), scope: z.string().trim(), focus: z.string().trim(), stopAt: z.string().trim() }),
+  z.strictObject({ tool: z.literal('slop-cannon'), safety: z.enum(['on', 'off']), ammo: z.string().trim(), cartridge: z.string().trim() }),
+]) satisfies z.ZodType<LaunchBody>;
 const ASSET_TYPES: Record<string, string> = {
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -550,11 +554,12 @@ async function launchOrRefuse(app: App, graphs: GraphHolder, res: ServerResponse
 }
 
 async function postLaunch(app: App, graphs: GraphHolder, req: IncomingMessage, res: ServerResponse, doc: PlanDoc): Promise<void> {
-  const body = launchBody(await readJsonBody(req));
-  if (body === undefined) {
+  const parsed = LAUNCH_BODY.safeParse(await readJsonBody(req));
+  if (!parsed.success) {
     sendJson(res, 400, { error: 'bad launch' });
     return;
   }
+  const body = parsed.data;
   if (app.launches.has(doc.slug)) {
     sendJson(res, 409, { error: 'already running' });
     return;

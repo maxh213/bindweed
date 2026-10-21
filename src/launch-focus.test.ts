@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { launchBody, launchFocus, launchReason } from './domain/launch.ts';
+import { launchFocus, launchReason } from './domain/launch.ts';
 import { planReport } from './domain/planned.ts';
 import type { PlanDoc, PlanEdit } from './domain/plan.ts';
 
@@ -39,13 +39,6 @@ describe('launch fields', () => {
     expect(focus([{ kind: 'fate', file: files[1], fate: 'fold', into: files[3] }, { kind: 'note', target: { node: 'src/infra' }, text: 'hi' }])).toBe('src/app/b.ts src/infra/db.ts');
   });
 
-  it('accepts only complete tool shapes and trims values', () => {
-    const mare = { tool: 'marestail', model: ' a b ', scope: ' ', focus: ' x ', stopAt: ' qa ' };
-    expect(launchBody(mare)).toEqual({ tool: 'marestail', model: 'a b', scope: '', focus: 'x', stopAt: 'qa' });
-    expect(launchBody({ tool: 'slop-cannon', safety: 'off', ammo: ' 3 ', cartridge: ' wide ' })).toEqual({ tool: 'slop-cannon', safety: 'off', ammo: '3', cartridge: 'wide' });
-    for (const bad of [null, [], 'marestail', { tool: 'toString' }, { tool: '__proto__' }, {}, { ...mare, tool: ['marestail'] }, { ...mare, tool: { toString: 'x' } }, { ...mare, tool: null }, { ...mare, extra: true }, { ...mare, scope: null }, { tool: 'marestail', scope: '' }, { tool: 'slop-cannon', safety: ' on ', ammo: '', cartridge: '' }]) expect(launchBody(bad)).toBeUndefined();
-  });
-
   it('uses command, live pid and content reasons in that order', () => {
     const doc: PlanDoc = { version: 1, name: 'Gate', slug: 'gate', createdAt: '', baseCommit: '', edits: [], redo: [] };
     const info = { marestail: true, sc: true, alive: false, focus: '' };
@@ -55,5 +48,6 @@ describe('launch fields', () => {
     expect(launchReason({ ...info, marestail: false, alive: true }, doc, 'marestail')).toBe('marestail is not on PATH');
     expect(launchReason({ ...info, sc: false }, doc, 'slop-cannon')).toBe('sc is not on PATH');
     expect(launchReason(info, { ...doc, brief: 'Hi' }, 'slop-cannon')).toBeNull();
+    expect(() => launchReason(info, doc, JSON.parse('"other"'))).toThrow('unexpected tool "other"');
   });
 });

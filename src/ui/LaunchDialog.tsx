@@ -1,5 +1,5 @@
-import { useQuery } from '@tanstack/react-query';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useActionState, useEffect, useId, useRef, useState, type ReactElement } from 'react';
 import { launchReason, type LaunchBody, type LaunchInfo, type LaunchResult } from '../domain/launch.ts';
 import type { PlanDoc } from '../domain/plan.ts';
 import { fetchLaunch, postLaunch } from './client.ts';
@@ -8,7 +8,14 @@ type Props = { token: string; fetcher: typeof fetch; doc: PlanDoc; onClose: () =
 type Tool = LaunchBody['tool'];
 type Marestail = Extract<LaunchBody, { tool: 'marestail' }>;
 type Cannon = Extract<LaunchBody, { tool: 'slop-cannon' }>;
+type Drafts = { [T in Tool]: Extract<LaunchBody, { tool: T }> };
 type Labelled<T> = [keyof T & string, string][];
+type LaunchRun = { kind: 'idle' } | { kind: 'refused'; error: string } | { kind: 'answered'; result: LaunchResult };
+type FormProps = Props & { info: LaunchInfo; refresh: () => Promise<void> };
+
+const TOOLS: Tool[] = ['marestail', 'slop-cannon'];
+const SAFETIES: Cannon['safety'][] = ['on', 'off'];
+const IDLE: LaunchRun = { kind: 'idle' };
 
 const MARESTAIL_FIELDS: Labelled<Marestail> = [
   ['model', 'MODEL'],
@@ -27,8 +34,28 @@ const COPY_LINES = [
 ] as const;
 const CANNON_DEFAULTS: Cannon = { tool: 'slop-cannon', safety: 'on', ammo: '', cartridge: '' };
 
-function marestailDefaults(focus: string): Marestail {
-  return { tool: 'marestail', model: 'dandelion/route-best', scope: 'hard', focus, stopAt: 'qa' };
+function draftsFor(focus: string): Drafts {
+  return { marestail: { tool: 'marestail', model: 'dandelion/route-best', scope: 'hard', focus, stopAt: 'qa' }, 'slop-cannon': CANNON_DEFAULTS };
+}
+
+function toolOf(value: string): Tool {
+  return TOOLS.find(tool => tool === value) ?? 'marestail';
+}
+
+function safetyOf(value: string): Cannon['safety'] {
+  return SAFETIES.find(safety => safety === value) ?? 'on';
+}
+
+function Options(props: Readonly<{ values: string[] }>) {
+  return (
+    <>
+      {props.values.map(value => (
+        <option key={value} value={value}>
+          {value}
+        </option>
+      ))}
+    </>
+  );
 }
 
 function copy(text: string): void {
@@ -52,9 +79,8 @@ function CannonFields(props: Readonly<{ values: Cannon; onChange: (value: Cannon
     <>
       <label>
         Safety{' '}
-        <select aria-label="Safety" value={props.values.safety} onChange={event => props.onChange({ ...props.values, safety: event.currentTarget.value as Cannon['safety'] })}>
-          <option value="on">on</option>
-          <option value="off">off</option>
+        <select aria-label="Safety" value={props.values.safety} onChange={event => props.onChange({ ...props.values, safety: safetyOf(event.currentTarget.value) })}>
+          <Options values={SAFETIES} />
         </select>
       </label>
       <TextFields values={props.values} fields={CANNON_FIELDS} onChange={props.onChange} />
@@ -62,9 +88,13 @@ function CannonFields(props: Readonly<{ values: Cannon; onChange: (value: Cannon
   );
 }
 
-function ToolFields(props: Readonly<{ tool: Tool; marestail: Marestail; cannon: Cannon; onMarestail: (value: Marestail) => void; onCannon: (value: Cannon) => void }>) {
-  if (props.tool === 'slop-cannon') return <CannonFields values={props.cannon} onChange={props.onCannon} />;
-  return <TextFields values={props.marestail} fields={MARESTAIL_FIELDS} onChange={props.onMarestail} />;
+function ToolFields(props: Readonly<{ tool: Tool; drafts: Drafts; onChange: (value: LaunchBody) => void }>): ReactElement {
+  switch (props.tool) {
+    case 'marestail':
+      return <TextFields values={props.drafts.marestail} fields={MARESTAIL_FIELDS} onChange={props.onChange} />;
+    case 'slop-cannon':
+      return <CannonFields values={props.drafts['slop-cannon']} onChange={props.onChange} />;
+  }
 }
 
 function CopyLines(props: Readonly<{ source: Partial<LaunchInfo> }>) {
@@ -86,8 +116,7 @@ function CopyLines(props: Readonly<{ source: Partial<LaunchInfo> }>) {
   );
 }
 
-function Steps(props: Readonly<{ result: LaunchResult | null }>) {
-  if (props.result === null) return null;
+function Steps(props: Readonly<{ result: LaunchResult }>) {
   return (
     <ol aria-label="Steps">
       {props.result.steps.map(step => (
@@ -99,70 +128,82 @@ function Steps(props: Readonly<{ result: LaunchResult | null }>) {
   );
 }
 
-function useLaunchRun(props: Readonly<Props & { initial: LaunchInfo }>) {
-  const [info, setInfo] = useState(props.initial);
-  const [pending, setPending] = useState(false);
-  const held = useRef(false);
-  const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<LaunchResult | null>(null);
-  const refresh = async (): Promise<void> => {
-    const fresh = await fetchLaunch(props.token, props.doc.slug, props.fetcher);
-    if (!('error' in fresh)) setInfo(fresh);
-  };
-  const launch = async (body: LaunchBody): Promise<void> => {
-    if (held.current) return;
-    held.current = true;
-    setPending(true);
-    setError(null);
-    const answer = await postLaunch(props.token, props.doc.slug, body, props.fetcher);
-    if ('error' in answer) {
-      setError(answer.error);
-      setResult(null);
-    } else {
-      setResult(answer);
-      await refresh();
-    }
-    held.current = false;
-    setPending(false);
-  };
-  return { info, pending, error, result, launch };
+function Outcome(props: Readonly<{ run: LaunchRun; info: LaunchInfo }>): ReactElement {
+  const run = props.run;
+  switch (run.kind) {
+    case 'idle':
+    case 'refused':
+      return <CopyLines source={props.info} />;
+    case 'answered':
+      return (
+        <>
+          <Steps result={run.result} />
+          <CopyLines source={run.result} />
+        </>
+      );
+  }
 }
 
-function LaunchForm(props: Readonly<Props & { initial: LaunchInfo }>) {
-  const run = useLaunchRun(props);
+function shownError(run: LaunchRun, reason: string | null): string | null {
+  return run.kind === 'refused' ? run.error : reason;
+}
+
+function useLaunchRun(props: Readonly<FormProps>) {
+  const held = useRef(false);
+  const [run, dispatch, pending] = useActionState(async (_previous: LaunchRun, body: LaunchBody): Promise<LaunchRun> => {
+    const answer = await postLaunch(props.token, props.doc.slug, body, props.fetcher);
+    held.current = false;
+    if ('error' in answer) return { kind: 'refused', error: answer.error };
+    await props.refresh();
+    return { kind: 'answered', result: answer };
+  }, IDLE);
+  const launch = (body: LaunchBody): void => {
+    if (held.current) return;
+    held.current = true;
+    dispatch(body);
+  };
+  return { run, pending, launch };
+}
+
+function LaunchForm(props: Readonly<FormProps>) {
+  const launch = useLaunchRun(props);
   const [tool, setTool] = useState<Tool>('marestail');
-  const [marestail, setMarestail] = useState(marestailDefaults(props.initial.focus));
-  const [cannon, setCannon] = useState(CANNON_DEFAULTS);
-  const reason = launchReason(run.info, props.doc, tool);
+  const [drafts, setDrafts] = useState(() => draftsFor(props.info.focus));
+  const reason = launchReason(props.info, props.doc, tool);
+  const edit = (value: LaunchBody): void => setDrafts(previous => ({ ...previous, [value.tool]: value }));
   return (
-    <>
+    <form action={() => launch.launch(drafts[tool])}>
       <label>
         Tool{' '}
-        <select aria-label="Tool" value={tool} onChange={event => setTool(event.currentTarget.value as Tool)}>
-          <option value="marestail">marestail</option>
-          <option value="slop-cannon">slop-cannon</option>
+        <select aria-label="Tool" value={tool} onChange={event => setTool(toolOf(event.currentTarget.value))}>
+          <Options values={TOOLS} />
         </select>
       </label>
-      <ToolFields tool={tool} marestail={marestail} cannon={cannon} onMarestail={setMarestail} onCannon={setCannon} />
-      <p className="plan-dialog-error">{run.error ?? reason}</p>
-      <button type="button" disabled={run.pending || reason !== null} onClick={() => void run.launch(tool === 'marestail' ? marestail : cannon)}>
+      <ToolFields tool={tool} drafts={drafts} onChange={edit} />
+      <p className="plan-dialog-error">{shownError(launch.run, reason)}</p>
+      <button type="submit" disabled={launch.pending || reason !== null}>
         Launch
       </button>
-      <Steps result={run.result} />
-      <CopyLines source={run.result ?? run.info} />
-    </>
+      <Outcome run={launch.run} info={props.info} />
+    </form>
   );
 }
 
-function LoadedForm(props: Readonly<Props & { data: LaunchInfo | { error: string } | undefined }>) {
+function LoadedForm(props: Readonly<Props & { data: LaunchInfo | { error: string } | undefined; refresh: () => Promise<void> }>) {
   if (props.data === undefined) return null;
   if ('error' in props.data) return <p className="plan-dialog-error">{props.data.error}</p>;
-  return <LaunchForm {...props} initial={props.data} />;
+  return <LaunchForm {...props} info={props.data} />;
 }
 
 export function LaunchDialog(props: Readonly<Props>) {
   const opening = useId();
-  const query = useQuery({ queryKey: ['launch', props.token, props.doc.slug, opening], queryFn: () => fetchLaunch(props.token, props.doc.slug, props.fetcher), gcTime: 0 });
+  const queryKey = ['launch', props.token, props.doc.slug, opening];
+  const query = useQuery({ queryKey, queryFn: () => fetchLaunch(props.token, props.doc.slug, props.fetcher), gcTime: 0 });
+  const queryClient = useQueryClient();
+  const refresh = async (): Promise<void> => {
+    const fresh = await fetchLaunch(props.token, props.doc.slug, props.fetcher);
+    if (!('error' in fresh)) queryClient.setQueryData(queryKey, fresh);
+  };
   const { onClose } = props;
   useEffect(() => {
     const escape = (event: KeyboardEvent) => {
@@ -174,7 +215,7 @@ export function LaunchDialog(props: Readonly<Props>) {
   return (
     <div className="plan-dialog-backdrop">
       <dialog open aria-label="Launch" className="plan-dialog">
-        <LoadedForm {...props} data={query.data} />
+        <LoadedForm {...props} data={query.data} refresh={refresh} />
         <button type="button" onClick={props.onClose}>
           Close
         </button>

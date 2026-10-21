@@ -118,6 +118,7 @@ if [[ "$1" == install ]]; then
   [[ -f "$LOG/fail-install-many" ]] && { printf 'install failed\\nmore detail\\n' >&2; exit 1; }
   [[ -f "$LOG/fail-install" ]] && { echo 'install failed' >&2; exit 1; }
   [[ -f "$LOG/fail-install-quiet" ]] && exit 1
+  [[ -f "$LOG/fail-install-killed" ]] && kill -9 $$
   while [[ -f "$LOG/install.wait" && ! -f "$LOG/install.go" ]]; do sleep .01; done
   printf 'installed=1\\n' > marestail.toml
   /bin/mkdir -p tasks
@@ -394,6 +395,10 @@ describe('launch API', () => {
     await installFailure('fail-install-quiet', 'marestail install exited with code 1');
   });
 
+  it('an install killed by a signal names the command that failed', async () => {
+    await installFailure('fail-install-killed', 'Command failed: marestail install .');
+  });
+
   it('an install error uses only the first stderr line', async () => {
     await installFailure('fail-install-many', 'install failed');
   });
@@ -473,6 +478,12 @@ exec '${realGit}' "$@"
     expect(git(worktree, 'rev-parse', 'HEAD')).toBe(base);
   });
 
+  it('a tool the procedure does not know stops at Start', async () => {
+    const result = await launchPlan({ root, env }, doc, JSON.parse('{"tool":"other"}'), async () => ({ text: 'module.exports = {};\n' }));
+    expect(result.steps).toEqual([...OK.slice(0, 3), { name: 'Start', ok: false, error: 'unexpected launch {"tool":"other"}' }]);
+    expect(existsSync(join(root, '.bindweed/runs.json'))).toBe(false);
+  });
+
   it('slop-cannon needs only a brief and accepts an empty git identity as missing', async () => {
     await put({ tasks: undefined, contract: undefined });
     git(root, 'config', 'user.name', '');
@@ -544,7 +555,7 @@ process.on('SIGTERM',()=>bound.server.close());`;
   });
 
   it('A bad body is refused and the guards still hold', async () => {
-    for (const body of [{ ...MARE, tool: ['marestail'] }, { ...MARE, tool: { toString: 'x' } }, { ...MARE, extra: 1 }, { ...SC, safety: 'maybe' }, {}, null, { ...MARE, model: 3 }]) expect(await launch(body)).toEqual({ status: 400, body: { error: 'bad launch' } });
+    for (const body of [{ ...MARE, tool: ['marestail'] }, { ...MARE, tool: { toString: 'x' } }, { ...MARE, tool: null }, { tool: 'toString' }, { tool: '__proto__' }, [], 'marestail', { ...MARE, extra: 1 }, { ...MARE, scope: null }, { tool: 'marestail', scope: '' }, { ...SC, safety: 'maybe' }, { ...SC, safety: ' on ' }, {}, null, { ...MARE, model: 3 }]) expect(await launch(body)).toEqual({ status: 400, body: { error: 'bad launch' } });
     expect(await request('/api/plans/nope/launch', 'POST', MARE)).toEqual({ status: 404, body: { error: 'no such plan' } });
     expect(await request('/api/plans/BAD/launch')).toEqual({ status: 404, body: { error: 'no such plan' } });
     expect(await request('/api/plans/gate/launch', 'PUT', {})).toEqual({ status: 404, body: { error: 'not found' } });

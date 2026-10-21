@@ -119,7 +119,7 @@ beforeEach(() => {
   release = undefined;
   copied = [];
   dom = new JSDOM('<!doctype html><div id="root"></div>', { url: 'http://localhost/' });
-  for (const [key, value] of Object.entries({ window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, KeyboardEvent: dom.window.KeyboardEvent, IS_REACT_ACT_ENVIRONMENT: true, navigator: { clipboard: { writeText: async (value: string) => { copied.push(value); } } } })) Object.defineProperty(globalThis, key, { value, configurable: true });
+  for (const [key, value] of Object.entries({ window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, KeyboardEvent: dom.window.KeyboardEvent, FormData: dom.window.FormData, IS_REACT_ACT_ENVIRONMENT: true, navigator: { clipboard: { writeText: async (value: string) => { copied.push(value); } } } })) Object.defineProperty(globalThis, key, { value, configurable: true });
   client = new QueryClient({ defaultOptions: { queries: { retry: false, networkMode: 'always', refetchOnWindowFocus: false } } });
 });
 
@@ -280,6 +280,18 @@ describe('Launch dialog', () => {
     await click(button('Launch'));
     await settled(() => expect(dialog().textContent).toContain('already running'));
     expect(within(dialog()).queryByRole('list', { name: 'Steps' })).toBeNull();
+  });
+
+  it('falls back to marestail and safety on for a value the selects do not offer', async () => {
+    await mount();
+    await open();
+    await choose('Tool', 'slop-cannon');
+    await choose('Safety', 'off');
+    await choose('Safety', 'maybe');
+    expect(field('Safety').value).toBe('on');
+    await choose('Tool', 'other');
+    expect(field('Tool').value).toBe('marestail');
+    expect(field('MODEL').value).toBe('dandelion/route-best');
   });
 
   it('shows loading and read errors, and keeps the successful answer when refresh fails', async () => {
