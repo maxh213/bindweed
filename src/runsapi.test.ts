@@ -2,7 +2,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { bindApp } from './serve.ts';
 
@@ -265,18 +265,16 @@ describe('GET /api/runs', () => {
     expect((await call('/api/runs')).body.runs[0]).toMatchObject({ state: 'dead', position: 'task 002-b · finished · 2 of 2 tasks' });
   });
 
-  it('A role line without an attempt gives the plain task form', async () => {
+  it.each<[string, string, string[]]>([
+    ['A role line without an attempt gives the plain task form', '== something odd\n', ['== something odd']],
+    ['A blank role line gives the plain task form', '== \n', ['== ']],
+    ['An attempt that is not a number gives the plain task form', '== coder attempt x myattempt 1\n', ['== coder attempt x myattempt 1']],
+    ['An empty log has no lines', '', []],
+  ])('%s', async (_name, text, logTail) => {
     const dead = await entry('dead');
-    await log(worktreeOf('dead'), '001-task', '== something odd\n', '12:10');
+    await log(worktreeOf('dead'), '001-task', text, '12:10');
     await writeRuns([dead]);
-    expect((await call('/api/runs')).body.runs[0]).toMatchObject({ position: 'task 001-task · 0 of 1 tasks', logTail: ['== something odd'] });
-  });
-
-  it('An empty log has no lines', async () => {
-    const dead = await entry('dead');
-    await log(worktreeOf('dead'), '001-task', '', '12:10');
-    await writeRuns([dead]);
-    expect((await call('/api/runs')).body.runs[0]).toMatchObject({ position: 'task 001-task · 0 of 1 tasks', logTail: [] });
+    expect((await call('/api/runs')).body.runs[0]).toMatchObject({ position: 'task 001-task · 0 of 1 tasks', logTail });
   });
 
   it('The current task is the newest log, whatever the task order', async () => {
@@ -303,6 +301,26 @@ describe('GET /api/runs', () => {
     await new Promise<void>(done => app.server.close(() => done()));
     await bind(join(outer, 'nowhere'));
     expect(await only('sc-one')).toMatchObject({ state: 'running', position: 'sc status failed: sc is not on PATH · pid alive' });
+  });
+
+  it('sc is not on PATH when PATH is unset', async () => {
+    await new Promise<void>(done => app.server.close(() => done()));
+    const env = { ...process.env };
+    delete env.PATH;
+    const bound = await bindApp({ repoRoot: root, uiDir: join(outer, 'ui'), env }, { mode: 'fixed', port: 0 });
+    if ('error' in bound) throw new Error('bind failed');
+    app = bound;
+    port = (bound.server.address() as { port: number }).port;
+    expect(await only('sc-one')).toMatchObject({ state: 'running', position: 'sc status failed: sc is not on PATH · pid alive' });
+  });
+
+  it('A non-executable sc earlier on PATH is skipped', async () => {
+    const blocked = join(outer, 'blocked');
+    await mkdir(blocked, { recursive: true });
+    await writeFile(join(blocked, 'sc'), '', { mode: 0o644 });
+    await new Promise<void>(done => app.server.close(() => done()));
+    await bind(`${blocked}${delimiter}${bin}${delimiter}${process.env.PATH}`);
+    expect(await only('sc-one')).toMatchObject({ state: 'running', position: 'planning · 1 agent · 1 PR' });
   });
 
   it('A sc that cannot be run for another reason shows the error', async () => {

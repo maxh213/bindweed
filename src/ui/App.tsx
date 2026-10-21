@@ -172,8 +172,8 @@ function BrowserApp(props: Readonly<AppProps>) {
     setSelected(path);
   };
 
-  const panes: Record<Tab, () => ReactElement> = {
-    files: () => (
+  const panes: Record<Tab, ReactElement> = {
+    files: (
       <FilesPane
         token={props.token}
         fetcher={props.fetcher}
@@ -185,14 +185,14 @@ function BrowserApp(props: Readonly<AppProps>) {
         onSelect={selectFile}
       />
     ),
-    arch: () => <ArchView token={props.token} at={at} plan={plan} fetcher={props.fetcher} onDrill={drillTo} onOpenFile={openFile} onPlanChange={changePlan} />,
-    runs: () => <RunsPanel runs={runs.runs} at={at} token={props.token} fetcher={props.fetcher} onOpenPlan={openPlan} onGone={runs.drop} />,
+    arch: <ArchView token={props.token} at={at} plan={plan} fetcher={props.fetcher} onDrill={drillTo} onOpenFile={openFile} onPlanChange={changePlan} />,
+    runs: <RunsPanel runs={runs.runs} at={at} token={props.token} fetcher={props.fetcher} onOpenPlan={openPlan} onGone={runs.drop} />,
   };
 
   return (
     <div className="page">
       <TabBar tab={tab} running={runs.running} onShowFiles={showFiles} onShowArch={showArch} onShowRuns={showRuns} />
-      {panes[tab]()}
+      {panes[tab]}
     </div>
   );
 }

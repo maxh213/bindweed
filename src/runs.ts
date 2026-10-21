@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
+import { accessSync, constants, existsSync, statSync } from 'node:fs';
 import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { basename, delimiter, join, resolve } from 'node:path';
 import { z } from 'zod';
 
 type Place = { root: string; env: NodeJS.ProcessEnv };
@@ -16,10 +17,9 @@ type Answer = { status: number; body: unknown };
 const SC_TIMEOUT = 10000;
 const TAIL = 20;
 const DENIED = z.object({ code: z.literal('EPERM') });
-const MISSING = z.object({ code: z.literal('ENOENT') });
 const ENTRY = z.object({ slug: z.string(), tool: z.enum(['marestail', 'slop-cannon']), worktree: z.string(), startedAt: z.string(), branch: z.unknown().optional(), pid: z.unknown().optional(), out: z.unknown().optional(), tasks: z.unknown().optional() });
 const STOPPED = /^stopped: (.+) exited -?\d+$/;
-const ROLE = /^== (\S+).*\battempt (\d+)/;
+const ATTEMPT = 'attempt ';
 const REMOVED: Standing = { state: 'worktree removed', position: 'worktree removed', prs: [], logTail: [] };
 
 function runsFile(root: string): string {
@@ -66,10 +66,13 @@ function entryOf(raw: unknown): Entry | undefined {
   return { ...parsed.data, branch, pid };
 }
 
+function newestFirst(entries: Entry[]): Entry[] {
+  return entries.toReversed().toSorted((left, right) => right.startedAt.localeCompare(left.startedAt));
+}
+
 function entriesOf(raw: unknown): Entry[] {
   if (!Array.isArray(raw)) return [];
-  const entries = raw.map(entryOf).filter(entry => entry !== undefined).reverse();
-  return entries.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  return newestFirst(raw.map(entryOf).filter(entry => entry !== undefined));
 }
 
 function taskId(path: string): string {
@@ -139,9 +142,44 @@ async function marestailState(entry: Entry): Promise<string> {
   return stoppedState(entry.worktree, verdict.path);
 }
 
+function boundaryBefore(line: string, at: number): boolean {
+  return at === 0 || /^\W/.test(line.charAt(at - 1));
+}
+
+function leadingDigits(text: string): string {
+  return /^\d+/.exec(text)?.[0] ?? '';
+}
+
+type Attempt = { at: number; attempt: string };
+
+function attemptMatches(line: string): Attempt[] {
+  const found: Attempt[] = [];
+  let at = line.indexOf(ATTEMPT);
+  while (at >= 0) {
+    const digits = leadingDigits(line.slice(at + ATTEMPT.length));
+    if (boundaryBefore(line, at) && digits !== '') found.push({ at, attempt: digits });
+    at = line.indexOf(ATTEMPT, at + ATTEMPT.length);
+  }
+  return found;
+}
+
+function chosenAttempt(line: string): Attempt | undefined {
+  return attemptMatches(line).findLast(match => match.at > '== '.length);
+}
+
+function roleFrom(line: string): string | undefined {
+  const token = /^== (\S+)/.exec(line)?.[1];
+  if (token === undefined) return undefined;
+  const chosen = chosenAttempt(line);
+  if (chosen === undefined) return undefined;
+  const role = line.slice('== '.length, Math.min(chosen.at, '== '.length + token.length));
+  return `${role} · attempt ${chosen.attempt}`;
+}
+
 function rolePart(log: Log): string | undefined {
-  const match = ROLE.exec(log.lines.findLast(line => line.startsWith('== ')) ?? '');
-  return match === null ? undefined : `${match[1]} · attempt ${match[2]}`;
+  const line = log.lines.findLast(item => item.startsWith('== '));
+  if (line === undefined) return undefined;
+  return roleFrom(line);
 }
 
 function currentPart(log: Log): string {
@@ -166,34 +204,72 @@ async function marestailStanding(entry: Entry): Promise<Standing> {
   return { state, position, prs: [], logTail: tailOf(current?.lines ?? []) };
 }
 
-function spawnFailure(error: unknown): string {
-  return MISSING.safeParse(error).success ? 'sc is not on PATH' : String(error);
+function pathDirs(env: NodeJS.ProcessEnv): string[] {
+  if (env.PATH === undefined) return [];
+  return env.PATH.split(delimiter);
+}
+
+function isExecutableFile(path: string): boolean {
+  try {
+    accessSync(path, constants.X_OK);
+  } catch {
+    return false;
+  }
+  return statSync(path).isFile();
+}
+
+function nextSc(denied: string | undefined, path: string): { chosen?: string; denied?: string } {
+  if (!existsSync(path)) return { denied };
+  if (isExecutableFile(path)) return { chosen: path };
+  return { denied: path };
+}
+
+function scOnPath(env: NodeJS.ProcessEnv): string | undefined {
+  let denied: string | undefined;
+  for (const dir of pathDirs(env)) {
+    const step = nextSc(denied, resolve(dir, 'sc'));
+    if (step.chosen !== undefined) return step.chosen;
+    denied = step.denied;
+  }
+  return denied;
+}
+
+function shownError(error: Error, bin: string): string {
+  return error.toString().replaceAll(bin, 'sc');
 }
 
 function exitFailure(code: number | null, stderr: string): string {
   return stderr === '' ? `exited ${code}` : stderr.split('\n')[0];
 }
 
+function closedSc(code: number | null, stdout: string, stderr: string): Sc {
+  if (code === 0) return { ok: true, stdout };
+  return { ok: false, reason: exitFailure(code, stderr) };
+}
+
+function settle(done: (result: Sc) => void, result: Sc, timer: ReturnType<typeof setTimeout>): void {
+  clearTimeout(timer);
+  done(result);
+}
+
+function watchSc(bin: string, worktree: string, place: Place, done: (result: Sc) => void): void {
+  const child = spawn(bin, ['status', '--repo', worktree, '--json'], { cwd: place.root, env: place.env, stdio: ['ignore', 'pipe', 'pipe'] });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
+  child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
+  const timer = setTimeout(() => {
+    child.kill('SIGKILL');
+    done({ ok: false, reason: 'timed out after 10s' });
+  }, SC_TIMEOUT);
+  child.once('error', error => settle(done, { ok: false, reason: shownError(error, bin) }, timer));
+  child.once('close', code => settle(done, closedSc(code, stdout, stderr), timer));
+}
+
 function runSc(place: Place, worktree: string): Promise<Sc> {
-  return new Promise(done => {
-    const child = spawn('sc', ['status', '--repo', worktree, '--json'], { cwd: place.root, env: place.env, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
-    child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-      done({ ok: false, reason: 'timed out after 10s' });
-    }, SC_TIMEOUT);
-    child.once('error', error => {
-      clearTimeout(timer);
-      done({ ok: false, reason: spawnFailure(error) });
-    });
-    child.once('close', code => {
-      clearTimeout(timer);
-      done(code === 0 ? { ok: true, stdout } : { ok: false, reason: exitFailure(code, stderr) });
-    });
-  });
+  const bin = scOnPath(place.env);
+  if (bin === undefined) return Promise.resolve({ ok: false, reason: 'sc is not on PATH' });
+  return new Promise(done => watchSc(bin, worktree, place, done));
 }
 
 function isRecord(raw: unknown): raw is Record<string, unknown> {
@@ -269,7 +345,7 @@ async function viewOf(place: Place, namer: PlanNamer, entry: Entry): Promise<Rec
   const [name, standing] = await Promise.all([namer(entry.slug), standingOf(place, entry)]);
   const { slug, tool, branch, worktree, pid, startedAt } = entry;
   const plan = { planName: name ?? slug, planExists: name !== undefined };
-  return { slug, ...plan, tool, branch, worktree, worktreeExists: standing !== REMOVED, pid, startedAt, ...standing };
+  return { slug, ...plan, tool, branch, worktree, worktreeExists: standing.state !== REMOVED.state, pid, startedAt, ...standing };
 }
 
 export async function listRuns(place: Place, namer: PlanNamer): Promise<Record<string, unknown>[]> {
