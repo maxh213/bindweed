@@ -27,18 +27,20 @@ log() { mkdir -p "$R/wt-$1/.marestail/runs/$2" "$R/wt-$1/tasks"; printf "$3" > "
 sum() { printf "$2" > "$R/wt-$1/.marestail/runs/overnight-20261021T1230.md"; touch -t 202610211230 "$R/wt-$1/.marestail/runs/overnight-20261021T1230.md"; }
 log done 001-a '== qa (09-qa) attempt 1\npipeline complete\n' 1210
 log done 002-b '== qa (09-qa) attempt 1\npipeline complete\n' 1220
-sum done '001-a ok\n002-b ok\nall tasks complete\n'
+sum done '001-a ok\n002-b ok\nall tasks complete 2026-10-21 12:30:00\n'
 log stopped 001-w 'pipeline complete\n' 1210
 log stopped 002-x '== coder (03-coder) attempt 2\ngate failed\nstopping for a human\n' 1220
 sum stopped 'stopped: tasks/002-x.md exited 1\n'
 log failed 001-f '== coder (03-coder) attempt 1\nnpm ERR! boom\n' 1210
 sum failed 'stopped: tasks/001-f.md exited 2\n'
+log running 000-old 'pipeline complete\n' 1225
 log running 001-init 'pipeline complete\n' 1210
+printf 'x\n' > "$R/wt-running/.marestail/runs/direct-001-20261021T1226.log"; touch -t 202610211226 "$R/wt-running/.marestail/runs/direct-001-20261021T1226.log"
 log running 002-step 'starting\n== coder (07-coder) attempt 2\n== hardener (07-hardener) attempt 1\n' 1220
 log dead 001-task 'starting\n' 1210
 touch "$R"/wt-done/tasks/001-a.md "$R"/wt-done/tasks/002-b.md "$R"/wt-stopped/tasks/001-w.md "$R"/wt-stopped/tasks/002-x.md \
-  "$R"/wt-failed/tasks/001-f.md "$R"/wt-running/tasks/README.md "$R"/wt-running/tasks/001-init.md "$R"/wt-running/tasks/002-step.md \
-  "$R"/wt-running/tasks/003-later.md "$R"/wt-dead/tasks/001-task.md
+  "$R"/wt-failed/tasks/001-f.md "$R"/wt-running/tasks/README.md "$R"/wt-running/tasks/000-old.md "$R"/wt-running/tasks/001-init.md "$R"/wt-running/tasks/002-step.md \
+  "$R"/wt-running/tasks/003-later.md "$R"/wt-dead/tasks/README.md "$R"/wt-dead/tasks/001-task.md
 mkdir -p "$R/wt-sc" "$R/wt-sc-err" "$QA/layered/.bindweed/runs" "$QA/layered/.bindweed/plans"
 printf '{"state":{"phase":"running"},"agents":[{"alive":true},{"alive":true},{"alive":true},{"alive":true},{"alive":false}],"beads":{"open":7,"done":3},"prs":[{"url":"https://example.test/pull/41"},{"url":"https://example.test/pull/42"}]}\n' > "$R/wt-sc/sc-status.json"
 printf 'no slop-cannon state here\nsecond line\n' > "$R/wt-sc-err/sc-status.err"
@@ -46,10 +48,12 @@ for i in $(seq 1 25); do echo "[sc] line $i"; done > "$QA/layered/.bindweed/runs
 LIVE1=$(sh -c 'sleep 900 >/dev/null 2>&1 & echo $!')
 LIVE2=$(sh -c 'sleep 900 >/dev/null 2>&1 & echo $!')
 true & DEAD=$!; wait "$DEAD"
-entry() { printf '{"slug":"plan-%s","tool":"%s","worktree":"%s/wt-%s","branch":"bindweed/plan-%s","pid":%s,"startedAt":"2026-10-21T%s:00.000Z","out":"%s/layered/.bindweed/runs/plan-%s.out","settings":{}}' "$1" "$2" "$R" "$1" "$1" "$3" "$4" "$QA" "$1"; }
-printf '[%s,%s,%s,%s,%s,%s,%s,%s]' "$(entry removed marestail $DEAD 12:00)" "$(entry done marestail $DEAD 12:01)" \
-  "$(entry stopped marestail $DEAD 12:02)" "$(entry failed marestail $DEAD 12:03)" "$(entry running marestail $LIVE1 12:04)" \
-  "$(entry dead marestail $DEAD 12:05)" "$(entry sc-err slop-cannon $DEAD 12:12)" "$(entry sc slop-cannon $LIVE2 12:09)" > "$QA/layered/.bindweed/runs.json"
+entry() { printf '{"slug":"plan-%s","tool":"%s","worktree":"%s/wt-%s","branch":"bindweed/plan-%s","pid":%s,"startedAt":"2026-10-21T%s:00.000Z","out":"%s/layered/.bindweed/runs/plan-%s.out","settings":{}%s}' "$1" "$2" "$R" "$1" "$1" "$3" "$4" "$QA" "$1" "$5"; }
+t() { printf ',"tasks":[%s]' "$(printf '"tasks/%s.md",' "$@" | sed 's/,$//')"; }
+printf '[%s,%s,%s,%s,%s,%s,%s,%s]' "$(entry removed marestail $DEAD 12:00 ',"tasks":[]')" "$(entry done marestail $DEAD 12:01 "$(t 001-a 002-b)")" \
+  "$(entry stopped marestail $DEAD 12:02 "$(t 001-w 002-x)")" "$(entry failed marestail $DEAD 12:03 "$(t 001-f)")" \
+  "$(entry running marestail $LIVE1 12:04 "$(t 001-init 002-step 003-later)")" "$(entry dead marestail $DEAD 12:05 '')" \
+  "$(entry sc-err slop-cannon $DEAD 12:12 ',"tasks":[]')" "$(entry sc slop-cannon $LIVE2 12:09 ',"tasks":[]')" > "$QA/layered/.bindweed/runs.json"
 printf '{"version":1,"name":"Plan Running","slug":"plan-running","createdAt":"2026-10-21T12:00:00.000Z","baseCommit":"HEAD","edits":[],"redo":[]}\n' > "$QA/layered/.bindweed/plans/plan-running.json"
 printf '{"version":1,"name":"Plan SC","slug":"plan-sc","createdAt":"2026-10-21T12:00:00.000Z","baseCommit":"HEAD","edits":[],"redo":[]}\n' > "$QA/layered/.bindweed/plans/plan-sc.json"
 echo "export BW=$BW QA=$QA R=$R LIVE1=$LIVE1 LIVE2=$LIVE2"

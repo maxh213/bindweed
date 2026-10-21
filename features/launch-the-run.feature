@@ -311,8 +311,9 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
     "<root>/.bindweed/runs/<slug>-<stamp>.out". The brief is one argument.
     Record appends one object to "<root>/.bindweed/runs.json", creating a
     one-element array when the file is missing. That object's keys are exactly
-    "slug", "tool", "worktree", "branch", "pid", "startedAt", "out" and
-    "settings". "startedAt" matches \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z,
+    "slug", "tool", "worktree", "branch", "pid", "startedAt", "out",
+    "settings" and "tasks". "tasks" is the list of task paths passed to
+    overnight.sh, in that order, and [] for slop-cannon. "startedAt" matches \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z,
     the plan createdAt pattern. Marestail
     settings are {"model","scope","focus","stopAt"} with scope "" when blank.
     Slop-cannon settings are {"safety","ammo","cartridge"} with blanks kept.
@@ -337,7 +338,8 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
       And within 5 seconds "/tmp/qa/log/overnight.json" has "argv" ["tasks/005-add-core.md","tasks/006-move-b.md","tasks/007-cut-app-domain.md"], "cwd" the worktree, "model" "dandelion/route-best", "scope" "hard", "focus" "src/app/a.ts src/domain/model.ts", "stop" "qa", "pathHead" "/tmp/qa/fakes/bin" and "claudecode", "entrypoint" and "configDir" null
       And the launch script's first line of output is "start pid=<that pid> model=dandelion/route-best scope=hard focus=src/app/a.ts src/domain/model.ts stop=qa"
       And the script contains "systemd-inhibit --what=idle --who=bindweed", "--why='bindweed gate'" and "'/tmp/qa/fakes/tools/overnight.sh'"
-      And "/tmp/qa/layered/.bindweed/runs.json" is a one-element array whose object's keys are exactly "slug", "tool", "worktree", "branch", "pid", "startedAt", "out" and "settings"
+      And "/tmp/qa/layered/.bindweed/runs.json" is a one-element array whose object's keys are exactly "slug", "tool", "worktree", "branch", "pid", "startedAt", "out", "settings" and "tasks"
+      And "tasks" is ["tasks/005-add-core.md","tasks/006-move-b.md","tasks/007-cut-app-domain.md"]
       And "slug" is "gate", "tool" is "marestail", "worktree" is "/tmp/qa/layered-bw-gate", "branch" is "bindweed/gate", "pid" is the body's pid, "out" is the launch ".out" and "startedAt" matches \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z
       And "settings" is {"model":"dandelion/route-best","scope":"hard","focus":"src/app/a.ts src/domain/model.ts","stopAt":"qa"}
       And the plan file's bytes are unchanged and "/tmp/qa/layered/.dependency-cruiser.cjs" does not exist
@@ -425,7 +427,7 @@ Feature: launch a plan as a marestail or slop-cannon run in its own worktree
       And the worktree has no "tasks/005-add-core.md" and no "marestail.toml"
       And "/tmp/qa/log/sc.json" has "cwd" "/tmp/qa/layered" and "argv" ["--repo","/tmp/qa/layered-bw-gate","--headless","--safety","on","-m","# Reshape layered\n\nMove b, then cut app from domain.\n"]
       And within 5 seconds the run's ".out" under "/tmp/qa/layered/.bindweed/runs" contains "started"
-      And the runs.json entry has tool "slop-cannon" and settings {"safety":"on","ammo":"","cartridge":""}
+      And the runs.json entry has tool "slop-cannon", settings {"safety":"on","ammo":"","cartridge":""} and tasks []
       And "git status --porcelain" in the worktree is empty
       And "/tmp/qa/log/overnight.json" does not exist and "git status --porcelain" in "/tmp/qa/layered" is empty
       When I send "POST /api/plans/gate/launch" with the token and {"tool":"slop-cannon","safety":"off","ammo":"3","cartridge":"wide"}

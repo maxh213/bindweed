@@ -10,22 +10,24 @@ Feature: a Runs panel shows where every launched run stands
 
   "A live pid" is the pid of a "sleep 900" the test spawned. "A dead pid" is
   the pid of a "true" the test spawned and waited for. "Entry <name>" is the
-  runs.json object {"slug":"plan-<name>","tool":<tool>,"worktree":"/tmp/qa/runs/wt-<name>","branch":"bindweed/plan-<name>","pid":<pid>,"startedAt":<startedAt>,"out":"/tmp/qa/layered/.bindweed/runs/plan-<name>.out","settings":{}}.
+  runs.json object {"slug":"plan-<name>","tool":<tool>,"worktree":"/tmp/qa/runs/wt-<name>","branch":"bindweed/plan-<name>","pid":<pid>,"startedAt":<startedAt>,"out":"/tmp/qa/layered/.bindweed/runs/plan-<name>.out","settings":{},"tasks":<tasks>},
+  without the "tasks" key when <tasks> is "none".
   "At HH:MM" is that time on 2026-10-21 UTC: an mtime set with touch, or a
   startedAt "2026-10-21THH:MM:00.000Z". Under "/tmp/qa/runs/wt-<name>", "log
   <id>" is ".marestail/runs/<id>/pipeline.log" and "summary" is
   ".marestail/runs/overnight-20261021T1230.md", mtime at 12:30.
 
   The marestail worktrees, tool "marestail":
-  | name    | files                                                                                                                                  | pid  | startedAt |
-  | done    | tasks/001-a.md, tasks/002-b.md; log 001-a and log 002-b "== qa (09-qa) attempt 1\npipeline complete\n" at 12:10 and 12:20; summary "001-a ok\n002-b ok\nall tasks complete\n" | dead | 12:01 |
-  | stopped | tasks/001-w.md, tasks/002-x.md; log 001-w "pipeline complete\n" at 12:10; log 002-x "== coder (03-coder) attempt 2\ngate failed\nstopping for a human\n" at 12:20; summary "stopped: tasks/002-x.md exited 1\n" | dead | 12:02 |
-  | failed  | tasks/001-f.md; log 001-f "== coder (03-coder) attempt 1\nnpm ERR! boom\n" at 12:10; summary "stopped: tasks/001-f.md exited 2\n" | dead | 12:03 |
-  | running | tasks/README.md, tasks/001-init.md, tasks/002-step.md, tasks/003-later.md; log 001-init "pipeline complete\n" at 12:10; log 002-step "starting\n== coder (07-coder) attempt 2\n== hardener (07-hardener) attempt 1\n" at 12:20 | live | 12:04 |
-  | dead    | tasks/001-task.md; log 001-task "starting\n" at 12:10                                                                                   | dead | 12:05 |
-  | between | tasks/001-a.md, tasks/002-b.md; log 001-a "pipeline complete\n" at 12:10                                                               | live | 12:06 |
-  | fresh   | tasks/001-a.md and no ".marestail" directory                                                                                           | dead | 12:07 |
-  | removed | no directory at all                                                                                                                    | dead | 12:00 |
+  | name       | files                                                                                                                                  | tasks | pid  | startedAt |
+  | done       | tasks/001-a.md, tasks/002-b.md; log 001-a and log 002-b "== qa (09-qa) attempt 1\npipeline complete\n" at 12:10 and 12:20; summary "001-a ok\n002-b ok\nall tasks complete 2026-10-21 12:30:00\n" | ["tasks/001-a.md","tasks/002-b.md"] | dead | 12:01 |
+  | stopped    | tasks/001-w.md, tasks/002-x.md; log 001-w "pipeline complete\n" at 12:10; log 002-x "== coder (03-coder) attempt 2\ngate failed\nstopping for a human\n" at 12:20; summary "stopped: tasks/002-x.md exited 1\n" | ["tasks/001-w.md","tasks/002-x.md"] | dead | 12:02 |
+  | failed     | tasks/001-f.md; log 001-f "== coder (03-coder) attempt 1\nnpm ERR! boom\n" at 12:10; summary "stopped: tasks/001-f.md exited 2\n" | ["tasks/001-f.md"] | dead | 12:03 |
+  | running    | tasks/README.md, tasks/000-old.md, tasks/001-init.md, tasks/002-step.md, tasks/003-later.md; log 000-old "pipeline complete\n" at 12:25; log 001-init "pipeline complete\n" at 12:10; log 002-step "starting\n== coder (07-coder) attempt 2\n== hardener (07-hardener) attempt 1\n" at 12:20; ".marestail/runs/direct-001-20261021T1226.log" "x\n" at 12:26 | ["tasks/001-init.md","tasks/002-step.md","tasks/003-later.md"] | live | 12:04 |
+  | dead       | tasks/README.md, tasks/001-task.md; log 001-task "starting\n" at 12:10                                                                  | none  | dead | 12:05 |
+  | between    | tasks/001-a.md, tasks/002-b.md; log 001-a "== qa (09-qa) attempt 1\npipeline complete\n" at 12:10                                      | ["tasks/001-a.md","tasks/002-b.md"] | live | 12:06 |
+  | fresh      | tasks/001-a.md and no ".marestail" directory                                                                                           | ["tasks/001-a.md"] | dead | 12:07 |
+  | unverified | tasks/001-a.md; log 001-a "== qa (09-qa) attempt 1\npipeline complete, NOT verified by eye\n" at 12:10                                 | ["tasks/001-a.md"] | live | 12:08 |
+  | removed    | no directory at all                                                                                                                    | []    | dead | 12:00 |
 
   The slop-cannon worktrees, tool "slop-cannon". The fake "sc" in
   "/tmp/qa/fakes/bin", given "status --repo <dir> --json", sleeps 15 seconds
@@ -33,6 +35,7 @@ Feature: a Runs panel shows where every launched run stands
   and exits 1 when that exists, and otherwise prints "<dir>/sc-status.json"
   and exits 0. "The sc out" is "[sc] line 1\n" to "[sc] line 25\n" in that
   entry's "out" file.
+  Their <tasks> is [].
   | name     | files                                                                                                                                                                                                  | out        | pid  | startedAt |
   | sc       | sc-status.json {"state":{"phase":"running"},"agents":[{"alive":true},{"alive":true},{"alive":true},{"alive":true},{"alive":false}],"beads":{"open":7,"done":3},"prs":[{"url":"https://example.test/pull/41"},{"url":"https://example.test/pull/42"}]} | the sc out | live | 12:09 |
   | sc-one   | sc-status.json {"state":{"phase":"planning"},"agents":[{"alive":true}],"beads":{},"prs":[{"url":"https://example.test/pull/7"}]}                                                                     | no file    | live | 12:10 |
@@ -65,23 +68,28 @@ Feature: a Runs panel shows where every launched run stands
     A missing worktree: state "worktree removed", position "worktree removed",
     worktreeExists false, logTail [], prs [], whatever the tool.
 
-    Marestail. The run's tasks are the worktree's "tasks/*.md" files except
-    "tasks/README.md"; a task "tasks/<id>.md" logs to
-    ".marestail/runs/<id>/pipeline.log". A task is done when its log contains
-    a line "pipeline complete". The current task is the "<id>" whose log has
-    the newest mtime. The summary is the newest-mtime
-    ".marestail/runs/overnight-*.md"; its verdict is its last line that is
-    "all tasks complete" or starts "stopped: <path> exited <code>". State:
-    "done" on "all tasks complete"; on "stopped:", "stopped for a human" when
-    the last line of <path>'s log contains "stopping for a human", else
-    "failed"; with no verdict, "running" when the pid is alive, else "dead".
-    The role and attempt are the first word and the number after "attempt" of
-    the current log's last line starting "== ". Position, with <done> and
-    <total> the task counts, the word "tasks" always plural:
+    Marestail. The run's tasks are the entry's "tasks" when it is a list of
+    strings (launch records it), else the worktree's "tasks/*.md" files
+    except "tasks/README.md". A task "tasks/<id>.md" logs to
+    ".marestail/runs/<id>/pipeline.log"; other files in ".marestail/runs" and
+    logs of tasks not in the run are ignored. A task is done when its log has
+    a line starting "pipeline complete" (real logs may end "pipeline
+    complete, NOT verified by eye"). The current task is the run's task whose
+    log has the newest mtime. The summary is the newest-mtime
+    ".marestail/runs/overnight-*.md"; its verdict is its last line that
+    starts "all tasks complete" (overnight.sh appends the date) or starts
+    "stopped: <path> exited <code>". State: "done" on "all tasks complete";
+    on "stopped:", "stopped for a human" when the last line of <path>'s log
+    contains "stopping for a human", else "failed"; with no verdict,
+    "running" when the pid is alive, else "dead". A log's last line ignores
+    the final newline. The role and attempt are the first word and the
+    number after "attempt" of the current log's last line starting "== ".
+    Position is the first of these that applies, with <done> and <total> the
+    task counts and "tasks" always plural:
     - state done: "all tasks complete · <done> of <total> tasks"
-    - no log: "no task started · <done> of <total> tasks"
-    - current log ends "pipeline complete": "task <id> · finished · <done> of <total> tasks"
-    - an "== " line: "task <id> · <role> · attempt <n> · <done> of <total> tasks"
+    - no current task: "no task started · <done> of <total> tasks"
+    - the current log's last line starts "pipeline complete": "task <id> · finished · <done> of <total> tasks"
+    - the current log has an "== " line: "task <id> · <role> · attempt <n> · <done> of <total> tasks"
     - otherwise: "task <id> · <done> of <total> tasks"
     logTail is the current task's log.
 
@@ -111,8 +119,9 @@ Feature: a Runs panel shows where every launched run stands
         | failed  | failed              | task 001-f · coder · attempt 1 · 0 of 1 tasks       | ["== coder (03-coder) attempt 1","npm ERR! boom"]                              |
         | running | running             | task 002-step · hardener · attempt 1 · 1 of 3 tasks | ["starting","== coder (07-coder) attempt 2","== hardener (07-hardener) attempt 1"] |
         | dead    | dead                | task 001-task · 0 of 1 tasks                        | ["starting"]                                                                   |
-        | between | running             | task 001-a · finished · 1 of 2 tasks                | ["pipeline complete"]                                                          |
+        | between | running             | task 001-a · finished · 1 of 2 tasks                | ["== qa (09-qa) attempt 1","pipeline complete"]                                |
         | fresh   | dead                | no task started · 0 of 1 tasks                      | []                                                                             |
+        | unverified | running          | task 001-a · finished · 1 of 1 tasks                | ["== qa (09-qa) attempt 1","pipeline complete, NOT verified by eye"]           |
         | removed | worktree removed    | worktree removed                                    | []                                                                             |
         | sc      | running             | running · 4 agents · 7 open · 3 done · 2 PRs        | "[sc] line 6" to "[sc] line 25"                                                |
         | sc-one  | running             | planning · 1 agent · 1 PR                           | []                                                                             |
@@ -199,11 +208,13 @@ Feature: a Runs panel shows where every launched run stands
 
   Rule: The Runs tab shows one card per run and polls only while seen
     The tab bar is "Files", "Architecture", "Runs". "#runs" opens the Runs
-    tab, and clicking it pushes "#runs". The Runs tab holds a badge with the
-    number of runs in state "running"; with none there is no badge. The page
-    fetches GET /api/runs once on load for the badge. While the Runs tab is
-    shown and document.visibilityState is "visible", it fetches at once, then
-    every 5 seconds, never starting one while the last has not answered.
+    tab, and clicking it pushes "#runs". The Runs tab holds a badge, class
+    "badge" and never "pill", with the number of runs in state "running";
+    with none there is no badge. The page fetches GET /api/runs once on load
+    for the badge. While the Runs tab is shown and
+    document.visibilityState is "visible", it fetches at once, then every 5
+    seconds, never starting one while the last has not answered. Opening at
+    "#runs" makes one request on load, which is also the "at once" one.
     Otherwise it does not fetch, and the badge keeps its last count.
     Each run is a card in the order of GET /api/runs, showing: planName, a
     link to "#at=<at>&plan=<slug>" when planExists (<at> is the Architecture
@@ -275,7 +286,7 @@ Feature: a Runs panel shows where every launched run stands
     Scenario: Polling stops on another tab and in a hidden browser tab
       Given runs.json is [entry running]
       When I open bindweed at "#runs"
-      Then GET /api/runs is requested at once and then every 5 seconds
+      Then GET /api/runs is requested once at load and then every 5 seconds
       When I click "Files"
       Then no GET /api/runs is requested for 15 seconds
       When I click "Runs"
@@ -286,11 +297,15 @@ Feature: a Runs panel shows where every launched run stands
       Then GET /api/runs is requested at once and then every 5 seconds
 
   Rule: Launch (010) and every existing route keep working
-    Scenario: A launch still records exactly the 010 fields and shows as running
+    Record adds one key, "tasks", as features/launch-the-run.feature says;
+    everything else launch writes or answers is unchanged.
+
+    Scenario: A launch records the 010 fields plus "tasks" and shows as running
       Given the Background, fakes and launch plan of features/launch-the-run.feature
       When I send a marestail launch
       Then the steps are all ok
-      And runs.json is a one-element array whose object's keys are exactly "slug", "tool", "worktree", "branch", "pid", "startedAt", "out" and "settings"
+      And runs.json is a one-element array whose object's keys are exactly "slug", "tool", "worktree", "branch", "pid", "startedAt", "out", "settings" and "tasks"
+      And "tasks" is ["tasks/005-add-core.md","tasks/006-move-b.md","tasks/007-cut-app-domain.md"]
       When I send "GET /api/plans/gate/launch" with the token
       Then "alive" is true, "worktree" is "/tmp/qa/layered-bw-gate", "branch" is "bindweed/gate" and "watch" is "marestail watch"
       When I send "GET /api/runs" with the token
