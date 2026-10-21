@@ -232,7 +232,7 @@ test('qa: a plan becomes task files and a slop-cannon brief', async ({ page, con
     expect(lines[1]).toBe(`serving ${layered}`);
 
     await test.step('1. the layered packages, with Settings and no Tasks', async () => {
-      await page.setViewportSize({ width: 1400, height: 900 });
+      await page.setViewportSize({ width: 1800, height: 1000 });
       await page.goto(`${ORIGIN}/?token=${tokenText}#at=src`);
       await expect(page).toHaveURL(`${ORIGIN}/#at=src`);
       await expect(box(page, 'app').locator('.box-count')).toHaveText('2 files');
