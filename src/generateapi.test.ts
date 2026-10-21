@@ -541,7 +541,7 @@ describe('backends found on PATH', () => {
     held.home = join(scratch, 'home');
     await mkdir(held.bin);
     await mkdir(held.log);
-    held.app = await boundOn(held.root, port, { PATH: `${held.bin}:${SYSTEM_PATH}`, HOME: held.home }, { llmMs: 1000, routeMs: 1000 });
+    held.app = await boundOn(held.root, port, { PATH: `${held.bin}:${SYSTEM_PATH}`, HOME: held.home }, { llmMs: 5_000, routeMs: 1_000 });
   });
 
   afterAll(async () => {
@@ -580,21 +580,32 @@ describe('backends found on PATH', () => {
     return loose.parse(json(res));
   }
 
+  async function pidBorn(path: string): Promise<{ pid: number; born: number }> {
+    expect(await until(async () => exists(path), 3000)).toBe(true);
+    const pid = Number((await readFile(path, 'utf8')).trim().split('\n')[0]);
+    return { pid, born: Date.now() };
+  }
+
   it('A missing claude and an LLM past its time limit give errors, not retries', async () => {
     await tool('claude', null);
     await gate({ llm: { backend: 'claude' } });
     expect(await ask()).toEqual({ error: 'claude is not on PATH', ran: 'claude: claude-opus-5-5, effort high' });
     const runs = join(held.log, 'runs');
+    await rm(runs, { force: true });
     const command = `echo $$ >> ${runs}; echo part; exec sleep 600`;
     await writeFile(join(held.root, '.bindweed', 'config.json'), JSON.stringify({ llm: { backend: 'command', command } }));
-    const started = Date.now();
-    expect(await ask()).toEqual({ error: 'the LLM ran past its time limit and was stopped', raw: 'part\n', ran: `command: ${command}` });
-    expect(Date.now() - started).toBeLessThan(3000);
-    const pids = (await readFile(runs, 'utf8')).trim().split('\n').map(Number);
-    expect(pids).toHaveLength(1);
-    expect(alive(pids[0])).toBe(false);
+    const running = ask();
+    const watched = await pidBorn(runs);
+    await pause(1_600);
+    expect(alive(watched.pid)).toBe(true);
+    expect(await running).toEqual({ error: 'the LLM ran past its time limit and was stopped', raw: 'part\n', ran: `command: ${command}` });
+    expect(alive(watched.pid)).toBe(false);
+    const elapsed = Date.now() - watched.born;
+    expect(elapsed).toBeGreaterThanOrEqual(4_000);
+    expect(elapsed).toBeLessThan(8_000);
+    expect((await readFile(runs, 'utf8')).trim().split('\n')).toHaveLength(1);
     expect(loose.parse(json(await call('GET', '/api/plans/gate', undefined)))).not.toHaveProperty('interview');
-  });
+  }, 15_000);
 
   const ROWS: { marestail: string | null; ran: string; note?: string; args: string; config: string }[] = [
     { marestail: 'echo "claude-fable-5-1 max claude"', ran: 'route: claude-fable-5-1, effort max, provider claude', args: 'claude-fable-5-1 --effort max', config: 'unset' },
@@ -625,18 +636,39 @@ describe('backends found on PATH', () => {
     { marestail: 'kill -TERM $$', ran: 'claude: claude-opus-5-5, effort high', note: 'marestail route was stopped by SIGTERM, so bindweed used claude-opus-5-5', args: 'claude-opus-5-5 --effort high', config: 'unset' },
   ];
 
+  function routeScript(body: string): string {
+    const steps = body === 'exec sleep 600' ? `echo $$ > ${held.log}/route.pid\nexec sleep 600` : body;
+    return `#!/bin/sh\n[ "$*" = "route --high" ] || exit 9\n${steps}\n`;
+  }
+
+  async function askRow(row: (typeof ROWS)[number]): Promise<Record<string, unknown>> {
+    if (row.marestail !== 'exec sleep 600') return ask();
+    const pidPath = join(held.log, 'route.pid');
+    await rm(pidPath, { force: true });
+    const running = ask();
+    const watched = await pidBorn(pidPath);
+    await pause(300);
+    expect(alive(watched.pid)).toBe(true);
+    const answer = await running;
+    expect(alive(watched.pid)).toBe(false);
+    const elapsed = Date.now() - watched.born;
+    expect(elapsed).toBeGreaterThanOrEqual(700);
+    expect(elapsed).toBeLessThan(3_000);
+    return answer;
+  }
+
   it.each(ROWS)('route picks the claude model, or falls back and says why: $marestail', async row => {
     await tool('claude', CLAUDE_FAKE(held.log));
-    await tool('marestail', row.marestail === null ? null : `#!/bin/sh\n[ "$*" = "route --high" ] || exit 9\n${row.marestail}\n`);
+    await tool('marestail', row.marestail === null ? null : routeScript(row.marestail));
     await gate({ llm: { backend: 'route' } });
-    const answer = await ask();
+    const answer = await askRow(row);
     expect(answer.ran).toBe(row.ran);
     expect(answer.note).toBe(row.note);
     const [model, effort] = row.args.split(' --effort ');
     expect(await readFile(join(held.log, 'claude.args'), 'utf8')).toBe(`-p --model ${model} --effort ${effort} --output-format text --allowedTools Read,Grep,Glob\n`);
     expect(await readFile(join(held.log, 'claude.config'), 'utf8')).toBe(row.config.replace('HOME', held.home));
     expect(await readFile(join(held.log, 'claude.stdin'), 'utf8')).toContain('src/app must not import src/domain (1 import)');
-  });
+  }, 15_000);
 
   it('a route fallback whose claude cannot start says both', async () => {
     await tool('claude', null);

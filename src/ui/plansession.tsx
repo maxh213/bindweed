@@ -1,5 +1,5 @@
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useEffectEvent, useState, type ReactNode } from 'react';
+import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from 'react';
 import type { GraphNode, GraphView, ViewEdge } from '../domain/graph.ts';
 import {
   addEdgeIndex,
@@ -399,6 +399,8 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
   const closeContract = (): void => setContractOpening(current => ({ ...current, open: false }));
   const [tasksOpening, setTasksOpening] = useState<PanelOpening>({ open: false, count: 0 });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const shownDoc = useRef<PlanDoc | null>(null);
+  const savedTail = useRef<Promise<void>>(Promise.resolve());
   const roster = planRoster(plansQuery.data, planQuery.data, slug, deleteTarget);
   const doc = roster.doc;
   const edits = editsOf(doc);
@@ -462,14 +464,20 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     });
   };
   const openPlan = (next: PlanDoc): void => {
+    shownDoc.current = next;
     queryClient.setQueryData(['plan', props.token, slug], next);
   };
-  const storeDoc = async (current: PlanDoc, next: PlanDoc): Promise<void> => {
-    openPlan(next);
+  const putSaved = async (current: PlanDoc, next: PlanDoc): Promise<void> => {
     const saved = await putPlan(props.token, next, props.fetcher);
-    if (!('error' in saved)) return;
+    if (!('error' in saved) || shownDoc.current !== next) return;
     openPlan(current);
     setNotice(saved.error);
+  };
+  const storeDoc = (current: PlanDoc, next: PlanDoc): Promise<void> => {
+    openPlan(next);
+    const run = savedTail.current.then(() => putSaved(current, next));
+    savedTail.current = run.then(() => undefined);
+    return run;
   };
   const saveContract = (rules: ContractRule[]): void => {
     withDoc(current => void storeDoc(current, { ...current, contract: { rules } }));

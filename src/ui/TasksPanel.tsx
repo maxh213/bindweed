@@ -312,6 +312,15 @@ function bodyFor(step: GenerateBody['step'], answers: string[]): GenerateBody {
   return step === 'ask' ? { step } : { step, answers };
 }
 
+async function whenSaved(saving: { readonly current: Promise<void> }): Promise<void> {
+  let queued = saving.current;
+  for (;;) {
+    await queued;
+    if (saving.current === queued) return;
+    queued = saving.current;
+  }
+}
+
 export function TasksPanel(props: Readonly<TasksPanelProps>) {
   const doc = props.doc;
   const [run, setRun] = useState<Run>({ kind: 'idle' });
@@ -324,7 +333,7 @@ export function TasksPanel(props: Readonly<TasksPanelProps>) {
     saving.current = props.onSave(next);
   };
   const generate = async (step: GenerateBody['step']): Promise<void> => {
-    await saving.current;
+    await whenSaved(saving);
     restartTicker();
     setRun({ kind: 'running' });
     const answer = await postGenerate(props.token, doc.slug, bodyFor(step, typedAnswers(pending, boxes)), props.fetcher);
@@ -337,7 +346,7 @@ export function TasksPanel(props: Readonly<TasksPanelProps>) {
     setRun({ kind: 'done', ran: answer.ran, note: answer.note });
   };
   const saveFiles = async (): Promise<void> => {
-    await saving.current;
+    await whenSaved(saving);
     const result = await postFiles(props.token, doc.slug, props.fetcher);
     setSaved('error' in result ? result.error : `saved to ${result.dir}/tasks/`);
   };

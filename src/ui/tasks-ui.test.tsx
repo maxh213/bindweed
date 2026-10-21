@@ -79,10 +79,10 @@ type World = {
   repoDown: boolean;
   release: ((hit: Hit) => void) | null;
   holdPut: boolean;
-  heldPut: (() => void) | null;
+  heldPuts: Array<() => void>;
 };
 
-const world: World = { doc: null, config: null, outcomes: [], generated: [], files: [], puts: 0, refusePut: false, configDown: false, filesDown: false, repoDown: false, release: null, holdPut: false, heldPut: null };
+const world: World = { doc: null, config: null, outcomes: [], generated: [], files: [], puts: 0, refusePut: false, configDown: false, filesDown: false, repoDown: false, release: null, holdPut: false, heldPuts: [] };
 
 function freshDoc(edits: PlanEdit[], extra: Partial<PlanDoc> = {}): PlanDoc {
   return { version: 1, name: 'Gate', slug: 'gate', createdAt: '2026-10-01T00:00:00.000Z', baseCommit: HEAD, edits, redo: [], ...extra };
@@ -105,7 +105,9 @@ function putBody(raw: unknown): Hit {
 
 function heldOrPut(raw: unknown): Hit | Promise<Hit> {
   if (!world.holdPut) return putBody(raw);
-  return new Promise<Hit>(release => (world.heldPut = () => release(putBody(raw))));
+  return new Promise<Hit>(resolve => {
+    world.heldPuts.push(() => resolve(putBody(raw)));
+  });
 }
 
 function repliedRun(raw: unknown, reply: Reply): Hit {
@@ -344,7 +346,7 @@ describe('the Tasks and Settings dialogs', () => {
       repoDown: false,
       release: null,
       holdPut: false,
-      heldPut: null,
+      heldPuts: [],
     });
     copied = [];
     install();
@@ -410,20 +412,63 @@ describe('the Tasks and Settings dialogs', () => {
     expect(world.generated).toEqual([{ step: 'ask' }, { step: 'answer', answers: ['Yes, keep it.', ''] }, { step: 'ask' }, { step: 'answer', answers: ['', ''] }]);
   });
 
+  async function releaseNewest(): Promise<void> {
+    const waiting = world.heldPuts.splice(0).reverse();
+    for (const release of waiting) await fire(release);
+  }
+
   it('waits for the last list edit to be saved before generating or saving files', async () => {
     world.doc = freshDoc([PACKAGE_CUT], { tasks: THREE, brief: BRIEF });
-    world.outcomes = [{ reply: SLICES }];
+    world.outcomes = ['hang'];
     world.holdPut = true;
     await mount();
     await openTasks();
     await click(named('Delete 005-add-core.md'));
-    await settled(() => expect(world.heldPut).not.toBeNull());
+    await settled(() => expect(world.heldPuts).toHaveLength(1));
+    await settled(() => expect(maybe('[aria-label="Delete 005-move-b.md"]')).not.toBeNull());
     await click(button('Save as files'));
+    await click(named('Delete 005-move-b.md'));
+    await settled(() => expect(slices()).toEqual(['005-cut-app-domain.md']));
     await click(button('Just write it'));
     expect([world.files, world.generated]).toEqual([[], []]);
-    await fire(() => world.heldPut?.());
+    await releaseNewest();
+    expect([world.files, world.generated]).toEqual([[], []]);
+    expect(world.heldPuts).toHaveLength(1);
+    await releaseNewest();
     await settled(() => expect(world.generated).toEqual([{ step: 'write', answers: [] }]));
-    expect(world.files.map(doc => doc.tasks?.map(task => task.file))).toEqual([['005-move-b.md', '006-cut-app-domain.md']]);
+    const kept = ['005-cut-app-domain.md'];
+    expect(world.files.map(doc => doc.tasks?.map(task => task.file))).toEqual([kept]);
+    expect(storedDoc().tasks?.map(task => task.file)).toEqual(kept);
+    await fire(() => world.release?.({ status: 200, body: { error: 'cancelled', ran: RAN } }));
+    await settled(() => expect(panelText()).toContain('cancelled'));
+    await remount();
+    await openTasks();
+    expect(slices()).toEqual(kept);
+    expect(field('Brief').value).toBe(BRIEF);
+  });
+
+  it('an older refused save does not put back slices a later edit removed', async () => {
+    world.doc = freshDoc([PACKAGE_CUT], { tasks: THREE, brief: BRIEF });
+    world.holdPut = true;
+    await mount();
+    await openTasks();
+    await click(named('Delete 005-add-core.md'));
+    await settled(() => expect(world.heldPuts).toHaveLength(1));
+    await settled(() => expect(maybe('[aria-label="Delete 005-move-b.md"]')).not.toBeNull());
+    await click(named('Delete 005-move-b.md'));
+    await settled(() => expect(slices()).toEqual(['005-cut-app-domain.md']));
+    world.refusePut = true;
+    await releaseNewest();
+    await settled(() => expect(world.heldPuts).toHaveLength(1));
+    expect(slices()).toEqual(['005-cut-app-domain.md']);
+    expect(document.body.textContent).not.toContain('bad plan');
+    world.refusePut = false;
+    await releaseNewest();
+    await settled(() => expect(storedDoc().tasks?.map(task => task.file)).toEqual(['005-cut-app-domain.md']));
+    expect(slices()).toEqual(['005-cut-app-domain.md']);
+    await remount();
+    await openTasks();
+    expect(slices()).toEqual(['005-cut-app-domain.md']);
   });
 
   it('Just write it with questions pending sends the typed answers', async () => {
