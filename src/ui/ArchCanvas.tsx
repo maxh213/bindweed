@@ -114,12 +114,13 @@ const GREEN = '#16a34a';
 const RED = '#dc2626';
 const ROW_COLORS: Record<NonNullable<RowInk['converge']>, string> = { done: GREEN, contradicted: RED };
 
-function editable(planning: Planning | null): boolean {
-  return planning !== null && planning.converge === null;
+function editable(planning: Planning | null): planning is Planning {
+  if (planning === null) return false;
+  return planning.converge === null;
 }
 
 function drawIfEditable(planning: Planning | null, connection: Connection): void {
-  if (planning === null || planning.converge !== null) return;
+  if (!editable(planning)) return;
   planning.onDrawEdge(connection.source, connection.target);
 }
 
@@ -363,7 +364,7 @@ function rowDrop(event: DragEvent<HTMLElement>, id: string, planning: Planning):
 
 function boxDropProps(data: BoxData, id: string): { onDragOver?: (event: DragEvent<HTMLElement>) => void; onDrop?: (event: DragEvent<HTMLElement>) => void } {
   const planning = data.planning;
-  if (planning === null || planning.converge !== null || data.kind !== 'package') return {};
+  if (!editable(planning) || data.kind !== 'package') return {};
   return {
     onDragOver: event => event.preventDefault(),
     onDrop: event => rowDrop(event, id, planning),
@@ -372,7 +373,7 @@ function boxDropProps(data: BoxData, id: string): { onDragOver?: (event: DragEve
 
 function boxMenu(data: BoxData, id: string): ReactNode {
   const planning = data.planning;
-  if (planning === null || planning.converge !== null || !data.selected) return null;
+  if (!editable(planning) || !data.selected) return null;
   return <BoxMenu items={menuItems(data.kind, planning, id)} />;
 }
 
@@ -508,7 +509,7 @@ function ArrowMenu({ x, y, onCut, onNote }: Readonly<{ x: number; y: number; onC
 
 function arrowMenu(data: ArrowData, x: number, y: number): ReactNode {
   const planning = data.planning;
-  if (planning === null || planning.converge !== null || !data.selected) return null;
+  if (!editable(planning) || !data.selected) return null;
   return <ArrowMenu x={x} y={y} onCut={() => planning.onCutEdge(data.from, data.to)} onNote={() => planning.onAddNote({ edge: [data.from, data.to] })} />;
 }
 

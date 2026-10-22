@@ -13,7 +13,7 @@ type Cache = Record<string, CacheEntry>;
 
 type ScanOut = { files: ScannedFile[]; edges: ScanEdge[]; externals: ExternalRef[]; imports: ImportLine[] };
 
-type Store = { file: string; lined: boolean };
+type Store = { file: string; shape: (files: Cache) => unknown };
 
 type Parsed = { imports: RawImport[]; abstract: boolean; functions: RawFunction[] };
 
@@ -43,14 +43,18 @@ function unlined(imp: RawImport): Omit<RawImport, 'line'> {
   return { specifier: imp.specifier, typeOnly: imp.typeOnly, heritage: imp.heritage };
 }
 
-function storedEntry(entry: CacheEntry, lined: boolean): unknown {
-  return lined ? entry : { ...entry, imports: entry.imports.map(unlined) };
+function keptLines(files: Cache): Cache {
+  return files;
+}
+
+function droppedLines(files: Cache): unknown {
+  const entries = Object.entries(files).map(([path, entry]) => [path, { ...entry, imports: entry.imports.map(unlined) }]);
+  return Object.fromEntries(entries);
 }
 
 function writeCache(store: Store, files: Cache): void {
-  const stored = Object.fromEntries(Object.entries(files).map(([path, entry]) => [path, storedEntry(entry, store.lined)]));
   mkdirSync(dirname(store.file), { recursive: true });
-  writeFileSync(store.file, JSON.stringify({ version: 2, files: stored }));
+  writeFileSync(store.file, JSON.stringify({ version: 2, files: store.shape(files) }));
 }
 
 function stampOf(root: string, path: string): { mtimeMs: number; size: number } | undefined {
@@ -139,9 +143,9 @@ function scanWith(root: string, paths: string[], store: Store): WorktreeScan {
 }
 
 export function scanRepo(root: string, paths: string[]): ScanResult {
-  return scanWith(root, paths, { file: join(root, '.bindweed', 'cache', 'scan.json'), lined: false }).scan;
+  return scanWith(root, paths, { file: join(root, '.bindweed', 'cache', 'scan.json'), shape: droppedLines }).scan;
 }
 
 export function scanWorktree(root: string, slug: string, worktree: string, paths: string[]): WorktreeScan {
-  return scanWith(worktree, paths, { file: join(root, '.bindweed', 'cache', slug, 'scan.json'), lined: true });
+  return scanWith(worktree, paths, { file: join(root, '.bindweed', 'cache', slug, 'scan.json'), shape: keptLines });
 }

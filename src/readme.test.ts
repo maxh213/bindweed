@@ -9,22 +9,14 @@ function routesTable(text: string): string {
 }
 
 describe('README routes', () => {
-  it('The README lists the launch route beside the old ones', () => {
+  it.each([
+    ['The README lists the launch route beside the old ones', '| `/api/plans/<slug>/launch` | live |', '| `/api/plans/<slug>/generate` | live |'],
+    ['The README lists /api/converge beside the old ones', '| `/api/converge` | live |', '| `/api/runs` | live |'],
+    ['The README lists /api/runs beside the old ones', '| `/api/runs` | live |', '| `/api/repo` | live |'],
+  ])('%s', (_title, left, right) => {
     const table = routesTable(readFileSync(join(process.cwd(), 'README.md'), 'utf8'));
-    expect(table).toContain('| `/api/plans/<slug>/launch` | live |');
-    expect(table).toContain('| `/api/plans/<slug>/generate` | live |');
-  });
-
-  it('The README lists /api/converge beside the old ones', () => {
-    const table = routesTable(readFileSync(join(process.cwd(), 'README.md'), 'utf8'));
-    expect(table).toContain('| `/api/converge` | live |');
-    expect(table).toContain('| `/api/runs` | live |');
-  });
-
-  it('The README lists /api/runs beside the old ones', () => {
-    const table = routesTable(readFileSync(join(process.cwd(), 'README.md'), 'utf8'));
-    expect(table).toContain('| `/api/runs` | live |');
-    expect(table).toContain('| `/api/repo` | live |');
+    expect(table).toContain(left);
+    expect(table).toContain(right);
   });
 
   it('The README lists the contract route beside the old ones', () => {

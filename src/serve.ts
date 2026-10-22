@@ -227,8 +227,8 @@ async function readyScan(app: App, graphs: GraphHolder): Promise<ScanResult> {
   return graphs.scan;
 }
 
-function convergeQueryOf(url: URL): string | null {
-  const slug = url.searchParams.get('converge');
+function querySlug(url: URL, name: string): string | null {
+  const slug = url.searchParams.get(name);
   return slug === null || slug === '' ? null : slug;
 }
 
@@ -258,7 +258,7 @@ async function worktreeScan(app: App, found: Extract<ConvergeCase, { ok: true }>
 }
 
 async function sourceFor(app: App, url: URL, browsed: () => Promise<ScanResult>): Promise<Source> {
-  const slug = convergeQueryOf(url);
+  const slug = querySlug(url, 'converge');
   if (slug === null) return { ok: true, root: app.repoRoot, scan: await browsed() };
   const found = await runCase(app, slug);
   if (!found.ok) return found;
@@ -296,13 +296,8 @@ function healthOf(root: string, scan: ScanResult) {
 
 type PlanLoad = { ok: true; doc: PlanDoc } | { ok: false };
 
-function planQueryOf(url: URL): string | null {
-  const plan = url.searchParams.get('plan');
-  return plan === null || plan === '' ? null : plan;
-}
-
 async function loadPlan(app: App, url: URL): Promise<PlanLoad | null> {
-  const slug = planQueryOf(url);
+  const slug = querySlug(url, 'plan');
   if (slug === null) return null;
   if (!PLAN_SLUG_PATTERN.test(slug)) return { ok: false };
   const doc = await readPlan(app.repoRoot, slug);

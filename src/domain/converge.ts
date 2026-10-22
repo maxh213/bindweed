@@ -44,7 +44,7 @@ function plannedOf(ctx: Ctx, index: number, path: string): string {
   return plannedPath(ctx.edits, ctx.stale, index, path);
 }
 
-function bothPaths(ctx: Ctx, index: number, path: string): string[] {
+function storedAndPlanned(ctx: Ctx, index: number, path: string): string[] {
   return [path, plannedOf(ctx, index, path)];
 }
 
@@ -68,25 +68,30 @@ function spotTexts(spots: Spot[]): string[] {
   return [...new Set(spots.toSorted(bySpot).map(spotText))];
 }
 
-function fromSpots(spots: Spot[]): Verdict {
+function spotsVerdict(spots: Spot[]): Verdict {
   return { status: spots.length === 0 ? 'done' : 'not yet', spots };
 }
 
-function flagged(done: boolean): Verdict {
+function doneIf(done: boolean): Verdict {
   return done ? { status: 'done', spots: [] } : NOT_YET;
 }
 
-function leftBehind(ctx: Ctx, old: string, planned: string): boolean {
+function oldPathRemains(ctx: Ctx, old: string, planned: string): boolean {
   return planned !== old && ctx.files.has(old);
 }
 
-function fateCovers(ctx: Ctx, old: string, planned: string): Place {
-  return ctx.fated.has(old) || ctx.fated.has(planned) ? 'in' : 'lost';
+function fateCovers(ctx: Ctx, old: string, planned: string): boolean {
+  return ctx.fated.has(old) || ctx.fated.has(planned);
+}
+
+function missingPlace(ctx: Ctx, old: string, planned: string): Place {
+  if (ctx.files.has(old)) return 'out';
+  return fateCovers(ctx, old, planned) ? 'in' : 'lost';
 }
 
 function placeOf(ctx: Ctx, old: string, planned: string): Place {
-  if (ctx.files.has(planned)) return leftBehind(ctx, old, planned) ? 'out' : 'in';
-  return ctx.files.has(old) ? 'out' : fateCovers(ctx, old, planned);
+  if (ctx.files.has(planned)) return oldPathRemains(ctx, old, planned) ? 'out' : 'in';
+  return missingPlace(ctx, old, planned);
 }
 
 function coveredStatus(places: Place[]): ConvergeStatus {
@@ -113,8 +118,8 @@ function pairMatches(ends: string[][], imp: ImportLine): boolean {
 }
 
 function cutVerdict(ctx: Ctx, edit: CutEdit, index: number): Verdict {
-  const pairs = edit.files.map(pair => pair.map(path => bothPaths(ctx, index, path)));
-  return fromSpots(ctx.imports.filter(imp => pairs.some(ends => pairMatches(ends, imp))).map(spotOf));
+  const pairs = edit.files.map(pair => pair.map(path => storedAndPlanned(ctx, index, path)));
+  return spotsVerdict(ctx.imports.filter(imp => pairs.some(ends => pairMatches(ends, imp))).map(spotOf));
 }
 
 function inAny(nodes: string[], path: string): boolean {
@@ -126,14 +131,14 @@ function addJoins(imp: ImportLine, from: string[], to: string[]): boolean {
 }
 
 function addVerdict(ctx: Ctx, edit: AddEdit, index: number): Verdict {
-  const from = bothPaths(ctx, index, edit.from);
-  const to = bothPaths(ctx, index, edit.to);
-  return flagged(ctx.imports.some(imp => addJoins(imp, from, to)));
+  const from = storedAndPlanned(ctx, index, edit.from);
+  const to = storedAndPlanned(ctx, index, edit.to);
+  return doneIf(ctx.imports.some(imp => addJoins(imp, from, to)));
 }
 
 function createVerdict(ctx: Ctx, edit: CreatePackageEdit, index: number): Verdict {
   const dir = plannedOf(ctx, index, edit.path);
-  return flagged([...ctx.files].some(path => path.startsWith(`${dir}/`)));
+  return doneIf([...ctx.files].some(path => path.startsWith(`${dir}/`)));
 }
 
 function firstScanned(ctx: Ctx, paths: string[]): string | undefined {
@@ -143,14 +148,14 @@ function firstScanned(ctx: Ctx, paths: string[]): string | undefined {
   return undefined;
 }
 
-function present(ctx: Ctx, paths: string[]): boolean {
+function anyScanned(ctx: Ctx, paths: string[]): boolean {
   return firstScanned(ctx, paths) !== undefined;
 }
 
 function deleteVerdict(ctx: Ctx, file: string, index: number): Verdict {
-  const paths = bothPaths(ctx, index, file);
-  if (present(ctx, paths)) return NOT_YET;
-  return fromSpots(ctx.imports.filter(imp => paths.includes(imp.to)).map(spotOf));
+  const paths = storedAndPlanned(ctx, index, file);
+  if (anyScanned(ctx, paths)) return NOT_YET;
+  return spotsVerdict(ctx.imports.filter(imp => paths.includes(imp.to)).map(spotOf));
 }
 
 function formerImporters(ctx: Ctx, edit: FoldEdit): string[] {
@@ -166,7 +171,7 @@ function keptImports(ctx: Ctx, found: string, folded: string[], into: string[]):
 }
 
 function missingImporter(ctx: Ctx, planned: string, importer: string): Spot[] {
-  return fateCovers(ctx, importer, planned) === 'in' ? [] : [bare(planned)];
+  return fateCovers(ctx, importer, planned) ? [] : [bare(planned)];
 }
 
 function importerSpots(ctx: Ctx, index: number, importer: string, folded: string[], into: string[]): Spot[] {
@@ -177,10 +182,10 @@ function importerSpots(ctx: Ctx, index: number, importer: string, folded: string
 }
 
 function foldVerdict(ctx: Ctx, edit: FoldEdit, index: number): Verdict {
-  const folded = bothPaths(ctx, index, edit.file);
-  if (present(ctx, folded)) return NOT_YET;
-  const into = bothPaths(ctx, index, edit.into);
-  return fromSpots(formerImporters(ctx, edit).flatMap(importer => importerSpots(ctx, index, importer, folded, into)));
+  const folded = storedAndPlanned(ctx, index, edit.file);
+  if (anyScanned(ctx, folded)) return NOT_YET;
+  const into = storedAndPlanned(ctx, index, edit.into);
+  return spotsVerdict(formerImporters(ctx, edit).flatMap(importer => importerSpots(ctx, index, importer, folded, into)));
 }
 
 function fateVerdict(ctx: Ctx, edit: FateEdit, index: number): Verdict {
@@ -217,7 +222,7 @@ function fatedFiles(edits: PlanEdit[]): Set<string> {
 
 type Links = Map<string, string[]>;
 
-function linked(imports: ImportLine[], from: (imp: ImportLine) => string, to: (imp: ImportLine) => string): Links {
+function edgesBy(imports: ImportLine[], from: (imp: ImportLine) => string, to: (imp: ImportLine) => string): Links {
   const links: Links = new Map();
   for (const imp of imports) {
     const list = links.get(from(imp)) ?? [];
@@ -227,27 +232,27 @@ function linked(imports: ImportLine[], from: (imp: ImportLine) => string, to: (i
   return links;
 }
 
-function finish(node: string, out: Links, seen: Set<string>, order: string[]): void {
+function postOrder(node: string, forward: Links, seen: Set<string>, order: string[]): void {
   if (seen.has(node)) return;
   seen.add(node);
-  for (const next of out.get(node) ?? []) finish(next, out, seen, order);
+  for (const next of forward.get(node) ?? []) postOrder(next, forward, seen, order);
   order.push(node);
 }
 
-function claim(node: string, into: Links, owner: Map<string, string>, root: string): void {
+function assign(node: string, backward: Links, owner: Map<string, string>, root: string): void {
   if (owner.has(node)) return;
   owner.set(node, root);
-  for (const prev of into.get(node) ?? []) claim(prev, into, owner, root);
+  for (const prev of backward.get(node) ?? []) assign(prev, backward, owner, root);
 }
 
 function cycleOwners(imports: ImportLine[]): Map<string, string> {
-  const out = linked(imports, imp => imp.from, imp => imp.to);
-  const into = linked(imports, imp => imp.to, imp => imp.from);
+  const forward = edgesBy(imports, imp => imp.from, imp => imp.to);
+  const backward = edgesBy(imports, imp => imp.to, imp => imp.from);
   const order: string[] = [];
   const seen = new Set<string>();
-  for (const node of out.keys()) finish(node, out, seen, order);
+  for (const node of forward.keys()) postOrder(node, forward, seen, order);
   const owner = new Map<string, string>();
-  for (const node of order.toReversed()) claim(node, into, owner, node);
+  for (const node of order.toReversed()) assign(node, backward, owner, node);
   return owner;
 }
 

@@ -273,7 +273,8 @@ function mergedText(body: unknown): string {
 }
 
 function cruise(dir: string): { status: number | null; stdout: string } {
-  const run = spawnSync(process.execPath, [DEPCRUISE, '--config', CRUISER, 'src'], { cwd: dir, encoding: 'utf8' });
+  const env = { ...process.env, FORCE_COLOR: '0' };
+  const run = spawnSync(process.execPath, [DEPCRUISE, '--config', CRUISER, 'src'], { cwd: dir, encoding: 'utf8', env });
   return { status: run.status, stdout: run.stdout };
 }
 

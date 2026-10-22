@@ -249,56 +249,56 @@ function pageVisible(): boolean {
   return document.visibilityState === 'visible';
 }
 
-function pace(client: QueryClient): boolean {
+function fetchesInFlight(client: QueryClient): boolean {
   return client.isFetching() > 0;
 }
 
 type Watch = { live: boolean; busy: boolean | null; timer?: ReturnType<typeof setTimeout>; stop: () => void };
 
-function armTimer(client: QueryClient, watch: Watch, refresh: () => Promise<void>): void {
+function scheduleRefresh(client: QueryClient, watch: Watch, refresh: () => Promise<void>): void {
   watch.timer = setTimeout(() => {
     watch.busy = null;
-    void refresh().then(() => armWatch(client, watch, refresh));
+    void refresh().then(() => syncWatch(client, watch, refresh));
   }, CONVERGE_POLL_MS);
 }
 
-function armSettled(client: QueryClient, watch: Watch, refresh: () => Promise<void>): void {
+function armWhenIdle(client: QueryClient, watch: Watch, refresh: () => Promise<void>): void {
   if (!watch.live) return;
-  if (pace(client)) return;
+  if (fetchesInFlight(client)) return;
   clearTimeout(watch.timer);
-  armTimer(client, watch, refresh);
+  scheduleRefresh(client, watch, refresh);
 }
 
-const clockSettleTurns = 100;
+const SETTLE_TURNS = 100;
 
-function afterTurns(left: number, done: () => void): void {
+function afterImmediateTurns(left: number, done: () => void): void {
   if (left > 0) {
-    setImmediate(() => afterTurns(left - 1, done));
+    setImmediate(() => afterImmediateTurns(left - 1, done));
     return;
   }
   done();
 }
 
-function schedulePoll(client: QueryClient, watch: Watch, refresh: () => Promise<void>): void {
+function scheduleAfterSettle(client: QueryClient, watch: Watch, refresh: () => Promise<void>): void {
   if (typeof setImmediate !== 'function') {
-    armSettled(client, watch, refresh);
+    armWhenIdle(client, watch, refresh);
     return;
   }
-  afterTurns(clockSettleTurns, () => armSettled(client, watch, refresh));
+  afterImmediateTurns(SETTLE_TURNS, () => armWhenIdle(client, watch, refresh));
 }
 
-function stillBusy(watch: Watch, busy: boolean): boolean {
+function stillFetching(watch: Watch, busy: boolean): boolean {
   return busy && watch.busy === true;
 }
 
-function armWatch(client: QueryClient, watch: Watch, refresh: () => Promise<void>): void {
+function syncWatch(client: QueryClient, watch: Watch, refresh: () => Promise<void>): void {
   if (!watch.live) return;
-  const busy = pace(client);
-  if (stillBusy(watch, busy)) return;
+  const busy = fetchesInFlight(client);
+  if (stillFetching(watch, busy)) return;
   watch.busy = busy;
   clearTimeout(watch.timer);
   if (busy) return;
-  schedulePoll(client, watch, refresh);
+  scheduleAfterSettle(client, watch, refresh);
 }
 
 function pidAliveOf(verdict: Verdict): boolean {
@@ -318,7 +318,7 @@ function useVisible(hidden: { current: boolean }): boolean {
   useEffect(() => {
     const update = (): void => {
       const now = pageVisible();
-      hidden.current ||= !now;
+      if (!now) hidden.current = true;
       setVisible(now);
     };
     document.addEventListener('visibilitychange', update);
@@ -330,14 +330,13 @@ function useVisible(hidden: { current: boolean }): boolean {
 function beginWatch(client: QueryClient, watch: Watch, hidden: { current: boolean }, refresh: () => Promise<void>): void {
   const wasHidden = hidden.current;
   hidden.current = false;
-  if (wasHidden) void refresh().then(() => armWatch(client, watch, refresh));
-  else armWatch(client, watch, refresh);
+  if (wasHidden) void refresh().then(() => syncWatch(client, watch, refresh));
+  else syncWatch(client, watch, refresh);
 }
 
 function startWatch(client: QueryClient, hidden: { current: boolean }, refresh: () => Promise<void>): Watch {
-  const watch: Watch = { live: true, busy: null, stop: () => undefined };
-  watch.stop();
-  watch.stop = client.getQueryCache().subscribe(() => armWatch(client, watch, refresh));
+  const watch = { live: true, busy: null } as Watch;
+  watch.stop = client.getQueryCache().subscribe(() => syncWatch(client, watch, refresh));
   beginWatch(client, watch, hidden, refresh);
   return watch;
 }
