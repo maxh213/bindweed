@@ -51,7 +51,7 @@ Paste the printed `export` line into the second terminal.
    **Expect:** the address bar reads `http://127.0.0.1:5000/#at=src&plan=gate`. The toolbar has `Tasks`, then `Launch`, then `⚙` (Settings), then `Converge`. There is no header `0 of 4 edits done`. The cut row shows `no such file src/app/c.ts`, because the browsed repository has no `c.ts`. `app` reads `2 files`.
 
 2. Click `Converge`, the toolbar button just after `⚙` (Settings).
-   **Expect:** the address bar reads `http://127.0.0.1:5000/#at=src&plan=gate&converge=gate`. The button now reads `Leave`. `Undo`, `Redo` and `Remove` are greyed out. The change list is this, and the `○` marks are grey, not green:
+   **Expect:** the address bar reads `http://127.0.0.1:5000/#at=src&plan=gate&converge=gate`. The button now reads `Leave`. `Undo`, `Redo`, every `Remove`, the `Plan` select, `New plan…`, `Delete plan`, `Contract`, `Tasks` and `Launch` are greyed out. There is no `Canvas` button, no `Menu` on any box or arrow, and no ask box. `Now`, `Planned`, `⚙` and `Rescan` still work. The change list is this, and the `○` marks are grey, not green:
 
 ```
 Changes
@@ -76,6 +76,8 @@ Rules
 ```
 
    The canvas at `src` has `app` listing `a.ts`, `b.ts` (struck through) and `c.ts`, `infra` listing `db.ts`, `core` listing `model.ts`, and `ports` reading `0 files`. The `model.ts` row is not green. A grey dashed line with a grey `✂` joins `app` and `infra`. Nothing is fetched from the worktree's own `.bindweed`.
+   Drag from the bottom edge of `domain` to `app`, then drag the `a.ts` row onto `infra`.
+   **Expect:** no new arrow, no new row in the change list, still four edits. `cmp "$QA/plan.json" "$QA/layered/.bindweed/plans/gate.json" && echo plan` prints `plan`.
 
 3. In the second terminal run `mkdir -p "$QA/held" && mv "$WT/src/domain/model.ts" "$QA/held/model.ts"`. Do not reload.
    **Expect:** within 25 seconds the move's mark is a red `✗`, the header is still `0 of 4 edits done · 0 of 2 rules hold`, and a red dashed `model.ts` is drawn under `core`.

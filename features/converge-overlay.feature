@@ -31,12 +31,15 @@ Feature: watch a run converge on the plan
   its old path or its planned path; with no such fate the edit is
   contradicted. Else an edit is done when every covered file is in place,
   and not yet otherwise. add-edge, cut-edge, create-package and fate are
-  never contradicted. The planned path of a path is that path carried
-  through the edits after the one being checked that are non-stale on the
-  browsed scan, the way cutEndLater carries a cut end. Edits before it
-  never carry, so a cut listed after the move of one of its files is stale
-  and is checked at its stored paths only. While Converge is on, the
-  plan's edits do not change.
+  never contradicted. The planned path of a path, for the edit being
+  checked, is pathAfter of that edit applied first, so a move's file
+  becomes its destination and a cut's end stays as it is, then carried
+  through the edits after it that are non-stale on the browsed scan, the
+  way cutEndLater carries a cut end. A fold's own file is the exception:
+  pathAfter drops it, so its planned path skips that first step. Edits
+  before the checked one never carry, so a cut listed after the move of
+  one of its files is stale and is checked at its stored paths only.
+  While Converge is on, the page offers no way to change the plan.
 
   The worktree's files are listed as the browsed repository's are: git
   ls-files --cached --others --exclude-standard run in the worktree, kept
@@ -88,9 +91,10 @@ Feature: watch a run converge on the plan
     the same file, or both lie on one cycle of internal imports. A rule
     breaks on an import only when every restriction it has matches. The
     cycle graph does not include a dangling import.
-    A cut remains while any of its pairs, at the stored paths or the
-    planned paths (the same carry for both ends), still has an import, resolved or dangling, and remain
-    lists those import lines. An add-edge is done when a resolved import
+    A cut remains while any of its pairs still has an import, resolved or
+    dangling, and remain lists those import lines. Each end matches on its
+    own, at its stored path or its planned path, so an import from the
+    stored "from" to the planned "to" still remains. An add-edge is done when a resolved import
     runs from its from node, or that node carried forward, to its to node
     the same way: a file matches a node when the path equals the node or
     starts with "<node>/". A create-package is done when a scanned file
@@ -102,11 +106,15 @@ Feature: watch a run converge on the plan
     path nor its planned path and every former importer imports into, at
     into or into's planned path. A former importer is a browsed-scan file,
     other than into, with an edge to the folded file; a worktree file the
-    browsed scan does not have is never one, whatever it imports. Once the
-    file is gone, a former importer that does not import into is named "<file>:<line>" for each
-    import it still has of the folded file's old or planned path, or as
-    the path alone, with no colon, when it has none. A note is "note" and
-    has no remain.
+    browsed scan does not have is never one, whatever it imports. A former
+    importer is looked for at its planned path, then at its browsed path.
+    One at neither path counts as importing into when some fate's file is
+    one of those two paths; otherwise it is named by its planned path
+    alone. Once the file is gone, a found former importer that does not
+    import into is named "<file>:<line>", <file> where it was found, for
+    each import it still has of the folded file's old or planned path, or
+    as the path alone, with no colon, when it has none. A note is "note"
+    and has no remain.
     A missing slug parameter answers 400 {"error":"missing slug"}. An
     unknown slug, or one that fails ^[a-z0-9][a-z0-9-]*$, answers 404
     {"error":"no such run"}. A run whose plan is missing or not a plan
@@ -162,6 +170,17 @@ Feature: watch a run converge on the plan
       When I send "GET /api/converge?slug=gate" with the token
       Then edit 0 is "done" and the header is "2 of 2 edits done · 0 of 0 rules hold"
 
+    Scenario: A cut matches each end on its own, so a half-moved import still remains
+      Given the plan's edits are only the cut {"kind":"cut-edge","from":"src/app/b.ts","to":"src/infra/db.ts","files":[["src/app/b.ts","src/infra/db.ts"]]}, then {"kind":"move-file","file":"src/app/b.ts","to":"src/domain"}, then {"kind":"move-file","file":"src/infra/db.ts","to":"src/core"}, and it has no contract
+      And "src/infra/db.ts" is moved to "src/core/db.ts"
+      And line 2 of "src/app/b.ts" is "import { query } from '../core/db';"
+      When I send "GET /api/converge?slug=gate" with the token
+      Then edit 0 is "not yet" and its remain is ["src/app/b.ts:2"]
+      And edit 1 is "not yet", edit 2 is "done", and the header is "1 of 3 edits done · 0 of 0 rules hold"
+      Given line 2 of "src/app/b.ts" is "export const moved = 1;"
+      When I send "GET /api/converge?slug=gate" with the token
+      Then edit 0 is "done" and has no remain
+
     Scenario: A stopped run still answers
       Given the run's pid is dead
       When I send "GET /api/converge?slug=gate" with the token
@@ -195,6 +214,20 @@ Feature: watch a run converge on the plan
       Given "src/app/b.ts" is "import { Model } from '../domain/model';\nexport const b = 1;\n"
       When I send "GET /api/converge?slug=gate" with the token
       Then the edit is "done" and has no remain, though "src/app/c.ts" still imports "../infra/db"
+
+    Scenario: A fold looks for a former importer at its planned path, and a deleted one counts
+      Given the plan's edits are only {"kind":"fate","file":"src/infra/db.ts","fate":"fold","into":"src/domain/model.ts"}, then {"kind":"move-file","file":"src/app/b.ts","to":"src/domain"}, then {"kind":"fate","file":"src/app/a.ts","fate":"delete"}, and it has no contract
+      And "src/infra/db.ts" is removed and "src/app/b.ts" is moved, unchanged, to "src/domain/b.ts"
+      When I send "GET /api/converge?slug=gate" with the token
+      Then edit 0 is "not yet" and its remain is ["src/domain/b.ts:2"], since "src/app/a.ts" imports into through "@domain/model"
+      And the header is "1 of 3 edits done · 0 of 0 rules hold"
+      Given "src/app/a.ts" is removed and "src/domain/b.ts" is "import { Model } from './model';\nexport const b = 1;\n"
+      When I send "GET /api/converge?slug=gate" with the token
+      Then edit 0 is "done" and has no remain, and the header is "3 of 3 edits done · 0 of 0 rules hold"
+      Given "src/domain/b.ts" is removed
+      When I send "GET /api/converge?slug=gate" with the token
+      Then edit 0 is "not yet" and its remain is ["src/domain/b.ts"]
+      And edit 1 is "contradicted" and the header is "1 of 3 edits done · 0 of 0 rules hold"
 
     Scenario Outline: The other edits, against a fresh worktree
       Given the plan's only edit is <edit> and it has no contract
@@ -263,7 +296,11 @@ Feature: watch a run converge on the plan
     POST /api/rescan?converge=<slug> answers {"files","ms"} for the worktree
     scan and is otherwise the rescan of features/layered-package-view.feature.
     The same errors as GET /api/converge apply, and a bad one does not scan.
-    Without the parameter every one of these routes is unchanged.
+    Without the parameter every one of these routes is unchanged. Unlike
+    the browsed scan, no worktree scan is held between requests: every
+    converge request, GET /api/converge included, scans the worktree again
+    through the slug cache, so a change in the worktree shows in the next
+    answer with no rescan.
     The worktree scan is cached only at
     "<root>/.bindweed/cache/<slug>/scan.json", never under the worktree.
     The file is {"version":2,"files":{<path>:<entry>}}, and an entry has
@@ -289,6 +326,14 @@ Feature: watch a run converge on the plan
       When I send "GET /api/pairs?from=src/app&to=src/infra&at=src" with the token
       Then the pairs are ["src/app/a.ts","src/infra/db.ts"] and ["src/app/b.ts","src/infra/db.ts"]
       And "/tmp/qa/converge-wt/.bindweed" does not exist
+
+    Scenario: A converge graph sees a worktree change with no rescan
+      Given "GET /api/graph?at=src&plan=gate&converge=gate" has been sent with the token and "src/ports" has files 0
+      And "src/ports/port.ts" is "export const port = 1;\n"
+      When I send "GET /api/graph?at=src&plan=gate&converge=gate" with the token
+      Then "src/ports" has files 1
+      When I send "GET /api/detail?id=src/ports&at=src&converge=gate" with the token
+      Then the body names "src/ports/port.ts"
 
     Scenario: A warm cache entry is reused until the file's stamp changes
       Given "GET /api/graph?at=src" has been sent with the token and the browsed ".bindweed/cache/scan.json" bytes are noted
@@ -329,20 +374,40 @@ Feature: watch a run converge on the plan
     or rgb(220, 38, 38) for those three. remain and breaks are
     "ul.converge-remain" under the row, and the rules sit in
     "ul.converge-rules" using the comment as their text. A rule row starts
-    with the same mark, "✓" when it holds and "○" when it does not. Undo, Redo and
-    Remove are disabled, and a drop does not change the plan's bytes.
-    On the canvas a not-yet mark stays as in 005 and 006, with no
-    data-converge. A done cut is drawn even when the graph calls that edit
-    stale, so the tick has a marker to colour. A done move paints the row of its planned path
-    data-converge="done" and computed color rgb(22, 163, 74). A done cut
-    sets data-converge="done" on its "g.cutmark"; the line's stroke and the
-    "✂" fill are "#16a34a", not "#94a3b8" and "#64748b". A done
-    create-package sets data-converge="done" on the box "[data-id=<path>]"
-    and its computed border-top-color is rgb(22, 163, 74). A contradicted
-    move draws a dashed row of the file at its planned path,
-    data-ghost="true" and data-converge="contradicted", computed color
-    rgb(220, 38, 38), inside the planned package even when that package is
-    not in the scan. While the hash has converge, the toolbar button reads
+    with the same mark, "✓" when it holds and "○" when it does not.
+    The page cannot change the plan while the hash has converge. Disabled:
+    the "Plan" select, "New plan…", "Delete plan", "Contract", "Tasks",
+    "Launch", Undo, Redo and every Remove. Absent: the "Canvas" menu with
+    "New package", every box and arrow "Menu" (so no Rename, Split, Merge,
+    Delete, Fold into…, Cut or Add note), the "proposals" and "ask"
+    asides, and the box handle's "Draw dependency" label; dragging from a
+    handle draws nothing. A drop of a row on a box or crumb does nothing.
+    "Now", "Planned", "⚙" and "Rescan" still work.
+    On the canvas a not-yet edit keeps what 005 and 006 draw, with no
+    data-converge. Each kind marks the following, and only when it is in
+    the view at the current at. Green is "#16a34a", computed rgb(22, 163,
+    74); red is computed rgb(220, 38, 38).
+    move-file and rename-file: done sets data-converge="done" and a green
+    computed color on the row "[data-path=<planned path>]". Contradicted
+    draws a dashed row at the planned path, data-ghost="true" and
+    data-converge="contradicted", red, inside the planned package even when
+    that package is not in the scan.
+    rename-package, merge-packages, split-package and create-package: done
+    sets data-converge="done" on each destination box "[data-id=<path>]"
+    (the new name, into, each part, or the created path) with a green
+    computed border-top-color. Contradicted draws the red dashed row, as
+    for a move, for each covered file at neither path.
+    cut-edge: a done cut is drawn even when the graph calls that edit
+    stale, so the tick has a marker to colour; its "g.cutmark" gets
+    data-converge="done", and the line's stroke and the "✂" fill are green,
+    not "#94a3b8" and "#64748b".
+    add-edge: done sets data-converge="done" on the arrow
+    "g[data-from][data-to]" between the boxes its carried ends fall in,
+    whether that arrow is the planned one or a scanned one, and its stroke
+    is green, whatever 005 would colour it, cycle red included.
+    fate and note: no converge marker. While a fated file is still scanned
+    its row keeps what 006 draws; once gone there is nothing to colour.
+    While the hash has converge, the toolbar button reads
     "Leave". Leave, and clicking Architecture again after Files or Runs,
     drops the converge key and shows the browsed plan view. A converge
     error shows its error text in the architecture pane, and Leave still
@@ -371,7 +436,11 @@ Feature: watch a run converge on the plan
       And "[data-id='src/ports']" reads "0 files" and has no data-converge
       And "[data-path='src/core/model.ts']" has no data-converge and its computed color is not rgb(22, 163, 74)
       And "[data-path='src/app/b.ts']" has data-fate "delete"
-      And Undo, Redo and Remove are disabled
+      And Undo, Redo, every Remove, "Plan", "New plan…", "Delete plan", "Contract", "Tasks" and "Launch" are disabled
+      And there is no "Canvas" button, no "Menu" button, no "proposals" or "ask" aside, and no "Draw dependency" label
+      When I select the "src/domain" box and drag from its bottom handle to the "src/app" box
+      And I drag the "src/app/a.ts" row onto the "src/infra" box
+      Then the change list still has 4 edit rows and the gate plan's bytes are unchanged
       When I click "Leave"
       Then the hash is "#at=src&plan=gate", there is no converge header, and "src/app" shows 2 files
 
@@ -389,6 +458,18 @@ Feature: watch a run converge on the plan
       And the move's, the cut's and the package's marks are "✓" with computed color rgb(22, 163, 74)
       And the path rule's mark is "✓" and the circular rule's mark is "○"
       And the gate plan's bytes are unchanged
+
+    Scenario: A done add-edge colours its arrow, and a done rename-package its box
+      Given the plan's edits are only {"kind":"add-edge","from":"src/domain","to":"src/app"} then {"kind":"rename-package","from":"src/infra","to":"src/data"}, and it has no contract
+      When I open bindweed at "#at=src&plan=gate&converge=gate"
+      Then "g[data-from='src/domain'][data-to='src/app']" has data-planned "true", no data-converge, and a stroke that is not "#16a34a"
+      And "[data-id='src/data']" has no data-converge
+      Given the worktree's "src/domain/model.ts" starts with "import { a } from '../app/a';\n"
+      And the worktree's "src/infra/db.ts" is moved to "src/data/db.ts"
+      When I click "Rescan"
+      Then the header is "2 of 2 edits done · 0 of 0 rules hold"
+      And "g[data-from='src/domain'][data-to='src/app']" has data-converge "done" and stroke "#16a34a"
+      And "[data-id='src/data']" has data-converge "done" and computed border-top-color rgb(22, 163, 74)
 
     Scenario: The view refreshes while the pid is alive and the tab is visible
       When I open bindweed at "#at=src&plan=gate&converge=gate"
