@@ -35,10 +35,16 @@ Feature: watch a run converge on the plan
   checked, is pathAfter of that edit applied first, so a move's file
   becomes its destination and a cut's end stays as it is, then carried
   through the edits after it that are non-stale on the browsed scan, the
-  way cutEndLater carries a cut end. A fold's own file is the exception:
-  pathAfter drops it, so its planned path skips that first step. Edits
-  before the checked one never carry, so a cut listed after the move of
-  one of its files is stale and is checked at its stored paths only.
+  way cutEndLater carries a cut end. That planned path is the verdict's
+  only. A fold's own file is the exception: pathAfter drops it, so its
+  planned path skips that first step. Edits before the checked one never
+  carry, so a cut listed after the move of one of its files is stale and
+  is checked at its stored paths only. The page is not given those stale
+  reasons, nor the files a rename-package or a merge covers. A canvas
+  marker is carried through every later edit, each treated as non-stale,
+  so it can sit on a path the verdict did not use. A contradicted
+  rename-package, merge or split draws no canvas row; the list's "✗" is
+  its only marker.
   While Converge is on, the page offers no way to change the plan.
 
   The worktree's files are listed as the browsed repository's are: git
@@ -83,7 +89,8 @@ Feature: watch a run converge on the plan
     <rules> is the saved contract's length, 0 when the plan has no contract.
     <holding> counts rules with no breaking import. edits follows the plan,
     each {"index","status","sentence"} plus "remain" only when that list is
-    not empty. status is "done", "not yet", "contradicted" or "note".
+    not empty. An edit does not gain its planned path or its covered
+    paths. status is "done", "not yet", "contradicted" or "note".
     remain is "<file>:<line>" sorted by file then line, the line 1-based.
     A rule is {"name","comment","holds"} plus "breaks", the same strings,
     only when it does not hold. Rules stay in saved order.
@@ -100,9 +107,13 @@ Feature: watch a run converge on the plan
     runs from its from node, or that node carried forward, to its to node
     the same way: a file matches a node when the path equals the node or
     starts with "<node>/". A create-package is done when a scanned file
-    sits inside that directory, at any depth. A markdown file does not
-    count. A delete is done when the file is at neither its path nor its
-    planned path and nothing imports either path; while it is gone but
+    sits inside that directory at any depth, so src/ports/http/port.ts is
+    enough and a direct child is not required. A markdown file is not
+    scanned, so it does not count. A rename or a merge stays not yet
+    while any covered file is still at its old path, even when another
+    covered file is already in place. A delete is done when the file is
+    at neither its path nor its planned path and nothing imports either
+    path; while it is gone but
     imported, remain names those imports. A fold does not look at who
     imports the folded file: it is done when the file is at neither its
     path nor its planned path and every former importer imports into, at
@@ -244,7 +255,9 @@ Feature: watch a run converge on the plan
         | {"kind":"add-edge","from":"src/domain","to":"src/app"} | has "src/domain/model.ts" starting "import { a } from '../app/a';\n" | done | none |
         | {"kind":"rename-file","from":"src/domain/model.ts","to":"entity.ts"} | has "src/domain/entity.ts" and no "src/domain/model.ts" | done | none |
         | {"kind":"rename-package","from":"src/app","to":"src/ui"} | has a.ts and b.ts under "src/ui" and not under "src/app", and "src/app/c.ts" still in place | done | none |
+        | {"kind":"rename-package","from":"src/app","to":"src/ui"} | has "src/ui/a.ts" and not "src/app/a.ts", while "src/app/b.ts" and "src/app/c.ts" stay | not yet | none |
         | {"kind":"rename-package","from":"src/domain","to":"src/core"} | has neither "src/domain/model.ts" nor "src/core/model.ts" | contradicted | none |
+        | {"kind":"create-package","path":"src/ports"} | has "src/ports/http/port.ts" as "export const port = 1;\n" and no other file under "src/ports" | done | none |
         | {"kind":"merge-packages","packages":["src/app","src/domain"],"into":"src/core"} | has "src/core/a.ts", "src/core/b.ts" and "src/core/model.ts", and not the three old paths | done | none |
         | {"kind":"split-package","package":"src/app","parts":[{"name":"read","files":["src/app/a.ts"]},{"name":"write","files":["src/app/b.ts"]}]} | has "src/app/read/a.ts" and "src/app/write/b.ts" and not the two old paths, with "src/app/c.ts" still in place | done | none |
         | {"kind":"note","target":{"node":"src/domain"},"text":"look here"} | is unchanged | note | none |
@@ -295,6 +308,9 @@ Feature: watch a run converge on the plan
   Rule: the canvas reads the worktree and the cache stays under the browsed root
     GET /api/graph, GET /api/detail and GET /api/pairs with converge=<slug>
     build the same body as they would for that worktree, plan and flags.
+    A package detail counts scanned files in "files" and never names
+    them. A file detail, a different id, has that file's id and path, and
+    it is 404 when that scan has no such file.
     POST /api/rescan?converge=<slug> answers {"files","ms"} for the worktree
     scan and is otherwise the rescan of features/layered-package-view.feature.
     The same errors as GET /api/converge apply, and a bad one does not scan.
@@ -322,7 +338,13 @@ Feature: watch a run converge on the plan
       When I send "GET /api/pairs?from=src/app&to=src/infra&at=src&converge=gate" with the token
       Then the pairs are ["src/app/a.ts","src/infra/db.ts"], ["src/app/b.ts","src/infra/db.ts"] and ["src/app/c.ts","src/infra/db.ts"]
       When I send "GET /api/detail?id=src/app&at=src&converge=gate" with the token
-      Then the body names "src/app/c.ts"
+      Then the body has id "src/app" and files 3
+      When I send "GET /api/detail?id=src/app/c.ts&at=src/app&converge=gate" with the token
+      Then the body has id "src/app/c.ts" and path "src/app/c.ts"
+      When I send "GET /api/detail?id=src/app&at=src" with the token
+      Then the body has id "src/app" and files 2
+      When I send "GET /api/detail?id=src/app/c.ts&at=src/app" with the token
+      Then the status is 404
       When I send "GET /api/graph?at=src&plan=gate" with the token
       Then "src/app" has files 3: a.ts, b.ts and the planned model.ts, and there is no node "src/app/c.ts"
       When I send "GET /api/pairs?from=src/app&to=src/infra&at=src" with the token
@@ -335,7 +357,9 @@ Feature: watch a run converge on the plan
       When I send "GET /api/graph?at=src&plan=gate&converge=gate" with the token
       Then "src/ports" has files 1
       When I send "GET /api/detail?id=src/ports&at=src&converge=gate" with the token
-      Then the body names "src/ports/port.ts"
+      Then the body has id "src/ports" and files 1
+      When I send "GET /api/detail?id=src/ports/port.ts&at=src/ports&converge=gate" with the token
+      Then the body has id "src/ports/port.ts" and path "src/ports/port.ts"
 
     Scenario: A warm cache entry is reused until the file's stamp changes
       Given "GET /api/graph?at=src" has been sent with the token and the browsed ".bindweed/cache/scan.json" bytes are noted
@@ -391,23 +415,28 @@ Feature: watch a run converge on the plan
     the view at the current at. Green is "#16a34a", computed rgb(22, 163,
     74); red is computed rgb(220, 38, 38).
     move-file and rename-file: done sets data-converge="done" and a green
-    computed color on the row "[data-path=<planned path>]". Contradicted
-    draws a dashed row at the planned path, data-ghost="true" and
-    data-converge="contradicted", red, inside the planned package's box.
-    When no box for that package is in view, no ghost row and no box are
-    drawn; the list's "✗" is the only marker.
+    computed color on the row "[data-path=<carried path>]". Contradicted
+    draws a dashed row at that same path, data-ghost="true" and
+    data-converge="contradicted", red, inside the box whose id is the
+    path's parent. When that box is not in view, no ghost row and no box
+    are drawn; the list's "✗" is the only marker. The carried path
+    applies this edit, then every later edit, stale or not, so it leaves
+    the verdict's planned path when a later edit is stale.
     rename-package, merge-packages, split-package and create-package: done
     sets data-converge="done" on each destination box "[data-id=<path>]"
-    (the new name, into, each part, or the created path) with a green
-    computed border-top-color. Contradicted draws the red dashed row, as
-    for a move, for each covered file at neither path.
+    (the new name, into, each part, or the created path), that path
+    carried the same way, with a green computed border-top-color.
+    Contradicted draws no row and invents no box. A split's files are on
+    the edit, and it still draws no red row. The list's "✗" is the only
+    marker. create-package is never contradicted.
     cut-edge: a done cut is drawn even when the graph calls that edit
     stale, so the tick has a marker to colour; its "g.cutmark" gets
     data-converge="done", and the line's stroke and the "✂" fill are green,
     not "#94a3b8" and "#64748b".
     add-edge: done sets data-converge="done" on the arrow
-    "g[data-from][data-to]" between the boxes its carried ends fall in,
-    whether that arrow is the planned one or a scanned one, and its stroke
+    "g[data-from][data-to]" between the boxes its ends fall in after every
+    later edit, stale or not, whether that arrow is the planned one or a
+    scanned one, and its stroke
     is green, whatever 005 would colour it, cycle red included.
     fate and note: no converge marker. While a fated file is still scanned
     its row keeps what 006 draws; once gone there is nothing to colour.
@@ -483,6 +512,32 @@ Feature: watch a run converge on the plan
       Then the header is "2 of 2 edits done · 0 of 0 rules hold"
       And "g[data-from='src/domain'][data-to='src/app']" has data-converge "done" and stroke "#16a34a"
       And "[data-id='src/data']" has data-converge "done" and computed border-top-color rgb(22, 163, 74)
+
+    Scenario: A stale later move shifts the canvas mark off the verdict's path
+      Given the plan's edits are only {"kind":"move-file","file":"src/domain/model.ts","to":"src/app"} then {"kind":"move-file","file":"src/app/model.ts","to":"src/nowhere"}, and it has no contract
+      And the worktree's "src/domain/model.ts" is moved to "src/app/model.ts"
+      When I open bindweed at "#at=src&plan=gate&converge=gate"
+      Then the header is "1 of 2 edits done · 0 of 0 rules hold" and the marks are "✓" and "○"
+      And "[data-path='src/app/model.ts']" has no data-converge
+      And there is no "[data-path='src/nowhere/model.ts']" and no box "src/nowhere"
+
+    Scenario: A contradicted rename, merge or split draws no red row
+      Given the plan's only edit is {"kind":"rename-package","from":"src/infra","to":"src/app"} and it has no contract
+      And "src/infra/db.ts" is removed
+      When I open bindweed at "#at=src&plan=gate&converge=gate"
+      Then the header is "0 of 1 edits done · 0 of 0 rules hold" and the only mark is "✗" with computed color rgb(220, 38, 38)
+      And "[data-id='src/app']" has no data-converge, it has no "[data-path='src/app/db.ts']", and no row has data-converge "contradicted"
+      Given the plan's only edit is {"kind":"merge-packages","packages":["src/app","src/domain"],"into":"src/infra"} and it has no contract
+      And "src/infra/db.ts" is copied back from the browsed repository, and "src/app/a.ts", "src/app/b.ts" and "src/domain/model.ts" are removed
+      When I open bindweed at "#at=src&plan=gate&converge=gate"
+      Then the header is "0 of 1 edits done · 0 of 0 rules hold" and the only mark is "✗"
+      And "[data-id='src/infra']" has no data-converge, it has no "[data-path='src/infra/a.ts']", and no row has data-converge "contradicted"
+      Given the plan's only edit is {"kind":"split-package","package":"src/app","parts":[{"name":"read","files":["src/app/a.ts"]},{"name":"write","files":["src/app/b.ts"]}]} and it has no contract
+      And "src/app/a.ts" and "src/app/b.ts" are still gone, "src/domain/model.ts" is copied back from the browsed repository, and "src/app/read/other.ts" is "export const other = 1;\n"
+      When I open bindweed at "#at=src/app&plan=gate&converge=gate"
+      Then the header is "0 of 1 edits done · 0 of 0 rules hold" and the only mark is "✗"
+      And "[data-id='src/app/read']" has no data-converge and contains no "[data-path='src/app/read/a.ts']"
+      And no row has data-converge "contradicted"
 
     Scenario: Now, Planned, the rows and the detail all read the worktree
       When I open bindweed at "#at=src&plan=gate&converge=gate"
