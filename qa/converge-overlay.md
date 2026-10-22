@@ -78,11 +78,14 @@ Rules
    The canvas at `src` has `app` listing `a.ts`, `b.ts` (struck through), `c.ts` and the planned `model.ts`, `infra` listing `db.ts`, `ports` reading `0 files`, and no `domain` box. The `model.ts` row is not green. A grey dashed line with a grey `✂` joins `app` and `infra`. Nothing is fetched from the worktree's own `.bindweed`.
    Click `infra`, then drag from its bottom edge to `app`. Then drag the `a.ts` row onto `infra`.
    **Expect:** no new arrow, no new row in the change list, still four edits. `cmp "$QA/plan.json" "$QA/layered/.bindweed/plans/gate.json" && echo plan` prints `plan`.
+   Click `Now`.
+   **Expect:** the worktree as it is: `app` lists `a.ts`, `b.ts`, `c.ts` and a faint dashed `model.ts`, `domain` lists `model.ts`, and `infra` lists `db.ts`. Click `Planned`.
 
 3. In the second terminal run `mkdir -p "$QA/held" && mv "$WT/src/domain/model.ts" "$QA/held/model.ts"`. Do not reload.
    **Expect:** within 25 seconds the move's mark is a red `✗`, the header is still `0 of 4 edits done · 0 of 2 rules hold`, and a red dashed `model.ts` is drawn in `app`.
    Run `mv "$QA/held/model.ts" "$WT/src/app/model.ts"`.
-   **Expect:** within 25 seconds the header is `1 of 4 edits done · 0 of 2 rules hold`, the move's mark is a green `✓`, and the `model.ts` row in `app` is green. `domain` in the browsed repository is untouched: `test -f "$QA/layered/src/domain/model.ts" && echo kept` prints `kept`.
+   **Expect:** within 25 seconds the header is `1 of 4 edits done · 0 of 2 rules hold`, the move's mark is a green `✓`, and the `model.ts` row in `app` is green. `domain` in the browsed repository is untouched: `test -f "$QA/layered/src/domain/model.ts" && echo kept` prints `kept`. Click `Now`.
+   **Expect:** `app` lists `a.ts`, `b.ts`, `c.ts` and `model.ts`, none dashed, and there is no `domain` box. Click `Planned`.
 
 4. Run:
 
@@ -103,10 +106,11 @@ PY
    **Expect:** within 25 seconds the cut's mark is a green `✓`, nothing is listed under it, and the `✂` and its line are green. The header is `2 of 4 edits done · 1 of 2 rules hold`. The path rule has a `✓` and no lines under it. The circular rule is still `○`.
 
 6. Open the Network panel, filtered to `converge`. Immediately run `mkdir -p "$WT/src/ports" && printf 'export const port = 1;\n' > "$WT/src/ports/port.ts"` and switch the browser to another tab for 25 seconds, then come back.
-   **Expect:** while the other tab is in front, the panel records no `/api/converge` request and no graph request with `converge=gate`. On return, one such pair starts at once. Without `Rescan` and without a reload the header becomes `3 of 4 edits done · 1 of 2 rules hold`, the `ports` box border is green, and `ports` lists `port.ts`.
+   **Expect:** while the other tab is in front, the panel records no `/api/converge` request and no graph request with `converge=gate`. On return, one refresh starts at once: `/api/converge` and the graph requests, every one with `converge=gate`. Without `Rescan` and without a reload the header becomes `3 of 4 edits done · 1 of 2 rules hold`, the `ports` box border is green, and `ports` lists `port.ts`.
 
 7. Run `rm "$WT/src/app/b.ts"`.
-   **Expect:** within 25 seconds the delete stays `○` and the line under it is `src/app/a.ts:1`. The header is `3 of 4 edits done · 2 of 2 rules hold`. Both rules have a `✓`.
+   **Expect:** within 25 seconds the delete stays `○` and the line under it is `src/app/a.ts:1`. The header is `3 of 4 edits done · 2 of 2 rules hold`. Both rules have a `✓`. `app` lists `a.ts`, `c.ts` and `model.ts`, with no `b.ts` row, solid or dashed. Click `Now`.
+   **Expect:** the same three rows in `app` and no dashed `b.ts`. Click `Planned`.
 
 8. Run `kill "$LIVE"`. Wait 25 seconds.
    **Expect:** the header stays `3 of 4 edits done · 2 of 2 rules hold`. A refresh during that wait, if one was already due, does not change the picture. Then run `rm "$WT/src/ports/port.ts"` and watch the Network panel for 25 seconds.
@@ -114,7 +118,7 @@ PY
    **Expect:** the header becomes `2 of 4 edits done · 2 of 2 rules hold` and `ports` reads `0 files` and is not green. The move and the cut stay green. `cmp "$QA/plan.json" "$QA/layered/.bindweed/plans/gate.json" && echo plan` prints `plan`.
 
 9. Click `Leave`.
-   **Expect:** the address bar reads `http://127.0.0.1:5000/#at=src&plan=gate`. There is no converge header and no `✓`. `app` reads `3 files` and does not list `c.ts`. The cut row shows `no such file src/app/c.ts` again. On Planned, `app` lists `model.ts` only as the plan's move and there is no `domain` box. On Now, `domain` lists `model.ts` and `app` lists only `a.ts` and `b.ts`. Switch back to Planned.
+   **Expect:** the address bar reads `http://127.0.0.1:5000/#at=src&plan=gate`. There is no converge header and no `✓`. `app` reads `3 files` and does not list `c.ts`. The cut row shows `no such file src/app/c.ts` again. On Planned, `app` lists `model.ts` only as the plan's move and there is no `domain` box. On Now, `domain` lists `model.ts` and `app` lists `a.ts`, `b.ts` and the plan's `model.ts` as a faint dashed row, and no `c.ts`. Switch back to Planned.
 
 10. In the second terminal run `test ! -e "$WT/.bindweed" && echo 'worktree clean'; python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert all("line" not in i for f in d["files"].values() for i in f["imports"])' "$QA/layered/.bindweed/cache/scan.json"; test -f "$QA/layered/.bindweed/cache/gate/scan.json" && echo 'slug cache'; git -C "$QA/layered" status --porcelain; curl -s -H "Authorization: Bearer $TOKEN" "$U/api/graph?at=src" | python3 -c 'import json,sys; ids=[n["id"] for n in json.load(sys.stdin)["nodes"]]; assert "src/app/c.ts" not in ids and "src/domain" in ids; print("browsed")'; curl -s -H "Authorization: Bearer $TOKEN" "$U/api/runs" | python3 -c 'import json,sys; print(json.load(sys.stdin)["runs"][0]["planName"])'`.
     **Expect:** `worktree clean`, then `slug cache`, then no git output, then `browsed`, then `Gate`.

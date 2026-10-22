@@ -411,19 +411,28 @@ Feature: watch a run converge on the plan
     is green, whatever 005 would colour it, cycle red included.
     fate and note: no converge marker. While a fated file is still scanned
     its row keeps what 006 draws; once gone there is nothing to colour.
+    A 005 ghost row or box never has data-converge.
+    While the hash has converge, every scan request the Architecture pane
+    makes carries converge=<slug>: the Now graph, the Planned graph, the
+    tests-planned graph (tests=1&plan=<slug>), each package row's Now and
+    Planned graph, and the detail of a selected box. None reads the browsed
+    repository, so Now shows the worktree as scanned, and 005's ghost rows
+    and boxes compare the worktree's Now with the worktree's Planned. A
+    refresh is GET /api/converge together with every one of those requests
+    the pane has on screen.
     While the hash has converge, the toolbar button reads
     "Leave". Leave, and clicking Architecture again after Files or Runs,
     drops the converge key and shows the browsed plan view. A converge
     error shows its error text in the architecture pane, and Leave still
     works.
     While the Architecture tab shows a converge hash, document.visibilityState
-    is "visible", and pidAlive is true, the page fetches GET /api/converge
-    and the converge graph at once, then 20 seconds after they answer,
-    never starting a pair while the last has not answered. A test may
-    control that clock. At 19999 ms no second pair has started. At 20000 ms
-    it starts. A hidden document, another tab, or a dead pid fetches
-    nothing. Becoming visible fetches at once. Rescan posts
-    POST /api/rescan?converge=<slug> and then fetches. Rescan with no
+    is "visible", and pidAlive is true, the page starts a refresh at once,
+    then 20 seconds after every request of the last refresh has answered,
+    never starting a refresh while the last has not answered. A test may
+    control that clock. At 19999 ms no second refresh has started. At
+    20000 ms it starts. A hidden document, another tab, or a dead pid
+    fetches nothing. Becoming visible refreshes at once. Rescan posts
+    POST /api/rescan?converge=<slug> and then refreshes. Rescan with no
     converge key posts POST /api/rescan, as before.
 
     Scenario: The card and the toolbar open the worktree, and Leave restores the browsed view
@@ -475,23 +484,42 @@ Feature: watch a run converge on the plan
       And "g[data-from='src/domain'][data-to='src/app']" has data-converge "done" and stroke "#16a34a"
       And "[data-id='src/data']" has data-converge "done" and computed border-top-color rgb(22, 163, 74)
 
+    Scenario: Now, Planned, the rows and the detail all read the worktree
+      When I open bindweed at "#at=src&plan=gate&converge=gate"
+      And I select the "src/infra" box
+      Then every GET /api/graph and GET /api/detail the page has sent carries converge=gate
+      And they include at=src&plan=gate, at=src&tests=1&plan=gate, at=src with no plan, at=src/app with and without plan=gate, and the detail of id=src/infra
+      When I click "Now"
+      Then the "src/app" box's solid rows are "a.ts", "b.ts" and "c.ts", and its only dashed row is "model.ts" with data-ghost "true" and no data-converge
+      And the "src/domain" box lists "model.ts" and the "src/infra" box lists "db.ts"
+      Given the worktree's "src/domain/model.ts" is moved to "src/app/model.ts"
+      When I click "Rescan"
+      Then the "src/app" box's rows are "a.ts", "b.ts", "c.ts" and "model.ts", none with data-ghost
+      And there is no "src/domain" box
+      Given the worktree's "src/app/b.ts" is removed
+      When I click "Rescan"
+      Then the "src/app" box's rows are "a.ts", "c.ts" and "model.ts", none with data-ghost
+      When I click "Planned"
+      Then the "src/app" box has no "[data-path='src/app/b.ts']" row, solid or dashed, and no row with data-ghost "true"
+      And the header is "1 of 4 edits done · 1 of 2 rules hold"
+
     Scenario: The view refreshes while the pid is alive and the tab is visible
       When I open bindweed at "#at=src&plan=gate&converge=gate"
-      Then GET /api/converge and "GET /api/graph?at=src&plan=gate&converge=gate" are requested once
-      When 19999 ms have passed
-      Then no second pair has started
-      When 20000 ms have passed
-      Then a second pair starts
+      Then one refresh is requested: GET /api/converge?slug=gate once, and the Now, Planned, tests-planned and row graph requests once each, all with converge=gate
+      When 19999 ms have passed since its last request answered
+      Then no second refresh has started
+      When 20000 ms have passed since then
+      Then a second refresh starts, with GET /api/converge and the same graph requests, all with converge=gate
       When document.visibilityState becomes "hidden"
-      Then no pair is requested for 25 seconds
+      Then nothing is requested for 25 seconds
       When document.visibilityState becomes "visible"
-      Then a pair is requested at once
+      Then a refresh is requested at once
       When I click "Files"
-      Then no pair is requested for 25 seconds
+      Then nothing with converge is requested for 25 seconds
       When the run's pid is dead and I open the converge hash again
-      Then one pair is requested and no second pair starts within 25 seconds
+      Then one refresh is requested and no second refresh starts within 25 seconds
       When I click "Rescan"
-      Then the page posts "POST /api/rescan?converge=gate" and fetches the pair
+      Then the page posts "POST /api/rescan?converge=gate" and then requests a refresh
       And it does not post "POST /api/rescan"
 
     Scenario: A missing run is the error text, and a card with no worktree has no button
