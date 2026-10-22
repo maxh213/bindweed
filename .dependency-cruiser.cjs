@@ -461,14 +461,14 @@ module.exports = {
       severity: 'error',
       comment: 'The architecture page mounts the session. It does not reach into edits, the picture, the gestures, the roster, the chrome or a launch',
       from: { path: '^src/ui/ArchView\\.tsx$' },
-      to: { path: ['^src/domain/(plan|chat|contract|launch)\\.ts$', '^src/launch\\.ts$', '^src/ui/(PlanBar|planpicture|plangesture|planroster|ContractPanel|asksession|ask|proposalpicture|LaunchDialog)\\.tsx?$'] }
+      to: { path: ['^src/domain/(plan|chat|contract|launch)\\.ts$', '^src/launch\\.ts$', '^src/ui/(PlanBar|planpicture|plangesture|planroster|ContractPanel|asksession|ask|proposalpicture|LaunchDialog|ConvergeList|convergeink)\\.tsx?$'] }
     },
     {
       name: 'the-session-does-not-draw-or-apply',
       severity: 'error',
       comment: 'The session edits a plan, builds its picture and opens the launch dialog. The canvas draws. The server applies the scan, reads plan files and runs the launch',
       from: { path: '^src/ui/plansession\\.tsx$' },
-      to: { path: ['^src/ui/(ArchCanvas|ArchView|view|ask|proposalpicture)\\.tsx?$', '^src/domain/(planned|contract|layout|scan|prompt|tasks|chat|launch)\\.ts$', '^src/(plans|launch|serve)\\.ts$', 'node_modules/@xyflow'] }
+      to: { path: ['^src/ui/(ArchCanvas|ArchView|view|ask|proposalpicture|convergewatch)\\.tsx?$', '^src/domain/(planned|contract|layout|scan|prompt|tasks|chat|launch|converge)\\.ts$', '^src/(plans|launch|serve)\\.ts$', 'node_modules/@xyflow'] }
     },
     {
       name: 'only-serve-imports-generation',
@@ -735,6 +735,69 @@ module.exports = {
       comment: 'The pane polls and forgets through the client and links with the page hash. It does not decide a run standing or draw the canvas',
       from: { path: '^src/ui/RunsPanel\\.tsx$' },
       to: { path: ['^src/', 'node_modules/(@xyflow|zod|@tanstack)'], pathNot: '^src/ui/(client|view)\\.ts$' }
+    },
+    {
+      name: 'convergence-reads-the-document-and-the-scan',
+      severity: 'error',
+      comment: 'Whether each edit and rule has landed is a pure function of the plan, the browsed scan and the worktree imports',
+      from: { path: '^src/domain/converge\\.ts$' },
+      to: { path: '^src/', pathNot: '^src/domain/(plan|scan)\\.ts$' }
+    },
+    {
+      name: 'only-serve-checks-convergence',
+      severity: 'error',
+      comment: 'Serve hands the verdict to the browser as JSON. The page reads it through the client and never checks an edit itself',
+      from: { pathNot: '^src/(serve\\.ts|domain/converge\\.ts|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/domain/converge\\.ts$' }
+    },
+    {
+      name: 'converge-ink-reads-the-document',
+      severity: 'error',
+      comment: 'Which rows, boxes, cuts and arrows turn green or red is a pure function of the plan edits, their statuses and the boxes in view',
+      from: { path: '^src/ui/convergeink\\.ts$' },
+      to: { path: ['^src/', 'node_modules'], pathNot: '^src/(domain/plan|ui/(draw|client))\\.ts$' }
+    },
+    {
+      name: 'the-converge-pieces-only-name-the-answer',
+      severity: 'error',
+      comment: 'The ink, the list and the watch use the converge answer type; only the page fetches it',
+      from: { path: '^src/ui/(convergeink\\.ts|ConvergeList\\.tsx|convergewatch\\.ts)$' },
+      to: { path: '^src/ui/client\\.ts$', dependencyTypesNot: ['type-only'] }
+    },
+    {
+      name: 'only-the-session-reads-converge-ink',
+      severity: 'error',
+      comment: 'The session lays converge marks over the plan picture. The canvas draws them from the picture',
+      from: { pathNot: '^src/ui/(plansession\\.tsx|convergeink\\.ts|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/ui/convergeink\\.ts$' }
+    },
+    {
+      name: 'the-converge-list-is-presentational',
+      severity: 'error',
+      comment: 'The converge change list renders the answer it is handed. It does not fetch, edit a plan or draw',
+      from: { path: '^src/ui/ConvergeList\\.tsx$' },
+      to: { path: ['^src/', 'node_modules/(@tanstack|@xyflow|zod)'], pathNot: '^src/ui/client\\.ts$' }
+    },
+    {
+      name: 'only-the-session-mounts-the-converge-list',
+      severity: 'error',
+      comment: 'The session swaps the change list for the converge list while the hash has converge',
+      from: { pathNot: '^src/ui/(plansession|ConvergeList)\\.tsx$|\\.test\\.tsx?$' },
+      to: { path: '^src/ui/ConvergeList\\.tsx$' }
+    },
+    {
+      name: 'the-converge-watch-only-times-refreshes',
+      severity: 'error',
+      comment: 'The watch decides when the next refresh runs: visibility, a live pid and settled fetches. What a refresh fetches is handed in',
+      from: { path: '^src/ui/convergewatch\\.ts$' },
+      to: { path: ['^src/', 'node_modules/(@xyflow|zod)'], pathNot: '^src/ui/client\\.ts$' }
+    },
+    {
+      name: 'only-the-page-watches-a-worktree',
+      severity: 'error',
+      comment: 'The architecture page owns the converge queries, so it alone arms the watch',
+      from: { pathNot: '^src/ui/(ArchView\\.tsx|convergewatch\\.ts|.+\\.test\\.tsx?)$' },
+      to: { path: '^src/ui/convergewatch\\.ts$' }
     }
   ],
   options: {

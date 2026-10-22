@@ -1,6 +1,8 @@
-import { plannedPath, type ConvergeStatus } from '../domain/converge.ts';
-import { lastSegment, splitPartPath, within, type PlanEdit } from '../domain/plan.ts';
+import { carriedPath, lastSegment, splitPartPath, within, type PlanEdit } from '../domain/plan.ts';
+import type { ConvergeAnswer } from './client.ts';
 import { parentDir } from './draw.ts';
+
+type ConvergeStatus = ConvergeAnswer['edits'][number]['status'];
 
 type RowInk = { path: string; name: string; ghost: boolean; deleted: boolean; converge?: 'done' | 'contradicted' };
 
@@ -24,7 +26,7 @@ function arrowKey(from: string, to: string): string {
 }
 
 function carried(step: Marking, path: string): string {
-  return plannedPath(step.ask.edits, step.ask.edits.map(() => null), step.index, path);
+  return carriedPath(step.ask.edits, step.ask.edits.map(() => null), step.index, path);
 }
 
 function markRow(step: Marking, path: string): void {

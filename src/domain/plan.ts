@@ -661,6 +661,10 @@ export function cutEndLater(path: string, edits: PlanEdit[], stale: (string | nu
   return applyLater(path, edits, stale, from, carriedBy);
 }
 
+export function carriedPath(edits: PlanEdit[], stale: (string | null)[], index: number, path: string): string {
+  return cutEndLater(pathAfter(edits[index], path) ?? path, edits, stale, index);
+}
+
 function firstSegment(path: string): string {
   const slash = path.indexOf('/');
   return slash === -1 ? path : path.slice(0, slash);

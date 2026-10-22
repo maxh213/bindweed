@@ -22,7 +22,6 @@ import { RunFeedback } from './RunFeedback.tsx';
 import { deletePlan, fetchGraph, fetchPairs, fetchPlan, fetchPlans, postPlan, putPlan, type ConvergeAnswer } from './client.ts';
 import { ConvergeList } from './ConvergeList.tsx';
 import { convergeMarks, withConverge, type ConvergeMarks } from './convergeink.ts';
-import type { ConvergeStatus } from '../domain/converge.ts';
 import { parentDir } from './draw.ts';
 import {
   CanvasMenu,
@@ -434,7 +433,7 @@ function pickChanges(converge: string | null, editing: () => ReactNode, watching
   return converge === null ? editing() : watching();
 }
 
-function statusesOf(verdict: ConvergeAnswer | { error: string } | undefined): Map<number, ConvergeStatus> {
+function statusesOf(verdict: ConvergeAnswer | { error: string } | undefined): Map<number, ConvergeAnswer['edits'][number]['status']> {
   if (verdict === undefined || 'error' in verdict) return new Map();
   return new Map(verdict.edits.map(edit => [edit.index, edit.status]));
 }
@@ -700,7 +699,8 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     return true;
   };
   const pickFile = (id: string): boolean => kindOf(props.nodes, id) === 'file' && foldInto(id);
-  const dropTarget = (kind: GraphNode['kind'] | null, event: unknown): string | null => dropTargetOf(editingSlug(props.converge, slug), kind, event);
+  const editing = editingSlug(props.converge, slug);
+  const dropTarget = (kind: GraphNode['kind'] | null, event: unknown): string | null => dropTargetOf(editing, kind, event);
   const dropOnCrumb = (event: { preventDefault(): void; dataTransfer: { getData(mime: string): string } }, at: string): void => {
     event.preventDefault();
     const file = event.dataTransfer.getData(FILE_DRAG_MIME);
@@ -710,7 +710,7 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
   const asking = useAsk({
     token: props.token,
     fetcher: props.fetcher,
-    slug: editingSlug(props.converge, slug),
+    slug: editing,
     at: props.at,
     tests: props.tests,
     external: props.external,

@@ -1,4 +1,4 @@
-import { byStrings, cutEndLater, pathAfter, sentenceOf, within, type AddEdit, type ContractRule, type CreatePackageEdit, type CutEdit, type FateEdit, type PlanDoc, type PlanEdit, type SplitEdit } from './plan.ts';
+import { byStrings, carriedPath, sentenceOf, within, type AddEdit, type ContractRule, type CreatePackageEdit, type CutEdit, type FateEdit, type PlanDoc, type PlanEdit, type SplitEdit } from './plan.ts';
 import type { ImportLine, ScanResult, WorktreeScan } from './scan.ts';
 
 export type ConvergeStatus = 'done' | 'not yet' | 'contradicted' | 'note';
@@ -7,7 +7,7 @@ type EditVerdict = { index: number; status: ConvergeStatus; sentence: string; re
 
 type RuleVerdict = { name: string; comment: string; holds: boolean; breaks?: string[] };
 
-export type Convergence = { header: string; edits: EditVerdict[]; rules: RuleVerdict[] };
+type Convergence = { header: string; edits: EditVerdict[]; rules: RuleVerdict[] };
 
 type Spot = { file: string; line: number };
 
@@ -36,12 +36,8 @@ type Matcher = (imp: ImportLine) => boolean;
 
 const NOT_YET: Verdict = { status: 'not yet', spots: [] };
 
-export function plannedPath(edits: PlanEdit[], stale: (string | null)[], index: number, path: string): string {
-  return cutEndLater(pathAfter(edits[index], path) ?? path, edits, stale, index);
-}
-
 function plannedOf(ctx: Ctx, index: number, path: string): string {
-  return plannedPath(ctx.edits, ctx.stale, index, path);
+  return carriedPath(ctx.edits, ctx.stale, index, path);
 }
 
 function storedAndPlanned(ctx: Ctx, index: number, path: string): string[] {
