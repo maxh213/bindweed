@@ -76,7 +76,7 @@ Rules
 ```
 
    The canvas at `src` has `app` listing `a.ts`, `b.ts` (struck through), `c.ts` and the planned `model.ts`, `infra` listing `db.ts`, `ports` reading `0 files`, and no `domain` box. The `model.ts` row is not green. A grey dashed line with a grey `✂` joins `app` and `infra`. Nothing is fetched from the worktree's own `.bindweed`.
-   Drag from the bottom edge of `domain` to `app`, then drag the `a.ts` row onto `infra`.
+   Click `infra`, then drag from its bottom edge to `app`. Then drag the `a.ts` row onto `infra`.
    **Expect:** no new arrow, no new row in the change list, still four edits. `cmp "$QA/plan.json" "$QA/layered/.bindweed/plans/gate.json" && echo plan` prints `plan`.
 
 3. In the second terminal run `mkdir -p "$QA/held" && mv "$WT/src/domain/model.ts" "$QA/held/model.ts"`. Do not reload.

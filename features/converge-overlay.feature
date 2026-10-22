@@ -442,7 +442,7 @@ Feature: watch a run converge on the plan
       And "[data-path='src/app/b.ts']" has data-fate "delete"
       And Undo, Redo, every Remove, "Plan", "New plan…", "Delete plan", "Contract", "Tasks" and "Launch" are disabled
       And there is no "Canvas" button, no "Menu" button, no "proposals" or "ask" aside, and no "Draw dependency" label
-      When I select the "src/domain" box and drag from its bottom handle to the "src/app" box
+      When I select the "src/infra" box and drag from its bottom handle to the "src/app" box
       And I drag the "src/app/a.ts" row onto the "src/infra" box
       Then the change list still has 4 edit rows and the gate plan's bytes are unchanged
       When I click "Leave"
