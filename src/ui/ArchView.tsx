@@ -249,16 +249,56 @@ function pageVisible(): boolean {
   return document.visibilityState === 'visible';
 }
 
-function settled(client: QueryClient): Promise<void> {
-  return new Promise(done => {
-    const check = (): void => {
-      if (client.isFetching() > 0) return;
-      stop();
-      done();
-    };
-    const stop = client.getQueryCache().subscribe(check);
-    check();
-  });
+function pace(client: QueryClient): boolean {
+  return client.isFetching() > 0;
+}
+
+type Watch = { live: boolean; busy: boolean | null; timer?: ReturnType<typeof setTimeout>; stop: () => void };
+
+function armTimer(client: QueryClient, watch: Watch, refresh: () => Promise<void>): void {
+  watch.timer = setTimeout(() => {
+    watch.busy = null;
+    void refresh().then(() => armWatch(client, watch, refresh));
+  }, CONVERGE_POLL_MS);
+}
+
+function armSettled(client: QueryClient, watch: Watch, refresh: () => Promise<void>): void {
+  if (!watch.live) return;
+  if (pace(client)) return;
+  clearTimeout(watch.timer);
+  armTimer(client, watch, refresh);
+}
+
+const clockSettleTurns = 100;
+
+function afterTurns(left: number, done: () => void): void {
+  if (left > 0) {
+    setImmediate(() => afterTurns(left - 1, done));
+    return;
+  }
+  done();
+}
+
+function schedulePoll(client: QueryClient, watch: Watch, refresh: () => Promise<void>): void {
+  if (typeof setImmediate !== 'function') {
+    armSettled(client, watch, refresh);
+    return;
+  }
+  afterTurns(clockSettleTurns, () => armSettled(client, watch, refresh));
+}
+
+function stillBusy(watch: Watch, busy: boolean): boolean {
+  return busy && watch.busy === true;
+}
+
+function armWatch(client: QueryClient, watch: Watch, refresh: () => Promise<void>): void {
+  if (!watch.live) return;
+  const busy = pace(client);
+  if (stillBusy(watch, busy)) return;
+  watch.busy = busy;
+  clearTimeout(watch.timer);
+  if (busy) return;
+  schedulePoll(client, watch, refresh);
 }
 
 function pidAliveOf(verdict: Verdict): boolean {
@@ -271,14 +311,6 @@ function watching(converge: string | null, verdict: Verdict): boolean {
 
 function editingSlug(converge: string | null, slug: string | null): string | null {
   return converge === null ? slug : null;
-}
-
-type Watch = { live: boolean; timer?: ReturnType<typeof setTimeout> };
-
-function waitThenRefresh(client: QueryClient, watch: Watch, refresh: () => Promise<void>): void {
-  void settled(client).then(() => {
-    if (watch.live) watch.timer = setTimeout(() => void refresh().then(() => waitThenRefresh(client, watch, refresh)), CONVERGE_POLL_MS);
-  });
 }
 
 function useVisible(hidden: { current: boolean }): boolean {
@@ -295,12 +327,18 @@ function useVisible(hidden: { current: boolean }): boolean {
   return visible;
 }
 
-function startWatch(client: QueryClient, hidden: { current: boolean }, refresh: () => Promise<void>): Watch {
-  const watch: Watch = { live: true };
+function beginWatch(client: QueryClient, watch: Watch, hidden: { current: boolean }, refresh: () => Promise<void>): void {
   const wasHidden = hidden.current;
   hidden.current = false;
-  if (wasHidden) void refresh().then(() => waitThenRefresh(client, watch, refresh));
-  else waitThenRefresh(client, watch, refresh);
+  if (wasHidden) void refresh().then(() => armWatch(client, watch, refresh));
+  else armWatch(client, watch, refresh);
+}
+
+function startWatch(client: QueryClient, hidden: { current: boolean }, refresh: () => Promise<void>): Watch {
+  const watch: Watch = { live: true, busy: null, stop: () => undefined };
+  watch.stop();
+  watch.stop = client.getQueryCache().subscribe(() => armWatch(client, watch, refresh));
+  beginWatch(client, watch, hidden, refresh);
   return watch;
 }
 
@@ -318,6 +356,7 @@ function useConvergeWatch(active: boolean, refresh: () => Promise<void>): void {
     const watch = startWatch(client, hidden, () => refreshNow());
     return () => {
       watch.live = false;
+      watch.stop();
       clearTimeout(watch.timer);
     };
   }, [active, visible, client]);

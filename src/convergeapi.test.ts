@@ -435,7 +435,7 @@ describe('the canvas reads the worktree and the cache stays under the browsed ro
     expect((await call('/api/detail?id=src/ports/port.ts&at=src/ports&converge=gate')).body).toMatchObject({ path: 'src/ports/port.ts' });
   });
 
-  it('A warm cache entry is reused until the file\'s stamp changes', async () => {
+  it("A warm cache entry is reused until the file's stamp changes", async () => {
     await call('/api/graph?at=src');
     const browsedCache = join(root, '.bindweed', 'cache', 'scan.json');
     const noted = await readFile(browsedCache, 'utf8');

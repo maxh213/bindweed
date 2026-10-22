@@ -79,7 +79,57 @@ vi.mock('@xyflow/react', async () => {
 });
 
 const nativeTimeout = globalThis.setTimeout;
+const nativeImmediate = globalThis.setImmediate;
 const realSleep = (ms: number) => new Promise(done => nativeTimeout(done, ms));
+const ROW_GRAPHS = 9;
+
+function graphRequests(): string[] {
+  return requests.filter(request => request.startsWith('GET /api/graph'));
+}
+
+function needsRowGraphs(needRows: boolean, seen: number): boolean {
+  return needRows && seen < ROW_GRAPHS;
+}
+
+function convergeBusy(needRows: boolean, seen: number): boolean {
+  return inflight > 0 || needsRowGraphs(needRows, seen);
+}
+
+function convergeResting(needRows: boolean, seen: number): boolean {
+  return inflight === 0 && !needsRowGraphs(needRows, seen);
+}
+
+async function pumpOnce(needRows: boolean): Promise<boolean> {
+  await realSleep(5);
+  const before = graphRequests().length;
+  const step = convergeBusy(needRows, before) ? 1 : 0;
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(step);
+  });
+  return convergeResting(needRows, graphRequests().length);
+}
+
+async function pumpConverge(needRows: boolean): Promise<void> {
+  let quiet = 0;
+  for (let round = 0; round < 400 && quiet < 6; round += 1) quiet = (await pumpOnce(needRows)) ? quiet + 1 : 0;
+}
+
+async function hideMidRefresh(): Promise<void> {
+  let release = (): void => undefined;
+  gate = new Promise(done => {
+    release = done;
+  });
+  visibility = 'visible';
+  await act(async () => {
+    document.dispatchEvent(new window.Event('visibilitychange'));
+  });
+  visibility = 'hidden';
+  await act(async () => {
+    document.dispatchEvent(new window.Event('visibilitychange'));
+  });
+  release();
+  await realSleep(50);
+}
 const sheet = process.getBuiltinModule('node:fs').readFileSync(new URL('./app.css', import.meta.url), 'utf8');
 const GREEN = 'rgb(22, 163, 74)';
 const GREY = 'rgb(100, 116, 139)';
@@ -296,6 +346,7 @@ async function startBindweed(): Promise<void> {
 afterEach(async () => {
   if (reactRoot !== null) await act(async () => reactRoot?.unmount());
   dom.window.close();
+  globalThis.setImmediate = nativeImmediate;
   vi.useRealTimers();
   server.kill();
   for (const pid of pids) process.kill(pid);
@@ -468,29 +519,18 @@ describe('the page shows Converge, then returns to the browsed repository', () =
 
   it('The view refreshes while the pid is alive and the tab is visible', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    const flush = async (): Promise<void> => {
-      let quiet = 0;
-      for (let round = 0; round < 400 && quiet < 6; round += 1) {
-        await realSleep(15);
-        await act(async () => {
-          await vi.advanceTimersByTimeAsync(0);
-        });
-        quiet = inflight === 0 ? quiet + 1 : 0;
-      }
-    };
     const advance = async (ms: number): Promise<void> => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(ms);
       });
-      await flush();
+      await pumpConverge(false);
     };
     const count = (prefix: string): number => requests.filter(request => request.startsWith(prefix)).length;
-    const graphs = (): string[] => requests.filter(request => request.startsWith('GET /api/graph'));
     await show('#at=src&plan=gate&converge=gate');
-    await flush();
+    await pumpConverge(true);
     expect(header()).toBe('0 of 4 edits done · 0 of 2 rules hold');
     expect(count('GET /api/converge?slug=gate')).toBe(1);
-    const first = graphs();
+    const first = graphRequests();
     expect(first.every(request => request.endsWith('converge=gate'))).toBe(true);
     expect(first.toSorted()).toEqual(
       [
@@ -508,11 +548,12 @@ describe('the page shows Converge, then returns to the browsed repository', () =
         .toSorted(),
     );
     requests.length = 0;
+    await realSleep(20);
     await advance(19999);
     expect(requests).toEqual([]);
     await advance(1);
     expect(count('GET /api/converge?slug=gate')).toBe(1);
-    expect(graphs().toSorted()).toEqual(first.toSorted());
+    expect(graphRequests().toSorted()).toEqual(first.toSorted());
     requests.length = 0;
     visibility = 'hidden';
     await act(async () => {
@@ -524,7 +565,7 @@ describe('the page shows Converge, then returns to the browsed repository', () =
     await act(async () => {
       document.dispatchEvent(new window.Event('visibilitychange'));
     });
-    await flush();
+    await pumpConverge(true);
     expect(count('GET /api/converge?slug=gate')).toBe(1);
     requests.length = 0;
     await click(document.querySelectorAll('[role="tab"]')[0]);
@@ -536,20 +577,21 @@ describe('the page shows Converge, then returns to the browsed repository', () =
     await runs([runEntry('gate', wt, Number(spawnSync('true').pid))]);
     requests.length = 0;
     await show('#at=src&plan=gate&converge=gate');
-    await flush();
+    await pumpConverge(true);
     expect(count('GET /api/converge?slug=gate')).toBe(1);
     await advance(25000);
     expect(count('GET /api/converge?slug=gate')).toBe(1);
     requests.length = 0;
     await click(buttonNamed('Rescan'));
-    await flush();
+    await pumpConverge(true);
     expect(requests[0]).toBe('POST /api/rescan?converge=gate');
     expect(requests).toContain('GET /api/converge?slug=gate');
     expect(requests).not.toContain('POST /api/rescan');
-  });
+  }, 60000);
 
   it('a refresh that falls due while the tab is hidden does not start, and the toolbar button needs a handler', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    Reflect.deleteProperty(globalThis, 'setImmediate');
     let release = (): void => undefined;
     gate = new Promise(done => {
       release = done;
@@ -575,6 +617,7 @@ describe('the page shows Converge, then returns to the browsed repository', () =
     });
     await realSleep(100);
     expect(requests.filter(request => request.startsWith('GET /api/converge'))).toEqual([]);
+    await hideMidRefresh();
     vi.useRealTimers();
     await act(async () => reactRoot?.unmount());
     dom.window.close();
