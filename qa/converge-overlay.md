@@ -1,6 +1,6 @@
 # QA: watch a run converge on the plan
 
-For a person with two terminals and a desktop browser with developer tools on the machine that runs bindweed (Node 22.18 or newer, git, curl). The browsed repository is the checked-in four-file `qa/fixtures/layered`. The worktree is a copy plus `src/app/c.ts`, not a real agent. The QA role, not the coder, writes the end-to-end test. The coder writes no file under `qa/`.
+For a person with two terminals and a desktop browser with developer tools on the machine that runs bindweed (Node 22.18 or newer, git, curl). The browsed repository is the checked-in four-file `qa/fixtures/layered`. The worktree is a copy of the committed fixture, `.git` included, plus the untracked `src/app/c.ts`, not a real agent; bindweed lists its files with `git ls-files`, as for the browsed repository. The QA role, not the coder, writes the end-to-end test. The coder writes no file under `qa/`.
 
 The separator in the header is ` · ` (U+00B7). `.bindweed/` is gitignored, so `git status --porcelain` stays empty.
 
@@ -36,7 +36,7 @@ doc = {"version":1,"name":"Gate","slug":"gate","createdAt":"2026-10-22T12:00:00.
 open(path,"w").write(json.dumps(doc))
 PY
 cp "$QA/layered/.bindweed/plans/gate.json" "$QA/plan.json"
-LIVE=$(sh -c 'sleep 900 >/dev/null 2>&1 & echo $!')
+LIVE=$(sh -c 'sleep 7200 >/dev/null 2>&1 & echo $!')
 true & DEAD=$!; wait "$DEAD"
 printf '[{"slug":"gone","tool":"marestail","worktree":"%s/converge-gone","branch":"bindweed/gone","pid":%s,"startedAt":"2026-10-22T11:00:00.000Z","out":"%s/missing.out","settings":{}},{"slug":"gate","tool":"marestail","worktree":"%s","branch":"bindweed/gate","pid":%s,"startedAt":"2026-10-22T12:00:00.000Z","out":"%s/missing.out","settings":{}}]' \
   "$QA" "$DEAD" "$QA" "$WT" "$LIVE" "$QA" > "$QA/layered/.bindweed/runs.json"
@@ -48,9 +48,9 @@ Paste the printed `export` line into the second terminal.
 ## Steps
 
 1. In the first terminal run `node $BW/src/cli.ts --port 5000`. In the second terminal set `TOKEN` from the printed line and `U=http://127.0.0.1:5000`. Open `http://127.0.0.1:5000/?token=$TOKEN#at=src&plan=gate` with the token written out.
-   **Expect:** the address bar reads `http://127.0.0.1:5000/#at=src&plan=gate`. The toolbar has `Tasks`, then `Launch`, then `Settings`, then `Converge`. There is no header `0 of 4 edits done`. The cut row shows `no such file src/app/c.ts`, because the browsed repository has no `c.ts`. `app` reads `2 files`.
+   **Expect:** the address bar reads `http://127.0.0.1:5000/#at=src&plan=gate`. The toolbar has `Tasks`, then `Launch`, then `⚙` (Settings), then `Converge`. There is no header `0 of 4 edits done`. The cut row shows `no such file src/app/c.ts`, because the browsed repository has no `c.ts`. `app` reads `2 files`.
 
-2. Click `Converge`.
+2. Click `Converge`, the toolbar button just after `⚙` (Settings).
    **Expect:** the address bar reads `http://127.0.0.1:5000/#at=src&plan=gate&converge=gate`. The button now reads `Leave`. `Undo`, `Redo` and `Remove` are greyed out. The change list is this, and the `○` marks are grey, not green:
 
 ```

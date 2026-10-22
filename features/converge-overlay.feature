@@ -26,16 +26,25 @@ Feature: watch a run converge on the plan
   Type-only imports and heritage imports count, tests included. External
   imports count as neither an internal import nor a cycle edge. A covered
   file is in place when the worktree scan has it at its planned path and,
-  if that path differs, not at its old path. An edit is contradicted when
-  any covered file is at neither path and no fate's file is that old path
-  or that planned path; else it is done when every covered file is in
-  place; else it is not yet. add-edge, cut-edge, create-package and fate
-  are never contradicted. The planned path of a path is that path carried
-  through later edits the way a contract carries a cut end, non-stale on
-  the browsed scan. While Converge is on, the plan's edits do not change.
+  if that path differs, not at its old path. A covered file that is at
+  neither path is also in place when some fate's file, stale or not, is
+  its old path or its planned path; with no such fate the edit is
+  contradicted. Else an edit is done when every covered file is in place,
+  and not yet otherwise. add-edge, cut-edge, create-package and fate are
+  never contradicted. The planned path of a path is that path carried
+  through the edits after the one being checked that are non-stale on the
+  browsed scan, the way cutEndLater carries a cut end. Edits before it
+  never carry, so a cut listed after the move of one of its files is stale
+  and is checked at its stored paths only. While Converge is on, the
+  plan's edits do not change.
 
-  "The worktree" is "/tmp/qa/converge-wt", a copy of the four-file fixture
-  plus src/app/c.ts containing "import { query } from '../infra/db';\nexport const c = query;\n".
+  The worktree's files are listed as the browsed repository's are: git
+  ls-files --cached --others --exclude-standard run in the worktree, kept
+  only when the path is a regular file on disk. A run's worktree is a git
+  worktree; the test's worktree is a copy that includes ".git".
+
+  "The worktree" is "/tmp/qa/converge-wt", a copy of the committed
+  four-file fixture, ".git" included, plus the untracked src/app/c.ts containing "import { query } from '../infra/db';\nexport const c = query;\n".
   "The move" is {"kind":"move-file","file":"src/domain/model.ts","to":"src/core"}.
   "The cut" is {"kind":"cut-edge","from":"src/app","to":"src/infra","files":[["src/app/a.ts","src/infra/db.ts"],["src/app/b.ts","src/infra/db.ts"],["src/app/c.ts","src/infra/db.ts"]]}.
   "The package" is {"kind":"create-package","path":"src/ports"}.
@@ -45,7 +54,7 @@ Feature: watch a run converge on the plan
   "The gate plan" is the plan "Gate", slug gate, edits the move, the cut,
   the package and the delete, in that order, redo [], and contract those
   two rules. "The run" is runs.json [{"slug":"gate","tool":"marestail","worktree":"/tmp/qa/converge-wt","branch":"bindweed/gate","pid":<live>,"startedAt":"2026-10-22T12:00:00.000Z","out":"/tmp/qa/converge-wt/missing.out","settings":{}}].
-  <live> is the pid of a "sleep 900" the test spawned. "A dead pid" is the
+  <live> is the pid of a "sleep 7200" the test spawned. "A dead pid" is the
   pid of a "true" the test spawned and waited for. A pid is alive as in
   features/launch-the-run.feature. Each scenario starts from the Background
   again, and each outline example does too.
@@ -59,8 +68,11 @@ Feature: watch a run converge on the plan
   Rule: GET /api/converge compares the worktree with the plan
     GET /api/converge?slug=<slug> answers 200 with exactly slug, worktree,
     pidAlive, header, edits and rules. It reads the run GET /api/runs would
-    list first for that slug, and it never writes runs.json, the plan, or
-    the browsed ".bindweed/cache/scan.json". header is "<done> of <checked>
+    list first for that slug, and it never writes runs.json or the plan.
+    It needs the browsed scan: when this server has not made it yet, it
+    makes it exactly as GET /api/graph would, scan.json included; once made,
+    no converge request writes the browsed ".bindweed/cache/scan.json".
+    header is "<done> of <checked>
     edits done · <holding> of <rules> rules hold", always those words.
     <checked> counts every edit except a note. <done> counts status "done".
     <rules> is the saved contract's length, 0 when the plan has no contract.
@@ -77,7 +89,7 @@ Feature: watch a run converge on the plan
     breaks on an import only when every restriction it has matches. The
     cycle graph does not include a dangling import.
     A cut remains while any of its pairs, at the stored paths or the
-    planned paths, still has an import, resolved or dangling, and remain
+    planned paths (the same carry for both ends), still has an import, resolved or dangling, and remain
     lists those import lines. An add-edge is done when a resolved import
     runs from its from node, or that node carried forward, to its to node
     the same way: a file matches a node when the path equals the node or
@@ -85,18 +97,23 @@ Feature: watch a run converge on the plan
     sits inside that directory, at any depth. A markdown file does not
     count. A delete is done when the file is at neither its path nor its
     planned path and nothing imports either path; while it is gone but
-    imported, remain names those imports. A fold is done when the file is
-    gone the same way and every former importer imports into, at into or
-    into's planned path. A former importer is a browsed-scan file, other
-    than into, with an edge to the folded file. One that no longer has the
-    old import line and does not import into is named as the path alone,
-    with no colon. A note is "note" and has no remain.
+    imported, remain names those imports. A fold does not look at who
+    imports the folded file: it is done when the file is at neither its
+    path nor its planned path and every former importer imports into, at
+    into or into's planned path. A former importer is a browsed-scan file,
+    other than into, with an edge to the folded file; a worktree file the
+    browsed scan does not have is never one, whatever it imports. Once the
+    file is gone, a former importer that does not import into is named "<file>:<line>" for each
+    import it still has of the folded file's old or planned path, or as
+    the path alone, with no colon, when it has none. A note is "note" and
+    has no remain.
     A missing slug parameter answers 400 {"error":"missing slug"}. An
     unknown slug, or one that fails ^[a-z0-9][a-z0-9-]*$, answers 404
     {"error":"no such run"}. A run whose plan is missing or not a plan
     answers 404 {"error":"no such plan"}. A run whose worktree directory
     is missing answers 404 {"error":"worktree removed"}. Host and token
-    are checked first. None of these write a cache.
+    are checked first. None of these scan either repository or write a
+    cache.
 
     Scenario: Four edits and two rules start undone
       When I send "GET /api/converge?slug=gate" with the token
@@ -135,15 +152,15 @@ Feature: watch a run converge on the plan
       And rule 0 holds and the header is "1 of 4 edits done · 1 of 2 rules hold"
 
     Scenario: A cut follows the file to its planned path
-      Given the plan's edits are only the move {"kind":"move-file","file":"src/app/b.ts","to":"src/domain"} then the cut {"kind":"cut-edge","from":"src/app/b.ts","to":"src/infra/db.ts","files":[["src/app/b.ts","src/infra/db.ts"]]}, and it has no contract
+      Given the plan's edits are only the cut {"kind":"cut-edge","from":"src/app/b.ts","to":"src/infra/db.ts","files":[["src/app/b.ts","src/infra/db.ts"]]} then the move {"kind":"move-file","file":"src/app/b.ts","to":"src/domain"}, and it has no contract
       When I send "GET /api/converge?slug=gate" with the token
-      Then edit 1 is "not yet", remain ["src/app/b.ts:2"], and the header ends "· 0 of 0 rules hold"
+      Then edit 0 is "not yet", remain ["src/app/b.ts:2"], and the header is "0 of 2 edits done · 0 of 0 rules hold"
       Given "src/app/b.ts" is moved to "src/domain/b.ts" and its "../infra/db" import is still line 2
       When I send "GET /api/converge?slug=gate" with the token
-      Then edit 1 is "not yet" and its remain is ["src/domain/b.ts:2"]
+      Then edit 0 is "not yet", its remain is ["src/domain/b.ts:2"], and edit 1 is "done"
       Given that import line is removed
       When I send "GET /api/converge?slug=gate" with the token
-      Then edit 1 is "done"
+      Then edit 0 is "done" and the header is "2 of 2 edits done · 0 of 0 rules hold"
 
     Scenario: A stopped run still answers
       Given the run's pid is dead
@@ -177,7 +194,7 @@ Feature: watch a run converge on the plan
       Then the remain is ["src/app/b.ts"]
       Given "src/app/b.ts" is "import { Model } from '../domain/model';\nexport const b = 1;\n"
       When I send "GET /api/converge?slug=gate" with the token
-      Then the edit is "done" and has no remain
+      Then the edit is "done" and has no remain, though "src/app/c.ts" still imports "../infra/db"
 
     Scenario Outline: The other edits, against a fresh worktree
       Given the plan's only edit is <edit> and it has no contract
@@ -203,7 +220,7 @@ Feature: watch a run converge on the plan
       Then the header starts "0 of 4 edits done" and edit 4 is "note", "Note on src/domain: \"look here\"", with no remain
       Given the plan's edits are the move and then {"kind":"fate","file":"src/domain/model.ts","fate":"delete"}, it has no contract, and neither model path exists
       When I send "GET /api/converge?slug=gate" with the token
-      Then edit 0 is "done" and edit 1 is "not yet" with remain ["src/infra/db.ts:1"]
+      Then edit 0 is "done", because the fate's file is its old path, and edit 1 is "not yet" with remain ["src/infra/db.ts:1"]
 
     Scenario: A saved rule is matched as written, and a test import breaks it
       Given the plan's contract is only {"name":"bindweed:no-src-c++-to-src-app-a-ts","severity":"error","comment":"src/c++ must not import src/app/a.ts","from":{"path":"^src/c\\+\\+/"},"to":{"path":"^src/app/a\\.ts$"}}
@@ -249,9 +266,12 @@ Feature: watch a run converge on the plan
     Without the parameter every one of these routes is unchanged.
     The worktree scan is cached only at
     "<root>/.bindweed/cache/<slug>/scan.json", never under the worktree.
-    The file is {"version":2,"files":{<path>:{"mtimeMs","size","imports"}}}.
-    An import is {"specifier","typeOnly","line"} plus "heritage" only when
-    the import has one. A second request reuses an entry whose mtimeMs and
+    The file is {"version":2,"files":{<path>:<entry>}}, and an entry has
+    exactly the keys the browsed cache's entry has today: "mtimeMs",
+    "size", "imports", "abstract" and "functions", a function being
+    {"name","line","endLine","cc"}. Only an import differs: it is
+    {"specifier","typeOnly","line"} plus "heritage" only when the import
+    has one. A second request reuses an entry whose mtimeMs and
     size still match and does not re-read that file. The browsed
     ".bindweed/cache/scan.json" keeps the shape it has today: its imports
     have no "line" key. The worktree directory ".bindweed" is not created.
@@ -271,20 +291,22 @@ Feature: watch a run converge on the plan
       And "/tmp/qa/converge-wt/.bindweed" does not exist
 
     Scenario: A warm cache entry is reused until the file's stamp changes
-      Given "GET /api/converge?slug=gate" has been sent with the token
+      Given "GET /api/graph?at=src" has been sent with the token and the browsed ".bindweed/cache/scan.json" bytes are noted
+      And "GET /api/converge?slug=gate" has been sent with the token
       And the slug cache's entry for "src/app/a.ts" says the "../infra/db" import is line 9, with mtimeMs and size unchanged
       When I send "GET /api/converge?slug=gate" with the token
       Then edit 1's remain starts with "src/app/a.ts:9"
       Given one newline is appended to the worktree's "src/app/a.ts"
       When I send "GET /api/converge?slug=gate" with the token
       Then edit 1's remain starts with "src/app/a.ts:2"
-      And the browsed ".bindweed/cache/scan.json" bytes are the bytes from before the first converge request
+      And the browsed ".bindweed/cache/scan.json" bytes are the noted bytes
       And a browsed import object has no "line" key
 
     Scenario: Rescan of the worktree does not rescan the browsed repository
+      Given "GET /api/graph?at=src" has been sent with the token and the browsed ".bindweed/cache/scan.json" bytes are noted
       When I send "POST /api/rescan?converge=gate" with the token
       Then the status is 200 and "files" is 5
-      And the browsed ".bindweed/cache/scan.json" bytes are unchanged
+      And the browsed ".bindweed/cache/scan.json" bytes are the noted bytes
       And "/tmp/qa/converge-wt/.bindweed" does not exist
       When I send "POST /api/rescan" with the token
       Then "files" is 4
@@ -294,7 +316,7 @@ Feature: watch a run converge on the plan
   Rule: the page shows Converge, then returns to the browsed repository
     A run whose worktreeExists and planExists are both true gets a button
     "Converge". It is on that run's card, and on the plan toolbar after
-    Settings when the open plan is that run's slug. The toolbar order
+    the "⚙" button whose aria-label is "Settings" when the open plan is that run's slug. The toolbar order
     Tasks, Launch, Settings stays the order 010 pinned. The button is
     absent otherwise. It opens "#at=<at>&plan=<slug>&converge=<slug>",
     <at> the Architecture view's current at, "" when never set, and selects
@@ -337,7 +359,7 @@ Feature: watch a run converge on the plan
 
     Scenario: The card and the toolbar open the worktree, and Leave restores the browsed view
       When I open bindweed at "#at=src&plan=gate"
-      Then the toolbar buttons include "Tasks", "Launch", "Settings", "Converge" in that order, with nothing between Tasks and Launch or Launch and Settings
+      Then the toolbar buttons' accessible names include "Tasks", "Launch", "Settings", "Converge" in that order, with nothing between Tasks and Launch or Launch and Settings
       And there is no "p.converge-header"
       And the cut row shows "no such file src/app/c.ts"
       When I click "Converge"
