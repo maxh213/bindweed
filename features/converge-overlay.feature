@@ -48,7 +48,9 @@ Feature: watch a run converge on the plan
 
   "The worktree" is "/tmp/qa/converge-wt", a copy of the committed
   four-file fixture, ".git" included, plus the untracked src/app/c.ts containing "import { query } from '../infra/db';\nexport const c = query;\n".
-  "The move" is {"kind":"move-file","file":"src/domain/model.ts","to":"src/core"}.
+  "The move" is {"kind":"move-file","file":"src/domain/model.ts","to":"src/app"}. It
+  is not stale on the browsed scan or on the fresh worktree scan, because
+  src/app already holds files.
   "The cut" is {"kind":"cut-edge","from":"src/app","to":"src/infra","files":[["src/app/a.ts","src/infra/db.ts"],["src/app/b.ts","src/infra/db.ts"],["src/app/c.ts","src/infra/db.ts"]]}.
   "The package" is {"kind":"create-package","path":"src/ports"}.
   "The delete" is {"kind":"fate","file":"src/app/b.ts","fate":"delete"}.
@@ -130,7 +132,7 @@ Feature: watch a run converge on the plan
         | worktree | /tmp/qa/converge-wt |
         | pidAlive | true |
         | header | 0 of 4 edits done · 0 of 2 rules hold |
-      And edit 0 is "not yet", "Move src/domain/model.ts to src/core", with no remain
+      And edit 0 is "not yet", "Move src/domain/model.ts to src/app", with no remain
       And edit 1 is "not yet", "src/app must not import src/infra (3 imports)", remain ["src/app/a.ts:2","src/app/b.ts:2","src/app/c.ts:1"]
       And edit 2 is "not yet", "Create package src/ports", with no remain
       And edit 3 is "not yet", "Delete src/app/b.ts", with no remain
@@ -139,13 +141,13 @@ Feature: watch a run converge on the plan
       And runs.json's bytes are unchanged
 
     Scenario: The move ticks only when the old path is gone, and a copy stays open
-      Given "src/core/model.ts" is the worktree's "src/domain/model.ts" and the old path still exists
+      Given "src/app/model.ts" is the worktree's "src/domain/model.ts" and the old path still exists
       When I send "GET /api/converge?slug=gate" with the token
       Then edit 0 is "not yet" and the header starts "0 of 4 edits done"
-      Given the old path is removed and "src/core/model.ts" remains
+      Given the old path is removed and "src/app/model.ts" remains
       When I send "GET /api/converge?slug=gate" with the token
       Then edit 0 is "done" and the header is "1 of 4 edits done · 0 of 2 rules hold"
-      Given neither "src/domain/model.ts" nor "src/core/model.ts" exists
+      Given neither "src/domain/model.ts" nor "src/app/model.ts" exists
       When I send "GET /api/converge?slug=gate" with the token
       Then edit 0 is "contradicted" and the header starts "0 of 4 edits done"
 
@@ -171,11 +173,11 @@ Feature: watch a run converge on the plan
       Then edit 0 is "done" and the header is "2 of 2 edits done · 0 of 0 rules hold"
 
     Scenario: A cut matches each end on its own, so a half-moved import still remains
-      Given the plan's edits are only the cut {"kind":"cut-edge","from":"src/app/b.ts","to":"src/infra/db.ts","files":[["src/app/b.ts","src/infra/db.ts"]]}, then {"kind":"move-file","file":"src/app/b.ts","to":"src/domain"}, then {"kind":"move-file","file":"src/infra/db.ts","to":"src/core"}, and it has no contract
-      And "src/infra/db.ts" is moved to "src/core/db.ts"
-      And line 2 of "src/app/b.ts" is "import { query } from '../core/db';"
+      Given the plan's edits are only the cut {"kind":"cut-edge","from":"src/app/b.ts","to":"src/infra/db.ts","files":[["src/app/b.ts","src/infra/db.ts"]]}, then {"kind":"move-file","file":"src/app/b.ts","to":"src/domain"}, then {"kind":"move-file","file":"src/infra/db.ts","to":"src/domain"}, and it has no contract, so none of the three is stale on the browsed scan
+      And "src/infra/db.ts" is moved to "src/domain/db.ts"
+      And line 2 of "src/app/b.ts" is "import { query } from '../domain/db';"
       When I send "GET /api/converge?slug=gate" with the token
-      Then edit 0 is "not yet" and its remain is ["src/app/b.ts:2"]
+      Then edit 0 is "not yet" and its remain is ["src/app/b.ts:2"], since "src/app/b.ts" is the stored "from" and "src/domain/db.ts" the planned "to"
       And edit 1 is "not yet", edit 2 is "done", and the header is "1 of 3 edits done · 0 of 0 rules hold"
       Given line 2 of "src/app/b.ts" is "export const moved = 1;"
       When I send "GET /api/converge?slug=gate" with the token
@@ -253,7 +255,7 @@ Feature: watch a run converge on the plan
       Then the header starts "0 of 4 edits done" and edit 4 is "note", "Note on src/domain: \"look here\"", with no remain
       Given the plan's edits are the move and then {"kind":"fate","file":"src/domain/model.ts","fate":"delete"}, it has no contract, and neither model path exists
       When I send "GET /api/converge?slug=gate" with the token
-      Then edit 0 is "done", because the fate's file is its old path, and edit 1 is "not yet" with remain ["src/infra/db.ts:1"]
+      Then edit 0 is "done", because the fate's file is its old path, though that fate is stale on the browsed scan after the move, and edit 1 is "not yet" with remain ["src/infra/db.ts:1"]
 
     Scenario: A saved rule is matched as written, and a test import breaks it
       Given the plan's contract is only {"name":"bindweed:no-src-c++-to-src-app-a-ts","severity":"error","comment":"src/c++ must not import src/app/a.ts","from":{"path":"^src/c\\+\\+/"},"to":{"path":"^src/app/a\\.ts$"}}
@@ -315,14 +317,14 @@ Feature: watch a run converge on the plan
 
     Scenario: The worktree graph has c.ts and the browsed graph does not
       When I send "GET /api/graph?at=src&plan=gate&converge=gate" with the token
-      Then the status is 200 and "src/app" has files 3
-      And "src/core" and "src/ports" are nodes
+      Then the status is 200 and "src/app" has files 4: a.ts, b.ts, c.ts and the planned model.ts
+      And "src/ports" is a node and "src/domain" is not
       When I send "GET /api/pairs?from=src/app&to=src/infra&at=src&converge=gate" with the token
       Then the pairs are ["src/app/a.ts","src/infra/db.ts"], ["src/app/b.ts","src/infra/db.ts"] and ["src/app/c.ts","src/infra/db.ts"]
       When I send "GET /api/detail?id=src/app&at=src&converge=gate" with the token
       Then the body names "src/app/c.ts"
       When I send "GET /api/graph?at=src&plan=gate" with the token
-      Then "src/app" has files 2 and there is no node "src/app/c.ts"
+      Then "src/app" has files 3: a.ts, b.ts and the planned model.ts, and there is no node "src/app/c.ts"
       When I send "GET /api/pairs?from=src/app&to=src/infra&at=src" with the token
       Then the pairs are ["src/app/a.ts","src/infra/db.ts"] and ["src/app/b.ts","src/infra/db.ts"]
       And "/tmp/qa/converge-wt/.bindweed" does not exist
@@ -383,15 +385,17 @@ Feature: watch a run converge on the plan
     asides, and the box handle's "Draw dependency" label; dragging from a
     handle draws nothing. A drop of a row on a box or crumb does nothing.
     "Now", "Planned", "⚙" and "Rescan" still work.
-    On the canvas a not-yet edit keeps what 005 and 006 draw, with no
-    data-converge. Each kind marks the following, and only when it is in
+    On the canvas a not-yet edit keeps what 005 and 006 draw for the
+    converge graph, with no data-converge; when the edit is stale on the
+    worktree scan, that is nothing of its own. Each kind marks the following, and only when it is in
     the view at the current at. Green is "#16a34a", computed rgb(22, 163,
     74); red is computed rgb(220, 38, 38).
     move-file and rename-file: done sets data-converge="done" and a green
     computed color on the row "[data-path=<planned path>]". Contradicted
     draws a dashed row at the planned path, data-ghost="true" and
-    data-converge="contradicted", red, inside the planned package even when
-    that package is not in the scan.
+    data-converge="contradicted", red, inside the planned package's box.
+    When no box for that package is in view, no ghost row and no box are
+    drawn; the list's "✗" is the only marker.
     rename-package, merge-packages, split-package and create-package: done
     sets data-converge="done" on each destination box "[data-id=<path>]"
     (the new name, into, each part, or the created path) with a green
@@ -426,7 +430,7 @@ Feature: watch a run converge on the plan
       When I open bindweed at "#at=src&plan=gate"
       Then the toolbar buttons' accessible names include "Tasks", "Launch", "Settings", "Converge" in that order, with nothing between Tasks and Launch or Launch and Settings
       And there is no "p.converge-header"
-      And the cut row shows "no such file src/app/c.ts"
+      And the move row shows no stale reason and the cut row shows "no such file src/app/c.ts"
       When I click "Converge"
       Then the hash is "#at=src&plan=gate&converge=gate" and the header is "0 of 4 edits done · 0 of 2 rules hold"
       And the marks are "○", "○", "○", "○" and their computed colors are rgb(100, 116, 139)
@@ -434,7 +438,7 @@ Feature: watch a run converge on the plan
       And the rules show "src/app must not import src/infra" and "No circular dependencies", each with an "○"
       And "g.cutmark[data-from='src/app'][data-to='src/infra']" has no data-converge, its stroke is "#94a3b8" and its "✂" fill is "#64748b"
       And "[data-id='src/ports']" reads "0 files" and has no data-converge
-      And "[data-path='src/core/model.ts']" has no data-converge and its computed color is not rgb(22, 163, 74)
+      And the planned row "[data-path='src/app/model.ts']" is in the "src/app" box, has no data-converge, and its computed color is not rgb(22, 163, 74)
       And "[data-path='src/app/b.ts']" has data-fate "delete"
       And Undo, Redo, every Remove, "Plan", "New plan…", "Delete plan", "Contract", "Tasks" and "Launch" are disabled
       And there is no "Canvas" button, no "Menu" button, no "proposals" or "ask" aside, and no "Draw dependency" label
@@ -442,17 +446,17 @@ Feature: watch a run converge on the plan
       And I drag the "src/app/a.ts" row onto the "src/infra" box
       Then the change list still has 4 edit rows and the gate plan's bytes are unchanged
       When I click "Leave"
-      Then the hash is "#at=src&plan=gate", there is no converge header, and "src/app" shows 2 files
+      Then the hash is "#at=src&plan=gate", there is no converge header, and "src/app" shows 3 files
 
     Scenario: Done marks turn green, a contradicted move turns red, and the plan file stays
       Given neither model path exists in the worktree
       When I open bindweed at "#at=src&plan=gate&converge=gate"
       Then the move's mark is "✗" with computed color rgb(220, 38, 38)
-      And a dashed "[data-path='src/core/model.ts']" has data-converge "contradicted" and computed color rgb(220, 38, 38)
-      Given "src/core/model.ts" is restored as the only model path, the three "../infra/db" import lines are removed, and "src/ports/port.ts" is "export const port = 1;\n"
+      And a dashed "[data-path='src/app/model.ts']" in the "src/app" box has data-converge "contradicted" and computed color rgb(220, 38, 38)
+      Given "src/app/model.ts" is restored as the only model path, the three "../infra/db" import lines are removed, and "src/ports/port.ts" is "export const port = 1;\n"
       When I click "Rescan"
       Then the header is "3 of 4 edits done · 1 of 2 rules hold"
-      And "[data-path='src/core/model.ts']" has data-converge "done" and computed color rgb(22, 163, 74)
+      And "[data-path='src/app/model.ts']" has data-converge "done" and computed color rgb(22, 163, 74)
       And the cut's "✂" fill is "#16a34a" and its line's stroke is "#16a34a"
       And "[data-id='src/ports']" has data-converge "done" and computed border-top-color rgb(22, 163, 74)
       And the move's, the cut's and the package's marks are "✓" with computed color rgb(22, 163, 74)
@@ -500,7 +504,7 @@ Feature: watch a run converge on the plan
       When I open bindweed at "#at=src&plan=gate&converge=missing"
       Then the architecture pane shows "no such run" and the toolbar button reads "Leave"
       When I click "Leave"
-      Then the hash is "#at=src&plan=gate" and "src/app" shows 2 files
+      Then the hash is "#at=src&plan=gate" and "src/app" shows 3 files
       When I click "Converge", then "Files", then "Architecture"
       Then the hash is "#at=src&plan=gate" and there is no converge header
 
