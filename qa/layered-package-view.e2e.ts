@@ -416,7 +416,7 @@ test('qa: layered package view', async ({ page, context }) => {
     await page.goto(printedLink);
     await expect(page).toHaveTitle('bindweed — layered');
     await expect(page).toHaveURL(`${ORIGIN}/`);
-    await expect(page.getByRole('tab')).toHaveText(['Files', 'Architecture']);
+    await expect(page.getByRole('tab')).toHaveText(['Files', 'Architecture', 'Runs']);
     await expect(page.getByRole('tab', { name: 'Files' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.locator('aside nav button')).toHaveText(['layered/', 'notes/', 'src/', 'tsconfig.json']);
     await expect(page.locator('main')).toHaveText('select a file');
