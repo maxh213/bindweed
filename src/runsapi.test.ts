@@ -573,6 +573,16 @@ describe('GET /api/runs', () => {
     expect((await call('/api/runs')).body.runs[0]).toMatchObject({ position: `task 001-task · ${role} · 0 of 1 tasks`, logTail: lines.slice(-20) });
   });
 
+  it('The current role keeps every digit of attempt 10', async () => {
+    const dead = await entry('dead');
+    const lines = ['== qa (09-qa) attempt 2', '== coder (03-coder) attempt 10'];
+    await log(worktreeOf('dead'), '001-task', logged(lines), '12:10');
+    await writeRuns([dead]);
+    const answer = await call('/api/runs');
+    expect(answer.status).toBe(200);
+    expect(answer.body.runs[0]).toMatchObject({ state: 'dead', position: 'task 001-task · coder · attempt 10 · 0 of 1 tasks', logTail: lines });
+  });
+
   it('A pid that refuses kill -0 is alive', async () => {
     const [dead, scErr] = [await entry('dead'), await entry('sc-err')];
     const denied = new Set([dead.pid, scErr.pid]);
