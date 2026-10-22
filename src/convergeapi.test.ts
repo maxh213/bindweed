@@ -296,7 +296,9 @@ describe('GET /api/converge compares the worktree with the plan', () => {
         },
         'done',
       ],
+      ['rename-package half', { kind: 'rename-package', from: 'src/app', to: 'src/ui' }, () => wtMove('src/app/a.ts', 'src/ui/a.ts'), 'not yet'],
       ['rename-package lost', { kind: 'rename-package', from: 'src/domain', to: 'src/core' }, () => rm(wtPath('src/domain/model.ts')), 'contradicted'],
+      ['create-package nested', { kind: 'create-package', path: 'src/ports' }, () => put(wtPath('src/ports/http/port.ts'), 'export const port = 1;\n'), 'done'],
       [
         'merge-packages',
         { kind: 'merge-packages', packages: ['src/app', 'src/domain'], into: 'src/core' },

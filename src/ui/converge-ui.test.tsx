@@ -241,6 +241,13 @@ async function show(hash: string): Promise<void> {
   });
 }
 
+async function reopen(hash: string): Promise<void> {
+  await act(async () => reactRoot?.unmount());
+  reactRoot = null;
+  dom.window.close();
+  await show(hash);
+}
+
 async function until(check: () => void | Promise<void>): Promise<void> {
   await waitFor(check, { timeout: 6000, interval: 25 });
 }
@@ -456,6 +463,54 @@ describe('the page shows Converge, then returns to the browsed repository', () =
     const data = one("[data-id='src/data']");
     expect([data.dataset.converge, window.getComputedStyle(data).borderTopColor]).toEqual(['done', GREEN]);
   });
+
+  it("A stale later move shifts the canvas mark off the verdict's path", async () => {
+    await plan([{ kind: 'move-file', file: 'src/domain/model.ts', to: 'src/app' }, { kind: 'move-file', file: 'src/app/model.ts', to: 'src/nowhere' }], null);
+    await wtMove('src/domain/model.ts', 'src/app/model.ts');
+    await show('#at=src&plan=gate&converge=gate');
+    await until(() => expect(marks()).toEqual([
+      { text: '✓', color: GREEN, status: 'done' },
+      { text: '○', color: GREY, status: 'not yet' },
+    ]));
+    expect(header()).toBe('1 of 2 edits done · 0 of 0 rules hold');
+    await until(() => expect(one("[data-path='src/app/model.ts']").dataset.converge).toBeUndefined());
+    expect(document.querySelector("[data-path='src/nowhere/model.ts']")).toBeNull();
+    expect(document.querySelector("[data-id='src/nowhere']")).toBeNull();
+  });
+
+  it('A contradicted rename, merge or split draws no red row', async () => {
+    await plan([{ kind: 'rename-package', from: 'src/infra', to: 'src/app' }], null);
+    await rm(wtPath('src/infra/db.ts'));
+    await show('#at=src&plan=gate&converge=gate');
+    await until(() => expect(marks()).toEqual([{ text: '✗', color: RED, status: 'contradicted' }]));
+    expect(header()).toBe('0 of 1 edits done · 0 of 0 rules hold');
+    await until(() => expect(boxRows('src/app').map(item => item.textContent)).toContain('a.ts'));
+    expect(one("[data-id='src/app']").dataset.converge).toBeUndefined();
+    expect(document.querySelector("[data-path='src/app/db.ts']")).toBeNull();
+    expect(document.querySelector('.box-row[data-converge="contradicted"]')).toBeNull();
+    await plan([{ kind: 'merge-packages', packages: ['src/app', 'src/domain'], into: 'src/infra' }], null);
+    await cp(join(root, 'src/infra/db.ts'), wtPath('src/infra/db.ts'));
+    await rm(wtPath('src/app/a.ts'));
+    await rm(wtPath('src/app/b.ts'));
+    await rm(wtPath('src/domain/model.ts'));
+    await reopen('#at=src&plan=gate&converge=gate');
+    await until(() => expect(marks()).toEqual([{ text: '✗', color: RED, status: 'contradicted' }]));
+    expect(header()).toBe('0 of 1 edits done · 0 of 0 rules hold');
+    await until(() => expect(boxRows('src/infra').map(item => item.textContent)).toEqual(['db.ts']));
+    expect(one("[data-id='src/infra']").dataset.converge).toBeUndefined();
+    expect(document.querySelector("[data-path='src/infra/a.ts']")).toBeNull();
+    expect(document.querySelector('.box-row[data-converge="contradicted"]')).toBeNull();
+    await plan([{ kind: 'split-package', package: 'src/app', parts: [{ name: 'read', files: ['src/app/a.ts'] }, { name: 'write', files: ['src/app/b.ts'] }] }], null);
+    await cp(join(root, 'src/domain/model.ts'), wtPath('src/domain/model.ts'));
+    await put(wtPath('src/app/read/other.ts'), 'export const other = 1;\n');
+    await reopen('#at=src/app&plan=gate&converge=gate');
+    await until(() => expect(marks()).toEqual([{ text: '✗', color: RED, status: 'contradicted' }]));
+    expect(header()).toBe('0 of 1 edits done · 0 of 0 rules hold');
+    await until(() => expect(boxRows('src/app/read').map(item => item.dataset.path)).toEqual(['src/app/read/other.ts']));
+    expect(one("[data-id='src/app/read']").dataset.converge).toBeUndefined();
+    expect(document.querySelector("[data-path='src/app/read/a.ts']")).toBeNull();
+    expect(document.querySelector('.box-row[data-converge="contradicted"]')).toBeNull();
+  }, 60000);
 
   it('Now, Planned, the rows and the detail all read the worktree', async () => {
     await show('#at=src&plan=gate&converge=gate');
