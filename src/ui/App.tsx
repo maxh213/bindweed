@@ -10,6 +10,7 @@ import {
   applyPage,
   applyTitle,
   atFromLocation,
+  convergeFromLocation,
   expandedFromLocation,
   nextRuns,
   openSelection,
@@ -144,6 +145,7 @@ function BrowserApp(props: Readonly<AppProps>) {
   const [tab, setTab] = useState(() => tabFromLocation(props.location));
   const [at, setAt] = useState(() => atFromLocation(props.location));
   const [plan, setPlan] = useState(() => planFromLocation(props.location));
+  const [converge, setConverge] = useState(() => convergeFromLocation(props.location));
 
   const treeQuery = useQuery({
     queryKey: ['tree', props.token] as const,
@@ -154,7 +156,14 @@ function BrowserApp(props: Readonly<AppProps>) {
   const openPlan = (slug: string) => {
     setTab('arch');
     setPlan(slug);
+    setConverge(null);
     writeHistory(props.historyApi, { kind: 'at', at, plan: slug });
+  };
+  const openConverge = (slug: string) => {
+    setTab('arch');
+    setPlan(slug);
+    setConverge(slug);
+    writeHistory(props.historyApi, { kind: 'at', at, plan: slug, converge: slug });
   };
   const watch = useRunsWatch(props.token, props.fetcher, tab === 'runs');
   const runs = useRunsPane({
@@ -165,6 +174,7 @@ function BrowserApp(props: Readonly<AppProps>) {
     token: props.token,
     fetcher: props.fetcher,
     onOpenPlan: openPlan,
+    onConverge: openConverge,
     onGone: watch.drop,
   });
 
@@ -174,7 +184,10 @@ function BrowserApp(props: Readonly<AppProps>) {
 
   const events = props.events ?? window;
   useEffect(() => {
-    const onPop = () => applyPage({ setTab, setAt, setSelected, setExpanded, setPlan }, pageFromLocation(props.location));
+    const onPop = () => {
+      applyPage({ setTab, setAt, setSelected, setExpanded, setPlan }, pageFromLocation(props.location));
+      setConverge(convergeFromLocation(props.location));
+    };
     events.addEventListener('popstate', onPop);
     return () => events.removeEventListener('popstate', onPop);
   }, [events, props.location]);
@@ -187,6 +200,7 @@ function BrowserApp(props: Readonly<AppProps>) {
 
   const showArch = () => {
     setTab('arch');
+    setConverge(null);
     writeHistory(props.historyApi, { kind: 'at', at, plan });
   };
 
@@ -198,12 +212,18 @@ function BrowserApp(props: Readonly<AppProps>) {
   const drillTo = (dir: string) => {
     setTab('arch');
     setAt(dir);
-    writeHistory(props.historyApi, { kind: 'at', at: dir, plan });
+    writeHistory(props.historyApi, { kind: 'at', at: dir, plan, converge });
   };
 
   const changePlan = (next: string | null) => {
     setPlan(next);
+    setConverge(null);
     writeHistory(props.historyApi, { kind: 'at', at, plan: next });
+  };
+
+  const changeConverge = (next: string | null) => {
+    setConverge(next);
+    writeHistory(props.historyApi, { kind: 'at', at, plan, converge: next });
   };
 
   const openFile = (path: string) => {
@@ -232,7 +252,20 @@ function BrowserApp(props: Readonly<AppProps>) {
         onSelect={selectFile}
       />
     ),
-    arch: <ArchView token={props.token} at={at} plan={plan} fetcher={props.fetcher} onDrill={drillTo} onOpenFile={openFile} onPlanChange={changePlan} />,
+    arch: (
+      <ArchView
+        token={props.token}
+        at={at}
+        plan={plan}
+        converge={converge}
+        runs={watch.data}
+        fetcher={props.fetcher}
+        onDrill={drillTo}
+        onOpenFile={openFile}
+        onPlanChange={changePlan}
+        onConverge={changeConverge}
+      />
+    ),
     runs: runs.pane,
   };
 

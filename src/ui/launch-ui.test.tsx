@@ -60,7 +60,7 @@ const fetcher = (async (path: string, init?: RequestInit) => {
 }) as typeof fetch;
 
 function Harness(props: Readonly<{ slug: string | null }>) {
-  const view = usePlanSession({ token: 'tok', fetcher, at: '', slug: props.slug, tests: false, external: false, pins: {}, shown: 'planned', ready: true, nodes: [], edges: [], other: undefined, planned: undefined, named: undefined, ids: new Set(), selection: [], deletable: null, onShown: () => undefined, onPlanChange: () => undefined, onDrill: () => undefined, onOpenFile: () => undefined, onPickNode: () => undefined, onPickArrow: () => undefined });
+  const view = usePlanSession({ token: 'tok', fetcher, at: '', slug: props.slug, tests: false, external: false, pins: {}, shown: 'planned', ready: true, nodes: [], edges: [], other: undefined, planned: undefined, named: undefined, ids: new Set(), selection: [], deletable: null, onShown: () => undefined, onPlanChange: () => undefined, converge: null, verdict: undefined, convergeLabel: null, onConverge: () => undefined, onDrill: () => undefined, onOpenFile: () => undefined, onPickNode: () => undefined, onPickArrow: () => undefined });
   return <>{view.toolbar}{view.dialogs}</>;
 }
 

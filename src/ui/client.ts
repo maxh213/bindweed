@@ -176,14 +176,14 @@ function parseBody<T>(schema: z.ZodType<T>, raw: unknown, ok: boolean): T | { er
   return parsed.success ? parsed.data : { error: 'cannot reach bindweed' };
 }
 
-export type GraphQuery = { tests?: boolean; external?: boolean; plan?: string | null; proposals?: string };
+export type GraphQuery = { tests?: boolean; external?: boolean; plan?: string | null; proposals?: string; converge?: string | null };
 
 function withFlag(params: URLSearchParams, name: string, on: boolean | undefined): void {
   if (on === true) params.set(name, '1');
 }
 
-function withPlan(params: URLSearchParams, plan: string | null | undefined): void {
-  if (typeof plan === 'string' && plan !== '') params.set('plan', plan);
+function withSlug(params: URLSearchParams, name: string, slug: string | null | undefined): void {
+  if (typeof slug === 'string' && slug !== '') params.set(name, slug);
 }
 
 function withProposals(params: URLSearchParams, proposals: string | undefined): void {
@@ -194,8 +194,9 @@ function queryUrl(path: string, params: Record<string, string>, query: GraphQuer
   const search = new URLSearchParams(params);
   withFlag(search, 'tests', query.tests);
   withFlag(search, 'external', query.external);
-  withPlan(search, query.plan);
+  withSlug(search, 'plan', query.plan);
   withProposals(search, query.proposals);
+  withSlug(search, 'converge', query.converge);
   return `${path}?${search.toString()}`;
 }
 
@@ -277,9 +278,13 @@ export async function fetchDetail(
 
 export type { LayoutDoc };
 
-export async function postRescan(token: string, fetcher: typeof fetch = fetch): Promise<RescanJson | { error: string }> {
+function rescanUrl(converge: string | null): string {
+  return converge === null ? '/api/rescan' : `/api/rescan?converge=${encodeURIComponent(converge)}`;
+}
+
+export async function postRescan(token: string, fetcher: typeof fetch = fetch, converge: string | null = null): Promise<RescanJson | { error: string }> {
   try {
-    const res = await fetcher('/api/rescan', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+    const res = await fetcher(rescanUrl(converge), { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
     return parseBody(rescanJsonSchema, await res.json(), res.ok);
   } catch {
     return { error: 'cannot reach bindweed' };
@@ -590,6 +595,21 @@ const runSchema = z.object({
 });
 
 export type RunCard = z.infer<typeof runSchema>;
+
+const convergeSchema = z.object({
+  slug: z.string(),
+  worktree: z.string(),
+  pidAlive: z.boolean(),
+  header: z.string(),
+  edits: z.array(z.object({ index: z.number(), status: z.enum(['done', 'not yet', 'contradicted', 'note']), sentence: z.string(), remain: z.array(z.string()).optional() })),
+  rules: z.array(z.object({ name: z.string(), comment: z.string(), holds: z.boolean(), breaks: z.array(z.string()).optional() })),
+});
+
+export type ConvergeAnswer = z.infer<typeof convergeSchema>;
+
+export function fetchConverge(token: string, slug: string, fetcher: typeof fetch = fetch) {
+  return answered(fetcher, `/api/converge?slug=${encodeURIComponent(slug)}`, bearer(token), readWith(convergeSchema));
+}
 
 export function fetchRuns(token: string, fetcher: typeof fetch = fetch) {
   return answered(fetcher, '/api/runs', bearer(token), readWith(z.object({ runs: z.array(runSchema) })));

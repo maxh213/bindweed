@@ -23,7 +23,16 @@ function elapsed(ms: number): string {
   return `${Math.floor(hours / 24)}d ${hours % 24}h`;
 }
 
-type CardProps = Readonly<{ card: RunCard; now: number; at: string; token: string; fetcher: typeof fetch; onOpenPlan: (slug: string) => void; onGone: (worktree: string) => void }>;
+type CardProps = Readonly<{
+  card: RunCard;
+  now: number;
+  at: string;
+  token: string;
+  fetcher: typeof fetch;
+  onOpenPlan: (slug: string) => void;
+  onConverge: (slug: string) => void;
+  onGone: (worktree: string) => void;
+}>;
 
 function Title(props: CardProps) {
   const { card } = props;
@@ -58,6 +67,16 @@ function Forget(props: CardProps) {
   );
 }
 
+function ConvergeButton(props: CardProps) {
+  const { card } = props;
+  if (!card.worktreeExists || !card.planExists) return null;
+  return (
+    <button type="button" onClick={() => props.onConverge(card.slug)}>
+      Converge
+    </button>
+  );
+}
+
 function Card(props: CardProps) {
   const { card } = props;
   return (
@@ -86,6 +105,7 @@ function Card(props: CardProps) {
         <summary>Log tail</summary>
         <pre>{card.logTail.join('\n')}</pre>
       </details>
+      <ConvergeButton {...props} />
       {card.state === 'worktree removed' && <Forget {...props} />}
     </article>
   );
@@ -97,6 +117,7 @@ type PanelProps = Readonly<{
   token: string;
   fetcher: typeof fetch;
   onOpenPlan: (slug: string) => void;
+  onConverge: (slug: string) => void;
   onGone: (worktree: string) => void;
 }>;
 
@@ -146,11 +167,14 @@ type PaneProps = Readonly<{
   token: string;
   fetcher: typeof fetch;
   onOpenPlan: (slug: string) => void;
+  onConverge: (slug: string) => void;
   onGone: (worktree: string) => void;
 }>;
 
 export function useRunsPane(props: PaneProps) {
   const state = runsStateOf(props.data, props.pending, props.now);
-  const pane = <RunsPanel state={state} at={props.at} token={props.token} fetcher={props.fetcher} onOpenPlan={props.onOpenPlan} onGone={props.onGone} />;
+  const pane = (
+    <RunsPanel state={state} at={props.at} token={props.token} fetcher={props.fetcher} onOpenPlan={props.onOpenPlan} onConverge={props.onConverge} onGone={props.onGone} />
+  );
   return { running: runningCount(state), pane };
 }

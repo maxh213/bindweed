@@ -8,12 +8,12 @@ type ChangeLine = { sentence: string; stale: string | null; warnings: WarningLin
 type Shown = 'now' | 'planned';
 
 export function PlanSelect(
-  props: Readonly<{ value: string; plans: PlanSummary[]; labels: Map<string, string>; onChoose: (slug: string | null) => void }>,
+  props: Readonly<{ value: string; plans: PlanSummary[]; labels: Map<string, string>; disabled?: boolean; onChoose: (slug: string | null) => void }>,
 ) {
   return (
     <label>
       Plan{' '}
-      <select aria-label="Plan" value={props.value} onChange={event => props.onChoose(event.currentTarget.value === '' ? null : event.currentTarget.value)}>
+      <select aria-label="Plan" value={props.value} disabled={props.disabled} onChange={event => props.onChoose(event.currentTarget.value === '' ? null : event.currentTarget.value)}>
         <option value="">No plan</option>
         {props.plans.map(plan => (
           <option key={plan.slug} value={plan.slug}>

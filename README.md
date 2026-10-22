@@ -40,6 +40,7 @@ Status: being built by marestail, one slice per file in `tasks/`.
 | `/api/config` | live |
 | `/api/repo` | live |
 | `/api/runs` | live |
+| `/api/converge` | live |
 
 ## Environment
 

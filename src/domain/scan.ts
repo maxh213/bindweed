@@ -8,6 +8,8 @@ export type ExternalRef = { from: string; name: string; kind: 'runtime' | 'type'
 
 export type WorkspacePackage = { dir: string; name: string };
 
+export type ImportLine = { from: string; to: string; line: number; resolved: boolean };
+
 type PlannedEdge = { from: string; to: string };
 
 export type PlanWarning =
@@ -25,6 +27,8 @@ export type ScanResult = {
   deleted?: string[];
   hidden?: string[];
 };
+
+export type WorktreeScan = { scan: ScanResult; imports: ImportLine[] };
 
 const TEST_DIR = /(^|\/)(__tests__|test|tests|e2e)(\/|$)/;
 const TEST_FILE = /\.(test|spec)\./;

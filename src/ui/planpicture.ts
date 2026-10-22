@@ -6,7 +6,7 @@ import type { ProposalInk } from './proposalpicture.ts';
 
 export type ShownGraph = 'now' | 'planned';
 
-export type RowInk = { path: string; name: string; ghost: boolean; deleted: boolean };
+export type RowInk = { path: string; name: string; ghost: boolean; deleted: boolean; converge?: 'done' | 'contradicted' };
 
 export type GhostBoxInk = { id: string; name: string; x: number; y: number };
 
@@ -22,8 +22,11 @@ type PlanInk = {
   notes: NoteInk;
 };
 
+type ConvergeInk = { rows: Map<string, 'done' | 'contradicted'>; boxes: Set<string>; cuts: CutMarkInk[]; arrows: CutMarkInk[] };
+
 export type Planning = {
   ink: PlanInk;
+  converge: ConvergeInk | null;
   proposal: ProposalInk;
   mergeReady: boolean;
   onDropFile: (file: string, dir: string) => boolean;

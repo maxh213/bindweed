@@ -1,5 +1,5 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import type { Crumb, GraphNode, GraphView, NodeDetail } from '../domain/graph.ts';
 import {
   arrange,
@@ -14,7 +14,7 @@ import {
   withSettings,
 } from '../domain/layout.ts';
 import { ArchCanvas, CanvasProvider, useCenterOn, type CanvasProps, type FocusRequest, type MarkSel } from './ArchCanvas.tsx';
-import { fetchDetail, fetchGraph, fetchLayout, postRescan, putLayout } from './client.ts';
+import { fetchConverge, fetchDetail, fetchGraph, fetchLayout, postRescan, putLayout, type ConvergeAnswer, type RunCard } from './client.ts';
 import { DetailSlot } from './DetailPanel.tsx';
 import { chosenId, detailId, detailOn, parentDir } from './draw.ts';
 import { MetricsDrawer, OverlayBox } from './HealthControls.tsx';
@@ -30,9 +30,16 @@ export type ArchViewProps = {
   onDrill: (dir: string) => void;
   onOpenFile: (path: string) => void;
   onPlanChange?: (plan: string | null) => void;
+  converge?: string | null;
+  runs?: { runs: RunCard[] } | { error: string };
+  onConverge?: (slug: string | null) => void;
 };
 
 type Shown = 'now' | 'planned';
+
+type Verdict = ConvergeAnswer | { error: string } | undefined;
+
+const CONVERGE_POLL_MS = 20000;
 
 const EMPTY_PINS: Record<string, Pin> = {};
 
@@ -200,6 +207,10 @@ function planChangerOf(handler: ((plan: string | null) => void) | undefined): (p
   return handler ?? (() => undefined);
 }
 
+function convergeChangerOf(handler: ((slug: string | null) => void) | undefined): (slug: string | null) => void {
+  return handler ?? (() => undefined);
+}
+
 function overlayOf(settings: LayoutSettings): OverlayName {
   return settings.overlay ?? 'none';
 }
@@ -234,7 +245,95 @@ function deletableOf(marked: MarkSel | null): { from: string; to: string } | nul
   return { from: marked.from, to: marked.to };
 }
 
-function ArchPane(props: Readonly<ArchViewProps & { slug: string | null }>) {
+function pageVisible(): boolean {
+  return document.visibilityState === 'visible';
+}
+
+function settled(client: QueryClient): Promise<void> {
+  return new Promise(done => {
+    const check = (): void => {
+      if (client.isFetching() > 0) return;
+      stop();
+      done();
+    };
+    const stop = client.getQueryCache().subscribe(check);
+    check();
+  });
+}
+
+function pidAliveOf(verdict: Verdict): boolean {
+  return verdict !== undefined && 'pidAlive' in verdict && verdict.pidAlive;
+}
+
+function watching(converge: string | null, verdict: Verdict): boolean {
+  return converge !== null && pidAliveOf(verdict);
+}
+
+function editingSlug(converge: string | null, slug: string | null): string | null {
+  return converge === null ? slug : null;
+}
+
+type Watch = { live: boolean; timer?: ReturnType<typeof setTimeout> };
+
+function waitThenRefresh(client: QueryClient, watch: Watch, refresh: () => Promise<void>): void {
+  void settled(client).then(() => {
+    if (watch.live) watch.timer = setTimeout(() => void refresh().then(() => waitThenRefresh(client, watch, refresh)), CONVERGE_POLL_MS);
+  });
+}
+
+function useVisible(hidden: { current: boolean }): boolean {
+  const [visible, setVisible] = useState(pageVisible);
+  useEffect(() => {
+    const update = (): void => {
+      const now = pageVisible();
+      hidden.current ||= !now;
+      setVisible(now);
+    };
+    document.addEventListener('visibilitychange', update);
+    return () => document.removeEventListener('visibilitychange', update);
+  }, [hidden]);
+  return visible;
+}
+
+function startWatch(client: QueryClient, hidden: { current: boolean }, refresh: () => Promise<void>): Watch {
+  const watch: Watch = { live: true };
+  const wasHidden = hidden.current;
+  hidden.current = false;
+  if (wasHidden) void refresh().then(() => waitThenRefresh(client, watch, refresh));
+  else waitThenRefresh(client, watch, refresh);
+  return watch;
+}
+
+function useConvergeWatch(active: boolean, refresh: () => Promise<void>): void {
+  const client = useQueryClient();
+  const hidden = useRef(false);
+  const visible = useVisible(hidden);
+  const refreshNow = useEffectEvent(refresh);
+  useEffect(() => {
+    if (!visible) return undefined;
+    if (!active) {
+      hidden.current = false;
+      return undefined;
+    }
+    const watch = startWatch(client, hidden, () => refreshNow());
+    return () => {
+      watch.live = false;
+      clearTimeout(watch.timer);
+    };
+  }, [active, visible, client]);
+}
+
+function convergeable(runs: ArchViewProps['runs'], slug: string): boolean {
+  if (runs === undefined || 'error' in runs) return false;
+  return runs.runs.some(card => card.slug === slug && card.worktreeExists && card.planExists);
+}
+
+function convergeLabel(converge: string | null, slug: string | null, runs: ArchViewProps['runs']): string | null {
+  if (converge !== null) return 'Leave';
+  return slug !== null && convergeable(runs, slug) ? 'Converge' : null;
+}
+
+function ArchPane(props: Readonly<ArchViewProps & { slug: string | null; converging: string | null }>) {
   const queryClient = useQueryClient();
   const layoutQuery = useQuery({
     queryKey: ['layout', props.token] as const,
@@ -242,20 +341,26 @@ function ArchPane(props: Readonly<ArchViewProps & { slug: string | null }>) {
   });
   const settings = settingsOf(layoutQuery.data);
   const slug = props.slug;
+  const converge = props.converging;
   const nowQuery = useQuery({
-    queryKey: ['graph', props.token, props.at, settings.tests, settings.external, ''] as const,
-    queryFn: () => fetchGraph(props.token, props.at, props.fetcher, settings),
+    queryKey: ['graph', props.token, props.at, settings.tests, settings.external, '', converge] as const,
+    queryFn: () => fetchGraph(props.token, props.at, props.fetcher, { ...settings, converge }),
     enabled: layoutQuery.data !== undefined,
   });
   const plannedQuery = useQuery({
-    queryKey: ['graph', props.token, props.at, settings.tests, settings.external, slug] as const,
-    queryFn: () => fetchGraph(props.token, props.at, props.fetcher, { ...settings, plan: slug }),
+    queryKey: ['graph', props.token, props.at, settings.tests, settings.external, slug, converge] as const,
+    queryFn: () => fetchGraph(props.token, props.at, props.fetcher, { ...settings, plan: slug, converge }),
     enabled: plannedOn(layoutQuery.data, slug),
   });
   const plannedTestsQuery = useQuery({
-    queryKey: ['graph', props.token, props.at, true, false, slug] as const,
-    queryFn: () => fetchGraph(props.token, props.at, props.fetcher, { tests: true, external: false, plan: slug }),
+    queryKey: ['graph', props.token, props.at, true, false, slug, converge] as const,
+    queryFn: () => fetchGraph(props.token, props.at, props.fetcher, { tests: true, external: false, plan: slug, converge }),
     enabled: plannedOn(layoutQuery.data, slug),
+  });
+  const verdictQuery = useQuery({
+    queryKey: ['converge', props.token, converge] as const,
+    queryFn: () => fetchConverge(props.token, String(converge), props.fetcher),
+    enabled: converge !== null,
   });
   const [shown, setShown] = useState<Shown>('planned');
   const [picked, setPicked] = useState<string | null>(null);
@@ -278,10 +383,14 @@ function ArchPane(props: Readonly<ArchViewProps & { slug: string | null }>) {
   const selection = selectionOf(chosen, also, ids);
   const detailPlan = detailPlanOf(shown, slug);
   const detailQuery = useQuery({
-    queryKey: ['detail', props.token, props.at, detailId(chosen), settings.tests, settings.external, detailPlan] as const,
-    queryFn: () => fetchDetail(props.token, detailId(chosen), props.at, props.fetcher, { ...settings, plan: detailPlan }),
+    queryKey: ['detail', props.token, props.at, detailId(chosen), settings.tests, settings.external, detailPlan, converge] as const,
+    queryFn: () => fetchDetail(props.token, detailId(chosen), props.at, props.fetcher, { ...settings, plan: detailPlan, converge }),
     enabled: detailOn(chosen),
   });
+  const refresh = async (): Promise<void> => {
+    await Promise.all(['converge', 'graph', 'detail'].map(key => queryClient.invalidateQueries({ queryKey: [key] })));
+  };
+  useConvergeWatch(watching(converge, verdictQuery.data), refresh);
   const body = detailBody(chosen, detailQuery.data, keptDetail);
   useEffect(() => {
     keptDetail = body;
@@ -308,6 +417,9 @@ function ArchPane(props: Readonly<ArchViewProps & { slug: string | null }>) {
     fetcher: props.fetcher,
     at: props.at,
     slug,
+    converge,
+    verdict: verdictQuery.data,
+    convergeLabel: convergeLabel(converge, slug, props.runs),
     tests: settings.tests,
     external: settings.external,
     pins,
@@ -323,6 +435,7 @@ function ArchPane(props: Readonly<ArchViewProps & { slug: string | null }>) {
     deletable: deletableOf(marked),
     onShown: setShown,
     onPlanChange: planChangerOf(props.onPlanChange),
+    onConverge: convergeChangerOf(props.onConverge),
     onDrill: props.onDrill,
     onOpenFile: props.onOpenFile,
     onPickNode: pickNode,
@@ -365,7 +478,11 @@ function ArchPane(props: Readonly<ArchViewProps & { slug: string | null }>) {
     commitLayout(layoutQuery.data, doc0 => withPin(doc0, props.at, id, { x, y }), store);
   };
   const rescan = async (): Promise<void> => {
-    await postRescan(props.token, props.fetcher);
+    await postRescan(props.token, props.fetcher, converge);
+    if (converge !== null) {
+      await refresh();
+      return;
+    }
     await queryClient.invalidateQueries({ queryKey: ['graph'] });
     await queryClient.invalidateQueries({ queryKey: ['tree'] });
   };
@@ -388,7 +505,7 @@ function ArchPane(props: Readonly<ArchViewProps & { slug: string | null }>) {
             clearSelection();
             props.onDrill(dir);
           }}
-          onCrumbDrop={crumbDrops(slug, session.dropOnCrumb)}
+          onCrumbDrop={crumbDrops(editingSlug(converge, slug), session.dropOnCrumb)}
         />
         {session.toolbar}
         <OverlayBox overlay={overlay} flags={flags} onChoose={next => commitLayout(layoutQuery.data, settingsDoc({ overlay: next }), store)} />
@@ -443,9 +560,10 @@ function ArchPane(props: Readonly<ArchViewProps & { slug: string | null }>) {
 
 export function ArchView(props: Readonly<ArchViewProps>) {
   const slug = props.plan ?? null;
+  const converging = props.converge ?? null;
   return (
     <CanvasProvider>
-      <ArchPane key={slug} {...props} slug={slug} />
+      <ArchPane key={`${slug}\n${converging}`} {...props} slug={slug} converging={converging} />
     </CanvasProvider>
   );
 }

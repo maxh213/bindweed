@@ -19,7 +19,10 @@ import { SettingsDialog } from './SettingsDialog.tsx';
 import { TasksPanel, type TasksRun } from './TasksPanel.tsx';
 import { useAsk } from './asksession.tsx';
 import { RunFeedback } from './RunFeedback.tsx';
-import { deletePlan, fetchGraph, fetchPairs, fetchPlan, fetchPlans, postPlan, putPlan } from './client.ts';
+import { deletePlan, fetchGraph, fetchPairs, fetchPlan, fetchPlans, postPlan, putPlan, type ConvergeAnswer } from './client.ts';
+import { ConvergeList } from './ConvergeList.tsx';
+import { convergeMarks, withConverge, type ConvergeMarks } from './convergeink.ts';
+import type { ConvergeStatus } from '../domain/converge.ts';
 import { parentDir } from './draw.ts';
 import {
   CanvasMenu,
@@ -51,6 +54,9 @@ type PlanSessionProps = {
   fetcher: typeof fetch;
   at: string;
   slug: string | null;
+  converge: string | null;
+  verdict: ConvergeAnswer | { error: string } | undefined;
+  convergeLabel: string | null;
   tests: boolean;
   external: boolean;
   pins: Record<string, Pin>;
@@ -66,6 +72,7 @@ type PlanSessionProps = {
   deletable: ArrowEnds | null;
   onShown: (shown: ShownGraph) => void;
   onPlanChange: (plan: string | null) => void;
+  onConverge: (slug: string | null) => void;
   onDrill: (dir: string) => void;
   onOpenFile: (path: string) => void;
   onPickNode: (id: string) => void;
@@ -100,13 +107,16 @@ type RowPair = { id: string; now: GraphView | { error: string }; planned: GraphV
 
 type RowResult = { data?: RowPair };
 
-function rowQueryFor(token: string, fetcher: typeof fetch, id: string, tests: boolean, external: boolean, slug: string) {
+type RowAsk = { token: string; fetcher: typeof fetch; tests: boolean; external: boolean; slug: string; converge: string | null };
+
+function rowQueryFor(ask: RowAsk, id: string) {
+  const { token, fetcher, tests, external, slug, converge } = ask;
   return {
-    queryKey: ['graph', 'rows', token, id, tests, external, slug] as const,
+    queryKey: ['graph', 'rows', token, id, tests, external, slug, converge] as const,
     queryFn: async (): Promise<RowPair> => {
       const [now, planned] = await Promise.all([
-        fetchGraph(token, id, fetcher, { tests, external }),
-        fetchGraph(token, id, fetcher, { tests, external, plan: slug }),
+        fetchGraph(token, id, fetcher, { tests, external, converge }),
+        fetchGraph(token, id, fetcher, { tests, external, plan: slug, converge }),
       ]);
       return { id, now, planned };
     },
@@ -117,9 +127,11 @@ function rowPackages(results: readonly RowResult[]): RowPair[] {
   return results.map(result => result.data).filter((data): data is RowPair => data !== undefined);
 }
 
-function rowQueriesFor(token: string, fetcher: typeof fetch, nodes: GraphNode[], tests: boolean, external: boolean, slug: string | null) {
+function rowQueriesFor(props: Readonly<PlanSessionProps>) {
+  const slug = props.slug;
   if (slug === null) return [];
-  return packageIds(nodes).map(id => rowQueryFor(token, fetcher, id, tests, external, slug));
+  const ask: RowAsk = { token: props.token, fetcher: props.fetcher, tests: props.tests, external: props.external, slug, converge: props.converge };
+  return packageIds(props.nodes).map(id => rowQueryFor(ask, id));
 }
 
 function visibleEntries(ready: boolean, picture: Picture): Picture['entries'] {
@@ -143,49 +155,69 @@ function canRedoOf(doc: PlanDoc | null): boolean {
   return doc !== null && doc.redo.length > 0;
 }
 
-function PlanToolbar(
-  props: Readonly<{
-    slug: string | null;
-    plans: ReturnType<typeof planRoster>['plans'];
-    labels: Map<string, string>;
-    choice: string;
-    shown: ShownGraph;
-    onChoosePlan: (slug: string | null) => void;
-    onNewPlan: () => void;
-    onDeletePlan: () => void;
-    onShown: (shown: ShownGraph) => void;
-    onNewPackage: () => void;
-    onContract: () => void;
-    onTasks: () => void;
-    onLaunch: () => void;
-    onSettings: () => void;
-  }>,
-) {
+type ToolbarProps = Readonly<{
+  slug: string | null;
+  locked: boolean;
+  convergeLabel: string | null;
+  plans: ReturnType<typeof planRoster>['plans'];
+  labels: Map<string, string>;
+  choice: string;
+  shown: ShownGraph;
+  onChoosePlan: (slug: string | null) => void;
+  onNewPlan: () => void;
+  onDeletePlan: () => void;
+  onShown: (shown: ShownGraph) => void;
+  onNewPackage: () => void;
+  onContract: () => void;
+  onTasks: () => void;
+  onLaunch: () => void;
+  onSettings: () => void;
+  onConverge: () => void;
+}>;
+
+function PlanTools(props: ToolbarProps) {
+  if (props.slug === null) return null;
   return (
     <>
-      <PlanSelect value={props.choice} plans={props.plans} labels={props.labels} onChoose={props.onChoosePlan} />
-      <button type="button" onClick={props.onNewPlan}>
+      <ShownSwitch shown={props.shown} onChoose={props.onShown} />
+      {props.locked ? null : <CanvasMenu onNewPackage={props.onNewPackage} />}
+      <button type="button" disabled={props.locked} onClick={props.onContract}>
+        Contract
+      </button>
+      <button type="button" disabled={props.locked} onClick={props.onTasks}>
+        Tasks
+      </button>
+      <button type="button" disabled={props.locked} onClick={props.onLaunch}>
+        Launch
+      </button>
+    </>
+  );
+}
+
+function ConvergeToggle(props: Readonly<{ label: string | null; onClick: () => void }>) {
+  if (props.label === null) return null;
+  return (
+    <button type="button" onClick={props.onClick}>
+      {props.label}
+    </button>
+  );
+}
+
+function PlanToolbar(props: ToolbarProps) {
+  return (
+    <>
+      <PlanSelect value={props.choice} plans={props.plans} labels={props.labels} disabled={props.locked} onChoose={props.onChoosePlan} />
+      <button type="button" disabled={props.locked} onClick={props.onNewPlan}>
         New plan…
       </button>
-      <button type="button" disabled={props.slug === null} onClick={props.onDeletePlan}>
+      <button type="button" disabled={props.slug === null || props.locked} onClick={props.onDeletePlan}>
         Delete plan
       </button>
-      {props.slug === null ? null : <ShownSwitch shown={props.shown} onChoose={props.onShown} />}
-      {props.slug === null ? null : <CanvasMenu onNewPackage={props.onNewPackage} />}
-      {props.slug === null ? null : (
-        <>
-          <button type="button" onClick={props.onContract}>
-            Contract
-          </button>
-          <button type="button" onClick={props.onTasks}>
-            Tasks
-          </button>
-          <button type="button" onClick={props.onLaunch}>Launch</button>
-        </>
-      )}
+      <PlanTools {...props} />
       <button type="button" aria-label="Settings" onClick={props.onSettings}>
         ⚙
       </button>
+      <ConvergeToggle label={props.convergeLabel} onClick={props.onConverge} />
     </>
   );
 }
@@ -394,6 +426,24 @@ function sameDir(file: string, dir: string): boolean {
   return parentDir(file) === dir;
 }
 
+function editingSlug(converge: string | null, slug: string | null): string | null {
+  return converge === null ? slug : null;
+}
+
+function pickChanges(converge: string | null, editing: () => ReactNode, watching: () => ReactNode): ReactNode {
+  return converge === null ? editing() : watching();
+}
+
+function statusesOf(verdict: ConvergeAnswer | { error: string } | undefined): Map<number, ConvergeStatus> {
+  if (verdict === undefined || 'error' in verdict) return new Map();
+  return new Map(verdict.edits.map(edit => [edit.index, edit.status]));
+}
+
+function marksFor(converge: string | null, verdict: ConvergeAnswer | { error: string } | undefined, edits: PlanEdit[], ids: Set<string>): ConvergeMarks | null {
+  if (converge === null) return null;
+  return convergeMarks({ edits, statuses: statusesOf(verdict), ids });
+}
+
 function overlayChanged(base: PlanDoc, from: PlanDoc, next: PlanDoc): PlanDoc {
   return {
     ...base,
@@ -436,7 +486,7 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
   const doc = roster.doc;
   const edits = editsOf(doc);
   const rowResults = useQueries({
-    queries: rowQueriesFor(props.token, props.fetcher, props.nodes, props.tests, props.external, slug),
+    queries: rowQueriesFor(props),
   });
   const picture = planPicture({
     shown: props.shown,
@@ -650,7 +700,7 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     return true;
   };
   const pickFile = (id: string): boolean => kindOf(props.nodes, id) === 'file' && foldInto(id);
-  const dropTarget = (kind: GraphNode['kind'] | null, event: unknown): string | null => dropTargetOf(slug, kind, event);
+  const dropTarget = (kind: GraphNode['kind'] | null, event: unknown): string | null => dropTargetOf(editingSlug(props.converge, slug), kind, event);
   const dropOnCrumb = (event: { preventDefault(): void; dataTransfer: { getData(mime: string): string } }, at: string): void => {
     event.preventDefault();
     const file = event.dataTransfer.getData(FILE_DRAG_MIME);
@@ -660,7 +710,7 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
   const asking = useAsk({
     token: props.token,
     fetcher: props.fetcher,
-    slug,
+    slug: editingSlug(props.converge, slug),
     at: props.at,
     tests: props.tests,
     external: props.external,
@@ -687,16 +737,19 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
       else if (action === 'delete') onDelete();
     };
     const onKey = (event: KeyboardEvent) => {
+      if (props.converge !== null) return;
       run(keyActionOf(event.key, event.ctrlKey || event.metaKey, event.shiftKey, fieldTarget(event.target)));
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   });
 
+  const marks = marksFor(props.converge, props.verdict, edits, props.ids);
   const planning = ((): Planning | null => {
     if (slug === null) return null;
     return {
-      ink: picture.ink,
+      ink: marks === null ? picture.ink : withConverge(picture.ink, marks),
+      converge: marks,
       proposal: asking.ink,
       mergeReady: selectedPackages(props.nodes, props.selection).length >= 2,
       onDropFile: moveFile,
@@ -717,6 +770,8 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
     toolbar: (
       <PlanToolbar
         slug={slug}
+        locked={props.converge !== null}
+        convergeLabel={props.convergeLabel}
         plans={roster.plans}
         labels={roster.labels}
         choice={roster.choice}
@@ -736,10 +791,15 @@ export function usePlanSession(props: Readonly<PlanSessionProps>): PlanSessionVi
         }}
         onLaunch={() => setLaunchOpen(true)}
         onSettings={() => setSettingsOpen(true)}
+        onConverge={() => props.onConverge(props.converge === null ? slug : null)}
       />
     ),
     notice: <PlanNotice slug={slug} text={notice} />,
-    changes: asking.column(<PlanChanges slug={slug} doc={doc} entries={entries} onUndo={onUndo} onRedo={onRedo} onPick={pickEntry} onRemove={removeEdit} />),
+    changes: pickChanges(
+      props.converge,
+      () => asking.column(<PlanChanges slug={slug} doc={doc} entries={entries} onUndo={onUndo} onRedo={onRedo} onPick={pickEntry} onRemove={removeEdit} />),
+      () => <ConvergeList rows={entries} verdict={props.verdict} onPick={index => applyTarget(entryTarget(entries[index].edit))} />,
+    ),
     dialogs: (
       <>
         <ReshapeDialogs nameAsk={nameAsk} splitAsk={splitAsk} error={askError} onName={submitName} onSplit={submitSplit} onCancel={closeAsk} />

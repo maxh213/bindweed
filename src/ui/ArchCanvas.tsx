@@ -70,11 +70,12 @@ type ArrowData = {
   from: string;
   to: string;
   planning: Planning | null;
+  converged: boolean;
 };
 
 type ArrowEdge = Edge<ArrowData, 'arrow'>;
 
-type CutData = { selected: boolean };
+type CutData = { selected: boolean; done: boolean };
 
 type CutEdge = Edge<CutData, 'cutmark'>;
 
@@ -109,6 +110,26 @@ export type CanvasProps = {
 };
 
 const CONNECT_RADIUS = 260;
+const GREEN = '#16a34a';
+const RED = '#dc2626';
+const ROW_COLORS: Record<NonNullable<RowInk['converge']>, string> = { done: GREEN, contradicted: RED };
+
+function editable(planning: Planning | null): boolean {
+  return planning !== null && planning.converge === null;
+}
+
+function drawIfEditable(planning: Planning | null, connection: Connection): void {
+  if (planning === null || planning.converge !== null) return;
+  planning.onDrawEdge(connection.source, connection.target);
+}
+
+function doneAttr(done: boolean): 'done' | undefined {
+  return done ? 'done' : undefined;
+}
+
+function rowStyle(row: RowInk): { color: string } | undefined {
+  return row.converge === undefined ? undefined : { color: ROW_COLORS[row.converge] };
+}
 
 function boolAttr(value: boolean): 'true' | 'false' {
   return value ? 'true' : 'false';
@@ -215,7 +236,7 @@ function BoxRow({ row, planning }: Readonly<{ row: RowInk; planning: Planning }>
   const strike = strikeFor(planning, row.path);
   if (row.ghost) {
     return (
-      <div className="box-row" data-ghost="true" data-path={row.path} onDoubleClick={event => event.stopPropagation()}>
+      <div className="box-row" data-ghost="true" data-path={row.path} data-converge={row.converge} style={rowStyle(row)} onDoubleClick={event => event.stopPropagation()}>
         {row.name}
       </div>
     );
@@ -228,7 +249,9 @@ function BoxRow({ row, planning }: Readonly<{ row: RowInk; planning: Planning }>
       data-proposal={onAttr(strike.strike)}
       data-strike={onAttr(strike.strike)}
       data-highlight={onAttr(strike.highlight)}
-      draggable
+      data-converge={row.converge}
+      style={rowStyle(row)}
+      draggable={editable(planning)}
       onDragStart={event => event.dataTransfer.setData(FILE_DRAG_MIME, row.path)}
       onDoubleClick={event => {
         event.stopPropagation();
@@ -340,7 +363,7 @@ function rowDrop(event: DragEvent<HTMLElement>, id: string, planning: Planning):
 
 function boxDropProps(data: BoxData, id: string): { onDragOver?: (event: DragEvent<HTMLElement>) => void; onDrop?: (event: DragEvent<HTMLElement>) => void } {
   const planning = data.planning;
-  if (planning === null || data.kind !== 'package') return {};
+  if (planning === null || planning.converge !== null || data.kind !== 'package') return {};
   return {
     onDragOver: event => event.preventDefault(),
     onDrop: event => rowDrop(event, id, planning),
@@ -349,12 +372,17 @@ function boxDropProps(data: BoxData, id: string): { onDragOver?: (event: DragEve
 
 function boxMenu(data: BoxData, id: string): ReactNode {
   const planning = data.planning;
-  if (planning === null || !data.selected) return null;
+  if (planning === null || planning.converge !== null || !data.selected) return null;
   return <BoxMenu items={menuItems(data.kind, planning, id)} />;
 }
 
 function drawLabel(planning: Planning | null): string | undefined {
-  return planning === null ? undefined : 'Draw dependency';
+  return editable(planning) ? 'Draw dependency' : undefined;
+}
+
+function boxConverge(planning: Planning | null, id: string): { 'data-converge'?: 'done'; style?: { borderTopColor: string } } {
+  if (planning?.converge?.boxes.has(id) !== true) return {};
+  return { 'data-converge': 'done', style: { borderTopColor: GREEN } };
 }
 
 function Box({ id, data }: NodeProps<BoxNode>) {
@@ -371,6 +399,7 @@ function Box({ id, data }: NodeProps<BoxNode>) {
       data-fate={fateOf(data.deleted)}
       onMouseEnter={() => data.onHover(id)}
       onMouseLeave={() => data.onHover(null)}
+      {...boxConverge(data.planning, id)}
       {...boxDropProps(data, id)}
     >
       <Handle type="target" position={Position.Top} />
@@ -384,7 +413,7 @@ function Box({ id, data }: NodeProps<BoxNode>) {
       {data.planning === null ? null : <BoxRows rows={data.rows} planning={data.planning} />}
       <ProposalRows rows={proposalRowsOf(data.planning, id)} />
       {boxMenu(data, id)}
-      <Handle type="source" position={Position.Bottom} aria-label={drawLabel(data.planning)} isConnectable={data.planning !== null} />
+      <Handle type="source" position={Position.Bottom} aria-label={drawLabel(data.planning)} isConnectable={editable(data.planning)} />
     </div>
   );
 }
@@ -479,7 +508,7 @@ function ArrowMenu({ x, y, onCut, onNote }: Readonly<{ x: number; y: number; onC
 
 function arrowMenu(data: ArrowData, x: number, y: number): ReactNode {
   const planning = data.planning;
-  if (planning === null || !data.selected) return null;
+  if (planning === null || planning.converge !== null || !data.selected) return null;
   return <ArrowMenu x={x} y={y} onCut={() => planning.onCutEdge(data.from, data.to)} onNote={() => planning.onAddNote({ edge: [data.from, data.to] })} />;
 }
 
@@ -498,6 +527,7 @@ function Arrow(props: EdgeProps<ArrowEdge>) {
       data-to={props.target}
       data-planned={data.planned ? 'true' : undefined}
       data-selected={boolAttr(data.selected)}
+      data-converge={doneAttr(data.converged)}
     >
       <title>{data.title}</title>
       <BaseEdge id={props.id} path={path} style={arrowStyle(data)} markerEnd={props.markerEnd} />
@@ -508,8 +538,17 @@ function Arrow(props: EdgeProps<ArrowEdge>) {
   );
 }
 
+function cutData(data: CutData | undefined): CutData {
+  return data ?? { selected: false, done: false };
+}
+
+function cutLabelStyle(done: boolean): { fill: string } | undefined {
+  return done ? { fill: GREEN } : undefined;
+}
+
 function CutMark(props: EdgeProps<CutEdge>) {
   const [path, labelX, labelY] = getBezierPath(props);
+  const data = cutData(props.data);
   return (
     <g
       className="cutmark"
@@ -517,10 +556,11 @@ function CutMark(props: EdgeProps<CutEdge>) {
       data-cut="true"
       data-from={props.source}
       data-to={props.target}
-      data-selected={boolAttr(props.data?.selected ?? false)}
+      data-selected={boolAttr(data.selected)}
+      data-converge={doneAttr(data.done)}
     >
-      <BaseEdge id={props.id} path={path} style={{ stroke: '#94a3b8', strokeWidth: 1, strokeDasharray: '4 4' }} />
-      <text x={labelX} y={labelY} className="cut-label">
+      <BaseEdge id={props.id} path={path} style={{ stroke: data.done ? GREEN : '#94a3b8', strokeWidth: 1, strokeDasharray: '4 4' }} />
+      <text x={labelX} y={labelY} className="cut-label" style={cutLabelStyle(data.done)}>
         ✂
       </text>
     </g>
@@ -716,6 +756,14 @@ function arrowColorOf(edge: ViewEdge, red: boolean): string {
   return edge.planned === true ? plannedColor(red) : arrowColor(red);
 }
 
+function converged(marks: CutMarkInk[] | undefined, from: string, to: string): boolean {
+  return marks?.some(mark => mark.from === from && mark.to === to) === true;
+}
+
+function arrowDone(planning: Planning | null, edge: ViewEdge): boolean {
+  return converged(planning?.converge?.arrows, edge.from, edge.to);
+}
+
 type ArrowCtx = {
   spots: Map<string, PlacedBox>;
   names: Map<string, string>;
@@ -728,6 +776,7 @@ type ArrowCtx = {
 function arrowData(edge: ViewEdge, up: boolean, ctx: ArrowCtx): ArrowData {
   const heritage = heritageOf(edge);
   const selected = markSelected(ctx.marked, edge.from, edge.to);
+  const done = arrowDone(ctx.planning, edge);
   return {
     cycle: edge.cycle,
     up,
@@ -736,13 +785,14 @@ function arrowData(edge: ViewEdge, up: boolean, ctx: ArrowCtx): ArrowData {
     head: headOf(heritage),
     title: edgeTitle(up, lookupName(ctx.names, edge.from), lookupName(ctx.names, edge.to), edge.cycleText, edge.runtime, edge.type, heritage),
     label: edgeLabel(edge.runtime, edge.type),
-    color: arrowColorOf(edge, edge.cycle || up),
+    color: done ? GREEN : arrowColorOf(edge, edge.cycle || up),
     dimmed: arrowDimmed(edge.from, edge.to, ctx.hover),
     selected,
     noteTexts: arrowNotes(ctx, edge.from, edge.to),
     from: edge.from,
     to: edge.to,
     planning: ctx.planning,
+    converged: done,
   };
 }
 
@@ -767,13 +817,13 @@ function cutSelected(marked: MarkSel | null, from: string, to: string): boolean 
   return marked !== null && marked.cut && marked.from === from && marked.to === to;
 }
 
-function toCutMark(cut: CutMarkInk, marked: MarkSel | null): CutEdge {
+function toCutMark(cut: CutMarkInk, marked: MarkSel | null, planning: Planning | null): CutEdge {
   return {
     id: `cut:${cut.from}->${cut.to}`,
     source: cut.from,
     target: cut.to,
     type: 'cutmark',
-    data: { selected: cutSelected(marked, cut.from, cut.to) },
+    data: { selected: cutSelected(marked, cut.from, cut.to), done: converged(planning?.converge?.cuts, cut.from, cut.to) },
   };
 }
 
@@ -915,7 +965,7 @@ export function ArchCanvas(props: Readonly<CanvasProps & { view: GraphView }>) {
     return [
       ...props.view.edges.map(edge => toArrow(edge, ctx)),
       ...ink.added.map(edge => toAddedArrow(edge, ctx)),
-      ...ink.cuts.map(cut => toCutMark(cut, props.marked)),
+      ...ink.cuts.map(cut => toCutMark(cut, props.marked, planning)),
       ...proposalCuts(planning),
       ...proposalArrows(planning),
     ];
@@ -931,7 +981,7 @@ export function ArchCanvas(props: Readonly<CanvasProps & { view: GraphView }>) {
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         nodesDraggable
-        nodesConnectable={planning !== null}
+        nodesConnectable={editable(planning)}
         edgesFocusable={false}
         connectionMode={ConnectionMode.Loose}
         connectionRadius={CONNECT_RADIUS}
@@ -942,7 +992,7 @@ export function ArchCanvas(props: Readonly<CanvasProps & { view: GraphView }>) {
         onNodeDragStop={(event, node) => props.onDropNode(node.id, nodeKind(node), node.position.x, node.position.y, event)}
         onEdgeClick={(_event, edge) => props.onSelectMark({ from: edge.source, to: edge.target, cut: edge.type === 'cutmark' })}
         onPaneClick={() => props.onClear()}
-        onConnect={(connection: Connection) => planning?.onDrawEdge(connection.source, connection.target)}
+        onConnect={(connection: Connection) => drawIfEditable(planning, connection)}
       />
     </div>
   );

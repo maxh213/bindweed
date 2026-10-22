@@ -221,6 +221,11 @@ export async function listRuns(place: Place, namer: PlanNamer): Promise<Record<s
   return Promise.all(entries.map(entry => viewOf(place, namer, entry)));
 }
 
+export async function convergeRun(root: string, slug: string): Promise<{ worktree: string; pidAlive: boolean } | undefined> {
+  const entry = entriesOf(await readRuns(root)).find(item => item.slug === slug);
+  return entry === undefined ? undefined : { worktree: entry.worktree, pidAlive: alive(entry.pid) };
+}
+
 function isRecord(raw: unknown): raw is Record<string, unknown> {
   return typeof raw === 'object' && raw !== null && !Array.isArray(raw);
 }

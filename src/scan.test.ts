@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { scanRepo, } from './scan.ts';
+import { scanRepo, scanWorktree } from './scan.ts';
 
 const made: string[] = [];
 
@@ -612,5 +612,25 @@ describe('scanRepo workspaces', () => {
     expect(ccOf('method')).toEqual([2]);
     expect(ccOf('<anonymous>')).toEqual([2, 1]);
     expect(ccOf('')).toEqual([]);
+  });
+});
+
+describe('scanWorktree', () => {
+  it('keeps import lines, spells dangling relative imports and caches under the browsed root by slug', async () => {
+    const root = await makeRepo({});
+    const worktree = await makeRepo({
+      'src/a.ts': "import type { B } from './b';\nimport { gone } from './gone.js';\nimport { lost } from '../lost';\nimport { readFileSync } from 'node:fs';\nexport const a = 1;\n",
+      'src/b.ts': 'export type B = number;\n',
+    });
+    const found = scanWorktree(root, 'gate', worktree, ['src/a.ts', 'src/b.ts']);
+    expect(found.imports).toEqual([
+      { from: 'src/a.ts', to: 'src/b.ts', line: 1, resolved: true },
+      { from: 'src/a.ts', to: 'src/gone.js', line: 2, resolved: false },
+      { from: 'src/a.ts', to: 'lost.ts', line: 3, resolved: false },
+    ]);
+    expect(found.scan.files.map(file => file.path)).toEqual(['src/a.ts', 'src/b.ts']);
+    const cache = JSON.parse(await readFile(join(root, '.bindweed', 'cache', 'gate', 'scan.json'), 'utf8'));
+    expect(cache.files['src/a.ts'].imports[0]).toEqual({ specifier: './b', typeOnly: true, line: 1 });
+    expect(scanWorktree(root, 'gate', worktree, ['src/a.ts', 'src/b.ts']).imports).toEqual(found.imports);
   });
 });

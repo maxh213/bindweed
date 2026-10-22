@@ -15,6 +15,12 @@ describe('README routes', () => {
     expect(table).toContain('| `/api/plans/<slug>/generate` | live |');
   });
 
+  it('The README lists /api/converge beside the old ones', () => {
+    const table = routesTable(readFileSync(join(process.cwd(), 'README.md'), 'utf8'));
+    expect(table).toContain('| `/api/converge` | live |');
+    expect(table).toContain('| `/api/runs` | live |');
+  });
+
   it('The README lists /api/runs beside the old ones', () => {
     const table = routesTable(readFileSync(join(process.cwd(), 'README.md'), 'utf8'));
     expect(table).toContain('| `/api/runs` | live |');

@@ -69,6 +69,12 @@ export function planFromLocation(location: Location): string | null {
   return decodeHashPath(encoded);
 }
 
+export function convergeFromLocation(location: Location): string | null {
+  const encoded = hashValue(location, 'converge');
+  if (encoded === null || encoded === '' || atHashFrom(location) === null) return null;
+  return decodeHashPath(encoded);
+}
+
 export type PageState = { tab: Tab; at: string; selected: string | null; plan: string | null };
 
 export function pageFromLocation(location: Location): PageState {
@@ -132,7 +138,7 @@ const AT_HASH_PREFIX = '#at=';
 
 type HistoryWrite =
   | { kind: 'file'; path: string; mode: 'push' | 'replace' }
-  | { kind: 'at'; at: string; plan?: string | null }
+  | { kind: 'at'; at: string; plan?: string | null; converge?: string | null }
   | { kind: 'path'; pathname: string }
   | { kind: 'runs' };
 
@@ -167,9 +173,12 @@ function fileHash(path: string): string {
   return `${FILE_HASH_PREFIX}${encodeHashPath(path)}`;
 }
 
-export function atHash(at: string, plan?: string | null): string {
-  const base = `${AT_HASH_PREFIX}${encodeHashPath(at)}`;
-  return plan === undefined || plan === null || plan === '' ? base : `${base}&plan=${encodeHashPath(plan)}`;
+function slugPart(name: string, slug: string | null | undefined): string {
+  return slug === undefined || slug === null || slug === '' ? '' : `&${name}=${encodeHashPath(slug)}`;
+}
+
+export function atHash(at: string, plan?: string | null, converge?: string | null): string {
+  return `${AT_HASH_PREFIX}${encodeHashPath(at)}${slugPart('plan', plan)}${slugPart('converge', converge)}`;
 }
 
 function pushState(history: History, url: string): void {
@@ -183,7 +192,7 @@ function replaceState(history: History, url: string): void {
 function pushOther(history: History, write: Exclude<HistoryWrite, { kind: 'file' }>): void {
   switch (write.kind) {
     case 'at':
-      pushState(history, atHash(write.at, write.plan));
+      pushState(history, atHash(write.at, write.plan, write.converge));
       return;
     case 'path':
       pushState(history, write.pathname);

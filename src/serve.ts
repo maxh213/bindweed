@@ -8,17 +8,18 @@ import { launchFocus, launchReason, type LaunchBody } from './domain/launch.ts';
 import { inspectLaunch, launchPlan } from './launch.ts';
 import type { CruiserFile } from './cruiser.ts';
 import { contractRules } from './domain/contract.ts';
+import { convergeVerdict } from './domain/converge.ts';
 import { cycleTexts, edgePairs, graphView, nodeDetail, type GraphFlags, type GraphNode, type GraphView } from './domain/graph.ts';
 import { emptyLayout, parseLayout, type LayoutDoc } from './domain/layout.ts';
 import { freshTurn, parseChat, proposeFrom, reviewFrom } from './domain/chat.ts';
 import { byStrings, contractNamesFrom, parsePlan, parsePlanEdit, planNameFrom, PLAN_SLUG_PATTERN, slugOf, type ContractRule, type PlanDoc, type PlanEdit } from './domain/plan.ts';
-import { applyPlan, plannedShape, planReport, reviewProposed, type PlanReport } from './domain/planned.ts';
-import type { ScanResult } from './domain/scan.ts';
+import { applyPlan, plannedShape, planReport, reviewProposed, staleReasons, type PlanReport } from './domain/planned.ts';
+import type { ScanResult, WorktreeScan } from './domain/scan.ts';
 import { buildTree, filePathSet, type TreeRoot } from './domain/tree.ts';
 import { DEFAULT_LIMITS, generate, propose, readConfig, saveConfig, turnOf, type Limits, type PromptEdge, type PromptNode, type PromptView, type Turn } from './generate.ts';
 import { freePlanSlug, listPlans, readChat, readPlan, removePlan, saveTaskFiles, writeChat, writePlan } from './plans.ts';
 import { readHealth } from './reports.ts';
-import { forgetRun, listRuns } from './runs.ts';
+import { convergeRun, forgetRun, listRuns } from './runs.ts';
 import { gitHead, listedRegularFiles } from './repo.ts';
 
 export type PortChoice = { mode: 'fixed' | 'range'; port: number };
@@ -41,6 +42,12 @@ type Routes = Map<string, Handler>;
 
 type GraphHolder = { scan?: ScanResult };
 
+type ConvergeFailure = { ok: false; status: number; error: string };
+
+type ConvergeCase = { ok: true; slug: string; worktree: string; pidAlive: boolean; doc: PlanDoc } | ConvergeFailure;
+
+type Source = { ok: true; root: string; scan: ScanResult } | ConvergeFailure;
+
 const MAX_BYTES = 1048576;
 const NUL_WINDOW = 8192;
 const RANGE_WIDTH = 20;
@@ -51,6 +58,10 @@ const TEXT_TYPE = 'text/plain; charset=utf-8';
 const HTML_TYPE = 'text/html; charset=utf-8';
 const NOT_FOUND = { error: 'not found' };
 const NO_SUCH_PLAN = { error: 'no such plan' };
+const MISSING_SLUG: ConvergeFailure = { ok: false, status: 400, error: 'missing slug' };
+const NO_SUCH_RUN: ConvergeFailure = { ok: false, status: 404, error: 'no such run' };
+const PLAN_MISSING: ConvergeFailure = { ok: false, status: 404, error: 'no such plan' };
+const WORKTREE_REMOVED: ConvergeFailure = { ok: false, status: 404, error: 'worktree removed' };
 const NO_SUCH_FILE: FileResult = { status: 404, body: { error: 'no such file' } };
 const TOO_LARGE: FileResult = { status: 413, body: { error: 'file too large to show' } };
 const ADDR_IN_USE = z.object({ code: z.literal('EADDRINUSE') });
@@ -216,6 +227,69 @@ async function readyScan(app: App, graphs: GraphHolder): Promise<ScanResult> {
   return graphs.scan;
 }
 
+function convergeQueryOf(url: URL): string | null {
+  const slug = url.searchParams.get('converge');
+  return slug === null || slug === '' ? null : slug;
+}
+
+async function isDirectory(path: string): Promise<boolean> {
+  return stat(path).then(
+    found => found.isDirectory(),
+    () => false,
+  );
+}
+
+async function planCase(app: App, slug: string, run: { worktree: string; pidAlive: boolean }): Promise<ConvergeCase> {
+  const doc = await readPlan(app.repoRoot, slug);
+  if (doc === undefined) return PLAN_MISSING;
+  if (!(await isDirectory(run.worktree))) return WORKTREE_REMOVED;
+  return { ok: true, slug, ...run, doc };
+}
+
+async function runCase(app: App, slug: string): Promise<ConvergeCase> {
+  const run = PLAN_SLUG_PATTERN.test(slug) ? await convergeRun(app.repoRoot, slug) : undefined;
+  if (run === undefined) return NO_SUCH_RUN;
+  return planCase(app, slug, run);
+}
+
+async function worktreeScan(app: App, found: Extract<ConvergeCase, { ok: true }>): Promise<WorktreeScan> {
+  const { scanWorktree } = await import('./scan.ts');
+  return scanWorktree(app.repoRoot, found.slug, found.worktree, await listedRegularFiles(found.worktree));
+}
+
+async function sourceFor(app: App, url: URL, browsed: () => Promise<ScanResult>): Promise<Source> {
+  const slug = convergeQueryOf(url);
+  if (slug === null) return { ok: true, root: app.repoRoot, scan: await browsed() };
+  const found = await runCase(app, slug);
+  if (!found.ok) return found;
+  return { ok: true, root: found.worktree, scan: (await worktreeScan(app, found)).scan };
+}
+
+type Planned = { ok: true; root: string; scan: ScanResult; load: PlanLoad | null } | ConvergeFailure;
+
+async function sourceAndPlan(app: App, graphs: GraphHolder, url: URL): Promise<Planned> {
+  const source = await sourceFor(app, url, () => readyScan(app, graphs));
+  if (!source.ok) return source;
+  const load = await loadPlan(app, url);
+  return planFailed(load) ? PLAN_MISSING : { ...source, load };
+}
+
+function sendFailure(res: ServerResponse, failure: ConvergeFailure): void {
+  sendJson(res, failure.status, { error: failure.error });
+}
+
+async function serveConverge(app: App, graphs: GraphHolder, res: ServerResponse, url: URL): Promise<void> {
+  const slug = url.searchParams.get('slug');
+  const found = slug === null ? MISSING_SLUG : await runCase(app, slug);
+  if (!found.ok) {
+    sendFailure(res, found);
+    return;
+  }
+  const browsed = await readyScan(app, graphs);
+  const verdict = convergeVerdict(found.doc, { scan: browsed, stale: staleReasons(browsed, found.doc.edits) }, await worktreeScan(app, found));
+  sendJson(res, 200, { slug: found.slug, worktree: found.worktree, pidAlive: found.pidAlive, ...verdict });
+}
+
 function healthOf(root: string, scan: ScanResult) {
   return readHealth(root, scan.files.map(file => file.path));
 }
@@ -294,15 +368,15 @@ function drawnScan(scan: ScanResult, planned: ScanResult, saved: PlanEdit[], ext
 }
 
 async function serveGraph(app: App, graphs: GraphHolder, res: ServerResponse, url: URL): Promise<void> {
-  const scan = await readyScan(app, graphs);
-  const load = await loadPlan(app, url);
-  if (planFailed(load)) {
-    sendJson(res, 404, NO_SUCH_PLAN);
+  const source = await sourceAndPlan(app, graphs, url);
+  if (!source.ok) {
+    sendFailure(res, source);
     return;
   }
-  const plan = graphPlanOf(scan, load);
-  const planned = drawnScan(scan, plan.scan, savedEdits(load), proposalParam(url));
-  const view = graphView(planned, url.searchParams.get('at') ?? '', basename(app.repoRoot), graphFlags(url), healthOf(app.repoRoot, planned));
+  const load = source.load;
+  const plan = graphPlanOf(source.scan, load);
+  const planned = drawnScan(source.scan, plan.scan, savedEdits(load), proposalParam(url));
+  const view = graphView(planned, url.searchParams.get('at') ?? '', basename(source.root), graphFlags(url), healthOf(source.root, planned));
   if (view === null) {
     sendJson(res, 404, { error: 'no such directory' });
     return;
@@ -375,14 +449,14 @@ function sendDetail(res: ServerResponse, detail: ReturnType<typeof nodeDetail>):
 }
 
 async function serveDetail(app: App, graphs: GraphHolder, res: ServerResponse, url: URL): Promise<void> {
-  const scan = await readyScan(app, graphs);
-  const load = await loadPlan(app, url);
-  if (planFailed(load)) {
-    sendJson(res, 404, NO_SUCH_PLAN);
+  const source = await sourceAndPlan(app, graphs, url);
+  if (!source.ok) {
+    sendFailure(res, source);
     return;
   }
-  const planned = plannedScanOf(scan, load);
-  sendDetail(res, detailFor(planned, url, basename(app.repoRoot), healthOf(app.repoRoot, planned)));
+  const load = source.load;
+  const planned = plannedScanOf(source.scan, load);
+  sendDetail(res, detailFor(planned, url, basename(source.root), healthOf(source.root, planned)));
 }
 
 function pairEnds(url: URL): { from: string; to: string } | null {
@@ -397,20 +471,29 @@ async function servePairs(app: App, graphs: GraphHolder, res: ServerResponse, ur
     sendJson(res, 404, NOT_FOUND);
     return;
   }
-  const scan = await readyScan(app, graphs);
-  const load = await loadPlan(app, url);
-  if (planFailed(load)) {
-    sendJson(res, 404, NO_SUCH_PLAN);
+  const source = await sourceAndPlan(app, graphs, url);
+  if (!source.ok) {
+    sendFailure(res, source);
     return;
   }
-  const planned = plannedScanOf(scan, load);
+  const load = source.load;
+  const planned = plannedScanOf(source.scan, load);
   sendJson(res, 200, { pairs: edgePairs(planned, url.searchParams.get('at') ?? '', ends.from, ends.to, graphFlags(url)) });
 }
 
-async function serveRescan(app: App, graphs: GraphHolder, res: ServerResponse): Promise<void> {
-  const started = Date.now();
+async function freshBrowsed(app: App, graphs: GraphHolder): Promise<ScanResult> {
   graphs.scan = await scanFor(app);
-  sendJson(res, 200, { files: graphs.scan.files.length, ms: Date.now() - started });
+  return graphs.scan;
+}
+
+async function serveRescan(app: App, graphs: GraphHolder, res: ServerResponse, url: URL): Promise<void> {
+  const started = Date.now();
+  const source = await sourceFor(app, url, () => freshBrowsed(app, graphs));
+  if (!source.ok) {
+    sendFailure(res, source);
+    return;
+  }
+  sendJson(res, 200, { files: source.scan.files.length, ms: Date.now() - started });
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
@@ -843,7 +926,8 @@ function routesFor(app: App, graphs: GraphHolder): Routes {
   router.get('/api/layout', (_req, res) => serveLayout(app, res));
   router.put('/api/layout', (req, res) => putLayout(app, req, res));
   router.get('/api/detail', (_req, res, url) => serveDetail(app, graphs, res, url));
-  router.post('/api/rescan', (_req, res) => serveRescan(app, graphs, res));
+  router.post('/api/rescan', (_req, res, url) => serveRescan(app, graphs, res, url));
+  router.get('/api/converge', (_req, res, url) => serveConverge(app, graphs, res, url));
   router.get('/api/plans', (_req, res) => servePlanList(app, res));
   router.post('/api/plans', (req, res) => postPlan(app, req, res));
   router.get('/api/pairs', (_req, res, url) => servePairs(app, graphs, res, url));

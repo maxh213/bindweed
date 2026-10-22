@@ -1,12 +1,14 @@
 import * as ts from 'typescript';
 
-export type RawImport = { specifier: string; typeOnly: boolean; heritage?: number };
+export type RawImport = { specifier: string; typeOnly: boolean; line: number; heritage?: number };
+
+type FoundImport = { specifier: string; typeOnly: boolean };
 
 type RawFunction = { name: string; line: number; endLine: number; cc: number };
 
 export type ParsedFile = { imports: RawImport[]; abstract: boolean; functions: RawFunction[] };
 
-type ImportDraft = { specifier: string; typeOnly: boolean; heritage: number };
+type ImportDraft = { specifier: string; typeOnly: boolean; line: number; heritage: number };
 
 type ImportBinding = { name: string; index: number; namespace: boolean };
 
@@ -50,45 +52,45 @@ function isRequireCall(node: ts.CallExpression): boolean {
   return ts.isIdentifier(node.expression) && node.expression.text === 'require';
 }
 
-function importOfCall(node: ts.CallExpression): RawImport | undefined {
+function importOfCall(node: ts.CallExpression): FoundImport | undefined {
   if (node.expression.kind !== ts.SyntaxKind.ImportKeyword && !isRequireCall(node)) return undefined;
   const specifier = stringArgOf(node);
   return specifier === undefined ? undefined : { specifier, typeOnly: false };
 }
 
-function importOfImportEquals(node: ts.ImportEqualsDeclaration): RawImport | undefined {
+function importOfImportEquals(node: ts.ImportEqualsDeclaration): FoundImport | undefined {
   const ref = node.moduleReference;
   if (!ts.isExternalModuleReference(ref) || !ts.isStringLiteral(ref.expression)) return undefined;
   return { specifier: ref.expression.text, typeOnly: node.isTypeOnly };
 }
 
-function importOfImportDecl(node: ts.ImportDeclaration): RawImport | undefined {
+function importOfImportDecl(node: ts.ImportDeclaration): FoundImport | undefined {
   if (!ts.isStringLiteral(node.moduleSpecifier)) return undefined;
   return { specifier: node.moduleSpecifier.text, typeOnly: isTypeOnlyImport(node) };
 }
 
-function importOfExportDecl(node: ts.ExportDeclaration): RawImport | undefined {
+function importOfExportDecl(node: ts.ExportDeclaration): FoundImport | undefined {
   const specifier = node.moduleSpecifier;
   if (specifier === undefined || !ts.isStringLiteral(specifier)) return undefined;
   return { specifier: specifier.text, typeOnly: isTypeOnlyExport(node) };
 }
 
-function importOfStatement(node: ts.Node): RawImport | undefined {
+function importOfStatement(node: ts.Node): FoundImport | undefined {
   if (ts.isImportDeclaration(node)) return importOfImportDecl(node);
   if (ts.isExportDeclaration(node)) return importOfExportDecl(node);
   if (ts.isImportEqualsDeclaration(node)) return importOfImportEquals(node);
   return undefined;
 }
 
-function importOfNode(node: ts.Node): RawImport | undefined {
+function importOfNode(node: ts.Node): FoundImport | undefined {
   if (ts.isCallExpression(node)) return importOfCall(node);
   return importOfStatement(node);
 }
 
-function recordImport(node: ts.Node, drafts: ImportDraft[]): number | undefined {
+function recordImport(node: ts.Node, source: ts.SourceFile, drafts: ImportDraft[]): number | undefined {
   const hit = importOfNode(node);
   if (hit === undefined) return undefined;
-  drafts.push({ specifier: hit.specifier, typeOnly: hit.typeOnly, heritage: 0 });
+  drafts.push({ specifier: hit.specifier, typeOnly: hit.typeOnly, line: lineNumber(source, node.getStart(source)), heritage: 0 });
   return drafts.length - 1;
 }
 
@@ -117,10 +119,10 @@ function recordBinding(node: ts.Node, index: number, bindings: ImportBinding[]):
   bindings.push({ name: node.name.text, index: slot, namespace: false });
 }
 
-function collectImports(node: ts.Node, drafts: ImportDraft[], bindings: ImportBinding[]): void {
-  const index = recordImport(node, drafts);
+function collectImports(node: ts.Node, source: ts.SourceFile, drafts: ImportDraft[], bindings: ImportBinding[]): void {
+  const index = recordImport(node, source, drafts);
   if (index !== undefined) recordBinding(node, index, bindings);
-  node.forEachChild(child => collectImports(child, drafts, bindings));
+  node.forEachChild(child => collectImports(child, source, drafts, bindings));
 }
 
 function classOrFunctionName(node: ts.Node): string | undefined {
@@ -238,8 +240,8 @@ function fileIsAbstract(source: ts.SourceFile): boolean {
 }
 
 function toRawImport(draft: ImportDraft): RawImport {
-  if (draft.heritage === 0) return { specifier: draft.specifier, typeOnly: draft.typeOnly };
-  return { specifier: draft.specifier, typeOnly: draft.typeOnly, heritage: draft.heritage };
+  if (draft.heritage === 0) return { specifier: draft.specifier, typeOnly: draft.typeOnly, line: draft.line };
+  return { specifier: draft.specifier, typeOnly: draft.typeOnly, line: draft.line, heritage: draft.heritage };
 }
 
 const BRANCH_KINDS = new Set<ts.SyntaxKind>([
@@ -348,7 +350,7 @@ export function parseSource(path: string, text: string): ParsedFile {
   const drafts = blank<ImportDraft>();
   const bindings = blank<ImportBinding>();
   const functions = blank<RawFunction>();
-  collectImports(source, drafts, bindings);
+  collectImports(source, source, drafts, bindings);
   markHeritage(source, drafts, bindings);
   collectFunctions(source, source, functions);
   return { imports: drafts.map(toRawImport), abstract: fileIsAbstract(source), functions };
