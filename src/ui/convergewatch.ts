@@ -88,7 +88,8 @@ function beginWatch(client: QueryClient, watch: Watch, hidden: { current: boolea
 }
 
 function startWatch(client: QueryClient, hidden: { current: boolean }, refresh: () => Promise<void>): Watch {
-  const watch = { live: true, busy: null } as Watch;
+  const watch: Watch = { live: true, busy: null, stop() { return undefined; } };
+  watch.stop();
   watch.stop = client.getQueryCache().subscribe(() => syncWatch(client, watch, refresh));
   beginWatch(client, watch, hidden, refresh);
   return watch;
